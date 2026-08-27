@@ -1,17 +1,44 @@
 [project]
-name = "python"
-version = "0.1.0"
-description = "Add your description here"
+name = "falcon-neuro"
+version = "26.7.25"
+description = "TODO"
 readme = "README.md"
-authors = [
-    { name = "ben", email = "benfrost42@icloud.com" }
-]
+authors = [{ name = "Falcon Neuro Maintainers" }]
 requires-python = ">=3.14"
+keywords = [
+    "neuroscience",
+    "electrophysiology",
+    "signal-processing",
+    "lfp",
+    "ripple-detection",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
 dependencies = []
+
+
+
+[project.urls]
+Repository = "https://github.com/falcon-neuro/falcon"
+Issues = "https://github.com/falcon-neuro/falcon/issues"
+Changelog = "https://github.com/falcon-neuro/falcon/blob/main/CHANGELOG.md"
 
 [project.scripts]
 python = "python:main"
 
 [build-system]
-requires = ["uv_build>=0.12.1,<0.13.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/espresso"]
