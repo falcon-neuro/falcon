@@ -21,25 +21,25 @@ jobs:
           version: "0.11.14"
 
       - name: Build release distributions via uv
-        run: uv build
+        run: uv build src/python
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:
           name: release-dists
-          path: dist/
+          path: src/python/dist/
 
   pypi-publish:
     runs-on: ubuntu-latest
     needs:
       - release-build
     permissions:
-      id-token: write      # Mandatory for OIDC Trusted Publishing
-      attestations: write  # Mandatory for PEP 740 artifact signature logs
+      id-token: write
+      attestations: write
 
     environment:
       name: pypi
-      url: pypi.org{{ github.event.release.tag_name }}
+      url: pypi.org
 
     steps:
       - name: Retrieve release distributions
@@ -52,4 +52,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          attestations: true 
+          attestations: true
