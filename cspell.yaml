@@ -5,6 +5,7 @@ ignorePaths:
   - build/**
   - cmake_cache/**
   - extensions/**
+  - docs/doxygen/**
 dictionaries:
   - cpp
 words:
@@ -24,6 +25,7 @@ words:
   - DCMAKE
   - Debouncer
   - Digilynx
+  - Doxyfile
   - dummysink
   - elec
   - endmacro
@@ -47,6 +49,7 @@ words:
   - libzmq
   - LLNL
   - LTWH
+  - mainpage
   - Maxs
   - multichannelfilter
   - nchannels

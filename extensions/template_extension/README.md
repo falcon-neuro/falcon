@@ -9,17 +9,17 @@ A template extension for creating custom Falcon processors and data types.
 A simple example pipeline would be:
 ```yaml
 processors:
-    dummy_writer:
+    my_writer:
         class: DummyWriter
         options:
             freq: 6
             message: "hello"
 
-    dummy_reader:
+    my_reader:
         class: DummyReader
 
 connections:
-    - dummy_writer.output = dummy_reader.input
+    - my_writer.output = my_reader.input
 ```
 
 

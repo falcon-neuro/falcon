@@ -10,7 +10,7 @@ Directory get ubuntuHomePath {
 
 Directory get falconInstallationPath {
   return Directory(
-    '${ubuntuHomePath.path}/.local/share/org.falcon-eyrie.falcon_gui/',
+    '${ubuntuHomePath.path}/.local/share/org.falcon-neuro.falcon_gui/',
   )..createSync(recursive: true);
 }
 

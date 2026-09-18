@@ -8,7 +8,7 @@ Falcon is a modular and extensible software framework for soft real-time signal 
 To install Falcon on Debian Linux, simply run the following command in your terminal:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/falcon-eyrie/falcon-core/refs/heads/develop/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/falcon-neuro/falcon/refs/heads/develop/install.sh | bash
 ```
 
 # Advanced development and debugging
@@ -29,17 +29,14 @@ Falcon is engineered for high-performance neural data processing where timing is
 *   **Neural Decoding:** Online detection and decoding of hippocampal replay patterns.
 *   **Closed-Loop Experiments:** Low-latency feedback loops for electrophysiology.
 
-For comprehensive guides and API references, please visit the [Official Documentation](https://falcon-core.readthedocs.io).
-
-> We are currently working on expanding the documentation to include more detailed examples and tutorials.
-
+For comprehensive guides and API references, please visit the [Documentation](https://falcon-neuro.org/docs).
 
 # Contributing
 
 If you encounter installation issues or runtime bugs, please open an issue in the repository. When reporting a bug, it is highly recommended to include:
-A clear description of the problem or requested feature.
-The specific graph definition used.
-Relevant configuration files.
+- A clear description of the problem or requested feature.
+- The specific graph definition used.
+- Relevant configuration files.
 
 # Developing new extensions
-To develop a new extension, you may open an issue here for architectural guidance. Generally, maintainers recommend hosting your extension in a standalone repository and then submitting a Pull Request to Falcon to include your documentation link in the main project registry.
+To develop a new extension, you may use the template extension in the `extensions/` folder.
