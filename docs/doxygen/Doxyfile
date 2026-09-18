@@ -1,0 +1,35 @@
+PROJECT_NAME           = "Falcon"
+OUTPUT_DIRECTORY       = build
+
+INPUT                  = docs/ falcon/ extensions/
+EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/**
+
+FILE_PATTERNS          = *.hpp *.cpp *.h *.md
+RECURSIVE              = YES
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+
+FULL_SIDEBAR           = NO
+HTML_HEADER            = docs/doxygen/header.html
+
+HTML_EXTRA_STYLESHEET  = build/doxygen-awesome-css/doxygen-awesome.css \
+                            build/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
+                            build/doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css
+HTML_EXTRA_FILES       = build/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \
+                            build/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
+                            build/doxygen-awesome-css/doxygen-awesome-fragment-copy-button.js \
+                            build/doxygen-awesome-css/doxygen-awesome-interactive-toc.js \
+                            build/doxygen-awesome-css/doxygen-awesome-tabs.js
+
+GENERATE_TREEVIEW      = YES
+
+DISABLE_INDEX          = NO
+
+HTML_COLORSTYLE        = LIGHT
+SEARCHENGINE           = YES
+
+PAGE_OUTLINE_PANEL=NO
+HAVE_DOT = NO
+CLASS_GRAPH = NO
+

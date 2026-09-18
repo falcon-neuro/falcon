@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-NAMESPACE="org.falcon-eyrie.falcon_gui"
+NAMESPACE="org.falcon-neuro.falcon_gui"
 BASE_DIR="$HOME/.local/share/$NAMESPACE"
-REPO="falcon-eyrie/falcon-core"
+REPO="falcon-neuro/falcon"
 
 echo "Fetching latest version information..."
 
