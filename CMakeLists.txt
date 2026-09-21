@@ -17,6 +17,10 @@ endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR NOT CMAKE_BUILD_TYPE)
+    file(WRITE "${CMAKE_BINARY_DIR}/debug/.lldbinit" "settings set target.memory-module-load-level partial\n")
+endif()
+
 include(FetchContent)
 
 FetchContent_Declare(

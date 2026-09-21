@@ -12,7 +12,11 @@
             ],
             "cwd": "${workspaceFolder}/build/debug",
             "preLaunchTask": "make",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "initCommands": [
+                // TODO(ben): temp solution to prevent lldb hanging, remove
+                "settings set symbols.enable-external-lookup false"
+            ]
         }
     ]
 }
