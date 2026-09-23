@@ -36,8 +36,11 @@ words:
   - flatc
   - flathash
   - frontend
+  - ftrivial
+  - GLFW
   - GRAPHERROR
   - headeronly
+  - imgui
   - isautonomous
   - kbhit
   - keypair
@@ -68,6 +71,7 @@ words:
   - ontime
   - optvallen
   - outoforder
+  - Oversample
   - pgrep
   - pixz
   - RCVTIMEO
@@ -87,8 +91,16 @@ words:
   - taskset
   - unoptimized
   - upslope
+  - Wconversion
+  - Wdouble
   - Wextra
   - WHOLELIBS
+  - Wnon
+  - Wnull
+  - Woverloaded
+  - Wpedantic
+  - Wshadow
+  - Wsign
   - Wunused
   - xipplib
   - YAMLCPP
