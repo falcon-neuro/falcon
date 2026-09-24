@@ -40,3 +40,9 @@ If you encounter installation issues or runtime bugs, please open an issue in th
 
 # Developing new extensions
 To develop a new extension, you may use the template extension in the `extensions/` folder.
+
+
+if (ImGui::Begin("Falcon", nullptr, window_flags)) {
+                m_mainWindow.render();
+                ImGui::End();
+            }

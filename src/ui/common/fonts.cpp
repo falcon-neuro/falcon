@@ -25,7 +25,7 @@ void RegisterFonts() {
     font_config.OversampleV = 2;
     font_config.PixelSnapH = true;
 
-    const int sizes[] = {14, 16, 18, 24, 32, 48, 68};
+    const int sizes[] = {14, 16, 18, 24, 32, 48, 118};
 
     const char* regular_path = "assets/Inter-VariableFont_opsz,wght.ttf";
     const char* italic_path = "assets/Inter-Italic-VariableFont_opsz,wght.ttf";

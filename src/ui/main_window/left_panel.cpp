@@ -12,7 +12,7 @@ class LeftPanel {
     ~LeftPanel() = default;
 
     void render(float width, float height) {
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.16f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, (ImVec4) ImColor(0xffffffff));
         ImGui::BeginChild("LeftPanelContainer", ImVec2(width, height), true);
 
         if (ImGui::Button("X##CloseLeft") && m_onClose) {
