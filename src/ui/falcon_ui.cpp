@@ -11,18 +11,12 @@
 class FalconUI {
    private:
     GLFWwindow* m_window = nullptr;
-    MainWindow m_mainWindow;
-
-    static void windowSizeCallback(GLFWwindow* window, int width, int height) {
-        FalconUI* instance = static_cast<FalconUI*>(glfwGetWindowUserPointer(window));
-        if (instance) {
-            instance->handleResize(width, height);
-        }
-    }
-
-    void handleResize(int width, int height) { glViewport(0, 0, width, height); }
+    MainWindow main_window_;
+    MainWindowController main_window_controller_;
 
     bool initWindowContext() {
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+
         if (!glfwInit()) {
             std::cerr << "Failed to initialize GLFW\n";
             return false;
@@ -40,14 +34,13 @@ class FalconUI {
             return false;
         }
 
+        glfwMaximizeWindow(m_window);
+
         glfwMakeContextCurrent(m_window);
         glfwSwapInterval(1);
 
-        glfwSetWindowUserPointer(m_window, this);
-        glfwSetWindowSizeCallback(m_window, windowSizeCallback);
-
         if (!gladLoadGL(glfwGetProcAddress)) {
-            std::cerr << "Failed to initialize GLAD v2 loader\n";
+            std::cerr << "Failed to initialize GLAD loader\n";
             return false;
         }
 
@@ -94,6 +87,8 @@ class FalconUI {
     }
 
    public:
+    FalconUI() : main_window_(main_window_controller_) {}
+
     ~FalconUI() { shutdown(); }
 
     GLFWwindow* getWindow() const { return m_window; }
@@ -101,7 +96,46 @@ class FalconUI {
     bool setup() {
         if (!initWindowContext()) return false;
         if (!initImGui()) return false;
-        m_mainWindow.show();
         return true;
+    }
+
+    void run() {
+        while (!glfwWindowShouldClose(m_window)) {
+            glfwPollEvents();
+
+            int display_w, display_h;
+            glfwGetFramebufferSize(m_window, &display_w, &display_h);
+            glViewport(0, 0, display_w, display_h);
+
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            ImGuiViewport* viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+
+            ImGuiWindowFlags window_flags =
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4) ImColor(0xffffffff));
+            ImGui::Begin("Falcon", nullptr, window_flags);
+
+            main_window_.render();
+
+            ImGui::End();
+            ImGui::PopStyleColor();
+
+            ImGui::Render();
+
+            glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+            glfwSwapBuffers(m_window);
+        }
     }
 };

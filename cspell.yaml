@@ -61,6 +61,7 @@ words:
   - neuralynx
   - Neuro
   - neuromed
+  - Neuropixels
   - nlxreader
   - nlxrecord
   - nlxtestbench
@@ -88,6 +89,7 @@ words:
   - stim
   - streamheader
   - SUBDIRLIST
+  - SUPERFRAMESIZE
   - taskset
   - unoptimized
   - upslope
