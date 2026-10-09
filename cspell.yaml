@@ -53,6 +53,7 @@ words:
   - LLNL
   - LTWH
   - mainpage
+  - mavx
   - Maxs
   - multichannelfilter
   - nchannels
@@ -81,6 +82,7 @@ words:
   - recvlen
   - REGISTERPROCESSOR
   - remixicon
+  - Ringbuffer
   - rootproject
   - Selectability
   - setcap

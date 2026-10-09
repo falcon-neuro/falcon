@@ -185,7 +185,7 @@ class NeuropixelsInput {
 
         int opt = 1;
         setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-        int rcvbuf = 64 * 1024 * 1024;
+        int rcvbuf = 1 * 1024 * 1024;
         setsockopt(m_sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
         struct sockaddr_in localAddr{};

@@ -1,6 +1,5 @@
 #pragma once
 #include <imgui.h>
-#include <format>
 #include <functional>
 #include "../signal_viewer/signal_viewer.cpp"
 #include "bottom_panel.cpp"
@@ -14,7 +13,7 @@ class MainWindow {
     BottomPanel m_bottomPanel;
     MainViewport m_mainViewport;
     SignalViewer signal_viewer_;
-    SignalViewerController signal_viewer_controller_;
+    SignalParser signal_parser;
 
    public:
     MainWindow(MainWindowController& main_window_controller)
@@ -23,11 +22,11 @@ class MainWindow {
           m_bottomPanel([this]() { main_window_controller_.setBottomBarVisible(false); }),
           m_mainViewport([this]() { main_window_controller_.setLeftSidebarVisible(true); },
                          [this]() { main_window_controller_.setBottomBarVisible(true); }),
-          signal_viewer_(signal_viewer_controller_) {
-        signal_viewer_controller_.start();
+          signal_viewer_(signal_parser) {
+        signal_parser.start();
     }
 
-    ~MainWindow() { signal_viewer_controller_.stop(); }
+    ~MainWindow() { signal_parser.stop(); }
 
     void render() {
         ImVec2 space = ImGui::GetContentRegionAvail();

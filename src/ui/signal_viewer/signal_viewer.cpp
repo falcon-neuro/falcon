@@ -1,6 +1,6 @@
 #pragma once
 #include "imgui.h"
-#include "signal_viewer_controller.cpp"
+#include "signal_parser.cpp"
 
 const ImVec4 colors[10] = {ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
                            ImVec4(0.0f, 0.0f, 1.0f, 1.0f), ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
@@ -10,11 +10,11 @@ const ImVec4 colors[10] = {ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ImVec4(0.0f, 1.0f, 0.
 
 class SignalViewer {
    private:
-    SignalViewerController& controller_;
+    SignalParser& signal_parser_;
     size_t ingestion_rate_ = 0;
 
    public:
-    SignalViewer(SignalViewerController& controller) : controller_(controller) {}
+    SignalViewer(SignalParser& signal_parser) : signal_parser_(signal_parser) {}
     void render() {
         auto fps = static_cast<size_t>(ImGui::GetIO().Framerate);
         ImGui::Text("UI FPS: %.1zu | Ingest Rate (AP Samples): %.1zu Hz", fps, ingestion_rate_);
@@ -28,8 +28,8 @@ class SignalViewer {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 2.0f));
 
         static std::vector<float> ui_presentation_matrix;
-        controller_.sync_presentation_buffer(ui_presentation_matrix,
-                                             static_cast<size_t>(pixel_width), ingestion_rate_);
+        signal_parser_.get_latest_render_data(ui_presentation_matrix,
+                                              static_cast<size_t>(pixel_width), ingestion_rate_);
 
         for (int c = 0; c < NP1_PROBE_CHANNEL_COUNT; ++c) {
             const float* channel_data_ptr = ui_presentation_matrix.data() + (c * pixel_width);
