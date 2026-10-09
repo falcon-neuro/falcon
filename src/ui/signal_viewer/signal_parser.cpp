@@ -27,6 +27,11 @@ class SignalParser {
 
     uint64_t total_samples_processed_ = 0;
 
+    alignas(std::hardware_destructive_interference_size)
+        std::atomic<uint64_t> samples_since_last_check_{0};
+    std::chrono::steady_clock::time_point last_rate_time_;
+    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
+
     void collect_loop() {
         neuropixels_input_.start();
 
@@ -72,7 +77,10 @@ class SignalParser {
                     }
                     write_idx_ = (write_idx_ + 1) % samples_history;
                 }
+
                 total_samples_processed_ += NP1_PROBE_SUPERFRAMESIZE;
+                samples_since_last_check_.fetch_add(NP1_PROBE_SUPERFRAMESIZE,
+                                                    std::memory_order_relaxed);
 
                 neuropixels_input_.release_packet(tail_idx);
             }
@@ -154,6 +162,10 @@ class SignalParser {
 
     void start() {
         if (!running_.load(std::memory_order_relaxed)) {
+            last_rate_time_ = std::chrono::steady_clock::now();
+            samples_since_last_check_.store(0, std::memory_order_relaxed);
+            samples_per_sec_.store(0, std::memory_order_relaxed);
+
             running_.store(true, std::memory_order_relaxed);
             worker_thread_ = std::thread(&SignalParser::collect_loop, this);
 #if defined(__linux__)
@@ -172,7 +184,8 @@ class SignalParser {
         }
     }
 
-    void get_latest_render_data(std::vector<float>& local_ui_buf, size_t pixel_width) {
+    void get_latest_render_data(std::vector<float>& local_ui_buf, size_t pixel_width,
+                                size_t& out_ap_samples_per_sec) {
         current_width_.store(pixel_width, std::memory_order_relaxed);
         size_t latest_prod_slot = producer_slot_.load(std::memory_order_acquire);
         consumer_slot_.store(latest_prod_slot, std::memory_order_release);
@@ -185,5 +198,17 @@ class SignalParser {
             std::memcpy(local_ui_buf.data(), ring_render_buffers_[latest_prod_slot].data(),
                         target_size * sizeof(float));
         }
+
+        auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<float> elapsed = now - last_rate_time_;
+        if (elapsed.count() >= 0.5f) [[unlikely]] {
+            uint64_t samples = samples_since_last_check_.exchange(0, std::memory_order_relaxed);
+            size_t rate = (elapsed.count() > 0.0f)
+                              ? static_cast<size_t>(static_cast<float>(samples) / elapsed.count())
+                              : 0;
+            samples_per_sec_.store(rate, std::memory_order_relaxed);
+            last_rate_time_ = now;
+        }
+        out_ap_samples_per_sec = samples_per_sec_.load(std::memory_order_relaxed);
     }
 };

@@ -11,13 +11,13 @@ const ImVec4 colors[10] = {ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ImVec4(0.0f, 1.0f, 0.
 class SignalViewer {
    private:
     SignalViewerController& controller_;
+    size_t ingestion_rate_ = 0;
 
    public:
     SignalViewer(SignalViewerController& controller) : controller_(controller) {}
     void render() {
-        auto fps = static_cast<double>(ImGui::GetIO().Framerate);
-
-        ImGui::Text("UI FPS: %.1f", fps);
+        auto fps = static_cast<size_t>(ImGui::GetIO().Framerate);
+        ImGui::Text("UI FPS: %.1zu | Ingest Rate (AP Samples): %.1zu Hz", fps, ingestion_rate_);
 
         int pixel_width = static_cast<int>(ImGui::GetContentRegionAvail().x);
         if (pixel_width < 10) pixel_width = 10;
@@ -29,7 +29,7 @@ class SignalViewer {
 
         static std::vector<float> ui_presentation_matrix;
         controller_.sync_presentation_buffer(ui_presentation_matrix,
-                                             static_cast<size_t>(pixel_width));
+                                             static_cast<size_t>(pixel_width), ingestion_rate_);
 
         for (int c = 0; c < NP1_PROBE_CHANNEL_COUNT; ++c) {
             const float* channel_data_ptr = ui_presentation_matrix.data() + (c * pixel_width);

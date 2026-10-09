@@ -16,7 +16,8 @@ class SignalViewerController {
 
     void stop() { parser_.stop(); }
 
-    void sync_presentation_buffer(std::vector<float>& local_ui_buf, size_t pixel_width) {
-        parser_.get_latest_render_data(local_ui_buf, pixel_width);
+    void sync_presentation_buffer(std::vector<float>& local_ui_buf, size_t pixel_width,
+                                  size_t& ingestion_per_s) {
+        parser_.get_latest_render_data(local_ui_buf, pixel_width, ingestion_per_s);
     }
 };
