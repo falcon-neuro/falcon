@@ -1,6 +1,13 @@
 #pragma once
 #include "imgui.h"
 #include "signal_viewer_controller.cpp"
+
+const ImVec4 colors[10] = {ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
+                           ImVec4(0.0f, 0.0f, 1.0f, 1.0f), ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
+                           ImVec4(1.0f, 0.0f, 1.0f, 1.0f), ImVec4(0.0f, 1.0f, 1.0f, 1.0f),
+                           ImVec4(1.0f, 0.5f, 0.0f, 1.0f), ImVec4(0.5f, 0.0f, 1.0f, 1.0f),
+                           ImVec4(0.0f, 1.0f, 0.5f, 1.0f), ImVec4(1.0f, 1.0f, 1.0f, 1.0f)};
+
 class SignalViewer {
    private:
     SignalViewerController& controller_;
@@ -9,15 +16,13 @@ class SignalViewer {
     SignalViewer(SignalViewerController& controller) : controller_(controller) {}
     void render() {
         auto fps = static_cast<double>(ImGui::GetIO().Framerate);
-        controller_.update_benchmarks();
 
-        ImGui::Text("UI FPS: %.1f | Ingest Rate: %.1f Hz", fps, controller_.get_ingestion_rate());
+        ImGui::Text("UI FPS: %.1f", fps);
 
         int pixel_width = static_cast<int>(ImGui::GetContentRegionAvail().x);
         if (pixel_width < 10) pixel_width = 10;
 
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.05f, 0.05f, 0.05f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 2.0f));
@@ -28,6 +33,8 @@ class SignalViewer {
 
         for (int c = 0; c < NP1_PROBE_CHANNEL_COUNT; ++c) {
             const float* channel_data_ptr = ui_presentation_matrix.data() + (c * pixel_width);
+
+            ImGui::PushStyleColor(ImGuiCol_PlotLines, colors[c % 10]);
 
             std::string child_id = "ChannelChild_" + std::to_string(c);
             if (ImGui::BeginChild(child_id.c_str(), ImVec2(0, 60), ImGuiChildFlags_None,
@@ -40,9 +47,11 @@ class SignalViewer {
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel %d", c);
             }
             ImGui::EndChild();
+
+            ImGui::PopStyleColor(1);
         }
 
         ImGui::PopStyleVar();
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(2);
     }
 };

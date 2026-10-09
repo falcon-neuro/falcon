@@ -14,7 +14,6 @@ set(FETCHCONTENT_BASE_DIR "${CMAKE_HOME_DIRECTORY}/.cache" CACHE PATH "")
 # Prevent compiler-specific flags from being automatically appended to shared library link commands
 set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
 
-
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif()
@@ -57,7 +56,6 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 
-
 FetchContent_MakeAvailable(glad)
 
 add_subdirectory("${glad_SOURCE_DIR}/cmake" glad_cmake)
@@ -75,6 +73,7 @@ add_executable(falcon
 )
 
 target_compile_options(falcon PRIVATE
+    -mavx2
     -Wall
     -Wextra
     -Wpedantic
@@ -111,4 +110,5 @@ target_link_libraries(falcon PRIVATE
     imgui
     pthread
     rt
+    uring
 )
