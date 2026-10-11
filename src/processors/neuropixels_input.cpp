@@ -51,6 +51,7 @@ class NeuropixelsInput {
     uint64_t m_malformedPackets{0};
 
     void logDiagnostics() {
+        return;
         auto now = std::chrono::steady_clock::now();
         if (now - m_lastLogTime >= std::chrono::seconds(1)) {
             auto duration =

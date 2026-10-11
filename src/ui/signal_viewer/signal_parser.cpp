@@ -1,12 +1,15 @@
 #pragma once
 #include <immintrin.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstring>
+#include <cmath>
+#include <mutex>
 #include <new>
 #include <thread>
 #include <vector>
 #include "../../processors/neuropixels_input.cpp"
+#include "glad/gl.h"
 
 class SignalParser {
    private:
@@ -15,7 +18,7 @@ class SignalParser {
     alignas(std::hardware_destructive_interference_size) std::atomic<bool> running_{false};
 
     std::vector<float> ap_history_;
-    size_t samples_history = 10 * 30000;
+    size_t samples_history = 3 * 30000;
     size_t write_idx_ = 0;
 
     static constexpr size_t RING_BUFFER_SLOTS = 3;
@@ -32,49 +35,39 @@ class SignalParser {
     std::chrono::steady_clock::time_point last_rate_time_;
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
 
+    GLuint compute_program_ = 0;
+    GLuint ssbo_raw_ = 0;
+    GLuint render_tex_ = 0;
+
+    std::atomic<size_t> requested_history_{3 * 30000};
+    std::atomic<float> voltage_scale_{100.0f};
+    bool resize_pending_ = false;
+
     void collect_loop() {
         neuropixels_input_.start();
 
-        ap_history_.assign(samples_history * NP1_PROBE_CHANNEL_COUNT, 0.0f);
+        ap_history_.assign(samples_history, 0.0f);
         electrodePacket* packet = nullptr;
         size_t tail_idx = 0;
 
         while (running_.load(std::memory_order_relaxed)) {
+            if (resize_pending_) {
+                size_t new_size = requested_history_.load(std::memory_order_relaxed);
+                ap_history_.assign(new_size, 0.0f);
+                samples_history = new_size;
+                write_idx_ = 0;
+                total_samples_processed_ = 0;
+                resize_pending_ = false;
+            }
+
             bool processed_any = false;
 
             while (neuropixels_input_.peek_packet(packet, tail_idx)) {
                 processed_any = true;
 
                 for (size_t i = 0; i < NP1_PROBE_SUPERFRAMESIZE; ++i) {
-                    const int16_t* src_row = packet->apData[i];
-
-                    for (size_t c = 0; c < NP1_PROBE_CHANNEL_COUNT; c += 8) {
-                        __m128i raw_int16 =
-                            _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_row + c));
-                        __m256i expanded_int32 = _mm256_cvtepi16_epi32(raw_int16);
-                        __m256 float_converted = _mm256_cvtepi32_ps(expanded_int32);
-
-                        __m128 lower_half = _mm256_castps256_ps128(float_converted);
-                        __m128 upper_half = _mm256_extractf128_ps(float_converted, 1);
-
-                        ap_history_[(c + 0) * samples_history + write_idx_] =
-                            _mm_cvtss_f32(lower_half);
-                        ap_history_[(c + 1) * samples_history + write_idx_] = _mm_cvtss_f32(
-                            _mm_shuffle_ps(lower_half, lower_half, _MM_SHUFFLE(1, 1, 1, 1)));
-                        ap_history_[(c + 2) * samples_history + write_idx_] = _mm_cvtss_f32(
-                            _mm_shuffle_ps(lower_half, lower_half, _MM_SHUFFLE(2, 2, 2, 2)));
-                        ap_history_[(c + 3) * samples_history + write_idx_] = _mm_cvtss_f32(
-                            _mm_shuffle_ps(lower_half, lower_half, _MM_SHUFFLE(3, 3, 3, 3)));
-
-                        ap_history_[(c + 4) * samples_history + write_idx_] =
-                            _mm_cvtss_f32(upper_half);
-                        ap_history_[(c + 5) * samples_history + write_idx_] = _mm_cvtss_f32(
-                            _mm_shuffle_ps(upper_half, upper_half, _MM_SHUFFLE(1, 1, 1, 1)));
-                        ap_history_[(c + 6) * samples_history + write_idx_] = _mm_cvtss_f32(
-                            _mm_shuffle_ps(upper_half, upper_half, _MM_SHUFFLE(2, 2, 2, 2)));
-                        ap_history_[(c + 7) * samples_history + write_idx_] = _mm_cvtss_f32(
-                            _mm_shuffle_ps(upper_half, upper_half, _MM_SHUFFLE(3, 3, 3, 3)));
-                    }
+                    float val = static_cast<float>(packet->apData[i][0]);
+                    ap_history_[write_idx_] = val;
                     write_idx_ = (write_idx_ + 1) % samples_history;
                 }
 
@@ -105,60 +98,42 @@ class SignalParser {
     }
 
     void update_ekg_buffer(size_t slot, size_t pixel_width) {
-        size_t required_size = pixel_width * NP1_PROBE_CHANNEL_COUNT;
-        if (ring_render_buffers_[slot].size() != required_size) {
-            ring_render_buffers_[slot].assign(required_size, 0.0f);
+        if (ring_render_buffers_[slot].size() != samples_history) {
+            ring_render_buffers_[slot].resize(samples_history, 0.0f);
         }
-
-        uint64_t current_sample = total_samples_processed_;
-        size_t current_cursor = static_cast<size_t>(current_sample % samples_history);
-        size_t pixel_cursor = (current_cursor * pixel_width) / samples_history;
-        if (pixel_cursor >= pixel_width) {
-            pixel_cursor = pixel_width - 1;
-        }
-
-        size_t blank_zone = pixel_width > 40 ? 20 : 5;
-        float* dest_base = ring_render_buffers_[slot].data();
-        const float* src_base = ap_history_.data();
-
-        size_t target_b_lower = (pixel_cursor + 1) % pixel_width;
-        size_t target_b_upper = (pixel_cursor + blank_zone) % pixel_width;
-        bool wrapped = target_b_lower > target_b_upper;
-
-        std::vector<size_t> sample_offsets(pixel_width);
-        std::vector<uint8_t> is_blank_arr(pixel_width, 0);
-
-        for (size_t x = 0; x < pixel_width; ++x) {
-            if (!wrapped) {
-                if (x >= target_b_lower && x <= target_b_upper) {
-                    is_blank_arr[x] = 1;
-                }
-            } else {
-                if (x >= target_b_lower || x <= target_b_upper) {
-                    is_blank_arr[x] = 1;
-                }
-            }
-            size_t offset = (x * samples_history) / pixel_width;
-            sample_offsets[x] = (offset >= samples_history) ? (samples_history - 1) : offset;
-        }
-
-        for (size_t c = 0; c < NP1_PROBE_CHANNEL_COUNT; ++c) {
-            float* dest_row = dest_base + c * pixel_width;
-            const float* src_channel = src_base + c * samples_history;
-
-            for (size_t x = 0; x < pixel_width; ++x) {
-                if (is_blank_arr[x]) {
-                    dest_row[x] = 0.0f;
-                } else {
-                    dest_row[x] = src_channel[sample_offsets[x]];
-                }
-            }
-        }
+        std::copy_n(ap_history_.data(), samples_history, ring_render_buffers_[slot].data());
     }
 
    public:
     SignalParser() = default;
-    ~SignalParser() { stop(); }
+
+    ~SignalParser() {
+        stop();
+        if (ssbo_raw_) glDeleteBuffers(1, &ssbo_raw_);
+        if (render_tex_) glDeleteTextures(1, &render_tex_);
+    }
+
+    void set_compute_program(GLuint program) { compute_program_ = program; }
+    void set_voltage_scale(float scale) { voltage_scale_.store(scale, std::memory_order_relaxed); }
+
+    void update_history_duration(int seconds) {
+        requested_history_.store(seconds * 30000, std::memory_order_relaxed);
+        resize_pending_ = true;
+    }
+
+    void init_gl_resources() {
+        glGenBuffers(1, &ssbo_raw_);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_raw_);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 10 * 30000 * sizeof(float), nullptr,
+                     GL_DYNAMIC_DRAW);
+
+        glGenTextures(1, &render_tex_);
+        glBindTexture(GL_TEXTURE_2D, render_tex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4096, 60, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
     void start() {
         if (!running_.load(std::memory_order_relaxed)) {
@@ -184,31 +159,51 @@ class SignalParser {
         }
     }
 
-    void get_latest_render_data(std::vector<float>& local_ui_buf, size_t pixel_width,
-                                size_t& out_ap_samples_per_sec) {
-        current_width_.store(pixel_width, std::memory_order_relaxed);
-        size_t latest_prod_slot = producer_slot_.load(std::memory_order_acquire);
-        consumer_slot_.store(latest_prod_slot, std::memory_order_release);
-
-        size_t target_size = pixel_width * NP1_PROBE_CHANNEL_COUNT;
-        if (local_ui_buf.size() != target_size) [[unlikely]] {
-            local_ui_buf.resize(target_size);
-        }
-        if (ring_render_buffers_[latest_prod_slot].size() == target_size) [[likely]] {
-            std::memcpy(local_ui_buf.data(), ring_render_buffers_[latest_prod_slot].data(),
-                        target_size * sizeof(float));
-        }
-
+    void calculate_rate(size_t& ingestion_rate) {
         auto now = std::chrono::steady_clock::now();
-        std::chrono::duration<float> elapsed = now - last_rate_time_;
-        if (elapsed.count() >= 0.5f) [[unlikely]] {
-            uint64_t samples = samples_since_last_check_.exchange(0, std::memory_order_relaxed);
-            size_t rate = (elapsed.count() > 0.0f)
-                              ? static_cast<size_t>(static_cast<float>(samples) / elapsed.count())
-                              : 0;
-            samples_per_sec_.store(rate, std::memory_order_relaxed);
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(now - last_rate_time_).count();
+        if (duration >= 1000000) {
+            size_t current_total = samples_since_last_check_.exchange(0, std::memory_order_relaxed);
+            size_t calculated = (current_total * 1000000) / duration;
+            samples_per_sec_.store(calculated, std::memory_order_relaxed);
             last_rate_time_ = now;
         }
-        out_ap_samples_per_sec = samples_per_sec_.load(std::memory_order_relaxed);
+        ingestion_rate = samples_per_sec_.load(std::memory_order_relaxed);
     }
+
+    void dispatch_downsample(size_t pixel_width) {
+        current_width_.store(pixel_width, std::memory_order_relaxed);
+
+        size_t active_producer = producer_slot_.load(std::memory_order_acquire);
+        consumer_slot_.store(active_producer, std::memory_order_release);
+
+        size_t current_history_size = ring_render_buffers_[active_producer].size();
+
+        if (current_history_size > 0) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_raw_);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, current_history_size * sizeof(float),
+                            ring_render_buffers_[active_producer].data());
+        }
+
+        size_t current_cursor = static_cast<size_t>(
+            total_samples_processed_ % (current_history_size > 0 ? current_history_size : 1));
+
+        glUseProgram(compute_program_);
+        glUniform1i(glGetUniformLocation(compute_program_, "u_total_samples"),
+                    static_cast<int>(current_history_size));
+        glUniform1i(glGetUniformLocation(compute_program_, "u_cursor_idx"),
+                    static_cast<int>(current_cursor));
+        glUniform1f(glGetUniformLocation(compute_program_, "u_v_scale"),
+                    voltage_scale_.load(std::memory_order_relaxed));
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_raw_);
+        glBindImageTexture(0, render_tex_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+        int groups = (4096 + 255) / 256;
+        glDispatchCompute(groups, 1, 1);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    }
+
+    GLuint get_render_texture() const { return render_tex_; }
 };
