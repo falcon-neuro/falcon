@@ -205,7 +205,7 @@ class NeuropixelsInput {
 #if defined(__linux__)
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
-        CPU_SET(0, &cpuset);
+        CPU_SET(5, &cpuset);
         pthread_setaffinity_np(m_receiverThread.native_handle(), sizeof(cpu_set_t), &cpuset);
 #endif
     }

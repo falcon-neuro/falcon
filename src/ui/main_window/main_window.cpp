@@ -11,10 +11,10 @@
 
 const char* COMPUTE_SHADER_SRC = R"glsl(
 #version 460 core
-layout(local_size_x = 256) in;
+layout(local_size_x = 256, local_size_y = 1) in;
 
 layout(std430, binding = 0) readonly buffer RawSignal {
-    float samples[];
+    float samples[]; // Row-major: [channel * samples_history + sample_idx]
 };
 
 layout(rgba8, binding = 0) uniform writeonly image2D u_render_target;
@@ -25,8 +25,11 @@ uniform float u_v_scale;
 
 void main() {
     int x = int(gl_GlobalInvocationID.x);
-    if (x >= 4096) return;
+    int c = int(gl_GlobalInvocationID.y);
 
+    if (x >= 4096 || c >= 384) return;
+
+    int history_stride = u_total_samples;
     float samples_per_pixel = float(u_total_samples) / 4096.0;
     int start_idx = int(float(x) * samples_per_pixel);
     int end_idx = int(float(x + 1) * samples_per_pixel);
@@ -37,8 +40,10 @@ void main() {
     float max_val = -1e10;
     bool near_cursor = false;
 
+    int channel_offset = c * history_stride;
+
     for (int i = start_idx; i < end_idx; ++i) {
-        float v = samples[i];
+        float v = samples[channel_offset + i];
         if (v < min_val) min_val = v;
         if (v > max_val) max_val = v;
         if (abs(i - u_cursor_idx) < 150) {
@@ -52,6 +57,8 @@ void main() {
     int y_min = int(clamp((n_min + 1.0) * 0.5 * 60.0, 0.0, 59.0));
     int y_max = int(clamp((n_max + 1.0) * 0.5 * 60.0, 0.0, 59.0));
 
+    int image_y_start = c * 60;
+
     for (int y = 0; y < 60; ++y) {
         vec4 color = vec4(0.06f, 0.06f, 0.08f, 1.0f);
         if (near_cursor && abs(x - int((float(u_cursor_idx) / u_total_samples) * 4096.0)) < 4) {
@@ -59,7 +66,7 @@ void main() {
         } else if (y >= y_min && y <= y_max) {
             color = vec4(0.0f, 1.0f, 0.0f, 1.0f);
         }
-        imageStore(u_render_target, ivec2(x, y), color);
+        imageStore(u_render_target, ivec2(x, image_y_start + y), color);
     }
 }
 )glsl";
@@ -88,14 +95,16 @@ class ShaderCompiler {
             glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
             if (!success) {
                 glGetShaderInfoLog(shader, 1024, NULL, infoLog);
-                std::cerr << "ERROR::SHADER_COMPILATION_ERROR of type: " << type << "\n" << infoLog << "\n";
+                std::cerr << "ERROR::SHADER_COMPILATION_ERROR of type: " << type << "\n"
+                          << infoLog << "\n";
                 return false;
             }
         } else {
             glGetProgramiv(shader, GL_LINK_STATUS, &success);
             if (!success) {
                 glGetProgramInfoLog(shader, 1024, NULL, infoLog);
-                std::cerr << "ERROR::PROGRAM_LINKING_ERROR of type: " << type << "\n" << infoLog << "\n";
+                std::cerr << "ERROR::PROGRAM_LINKING_ERROR of type: " << type << "\n"
+                          << infoLog << "\n";
                 return false;
             }
         }
@@ -182,15 +191,6 @@ class MainWindow {
         if (!is_initialized_) {
             init_opengl_resources();
         }
-
-        ImGui::Begin("Controls");
-        if (ImGui::SliderInt("Duration (sec)", &ui_duration_seconds_, 1, 10)) {
-            signal_parser.update_history_duration(ui_duration_seconds_);
-        }
-        if (ImGui::SliderFloat("Scale (uV)", &ui_voltage_scale_, 10.0f, 1000.0f, "%.1f")) {
-            signal_parser.set_voltage_scale(ui_voltage_scale_);
-        }
-        ImGui::End();
 
         ImVec2 space = ImGui::GetContentRegionAvail();
 

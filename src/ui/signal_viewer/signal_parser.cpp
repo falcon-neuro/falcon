@@ -1,15 +1,15 @@
 #pragma once
-#include <immintrin.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <mutex>
 #include <new>
 #include <thread>
 #include <vector>
-#include "../../processors/neuropixels_input.cpp"
+#include <cmath>
+#include <immintrin.h>
 #include "glad/gl.h"
+#include "../../processors/neuropixels_input.cpp"
 
 class SignalParser {
    private:
@@ -30,8 +30,7 @@ class SignalParser {
 
     uint64_t total_samples_processed_ = 0;
 
-    alignas(std::hardware_destructive_interference_size)
-        std::atomic<uint64_t> samples_since_last_check_{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> samples_since_last_check_{0};
     std::chrono::steady_clock::time_point last_rate_time_;
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
 
@@ -46,14 +45,14 @@ class SignalParser {
     void collect_loop() {
         neuropixels_input_.start();
 
-        ap_history_.assign(samples_history, 0.0f);
+        ap_history_.assign(384 * samples_history, 0.0f);
         electrodePacket* packet = nullptr;
         size_t tail_idx = 0;
 
         while (running_.load(std::memory_order_relaxed)) {
             if (resize_pending_) {
                 size_t new_size = requested_history_.load(std::memory_order_relaxed);
-                ap_history_.assign(new_size, 0.0f);
+                ap_history_.assign(384 * new_size, 0.0f);
                 samples_history = new_size;
                 write_idx_ = 0;
                 total_samples_processed_ = 0;
@@ -66,14 +65,14 @@ class SignalParser {
                 processed_any = true;
 
                 for (size_t i = 0; i < NP1_PROBE_SUPERFRAMESIZE; ++i) {
-                    float val = static_cast<float>(packet->apData[i][0]);
-                    ap_history_[write_idx_] = val;
+                    for (size_t c = 0; c < 384; ++c) {
+                        ap_history_[c * samples_history + write_idx_] = static_cast<float>(packet->apData[i][c]);
+                    }
                     write_idx_ = (write_idx_ + 1) % samples_history;
                 }
 
                 total_samples_processed_ += NP1_PROBE_SUPERFRAMESIZE;
-                samples_since_last_check_.fetch_add(NP1_PROBE_SUPERFRAMESIZE,
-                                                    std::memory_order_relaxed);
+                samples_since_last_check_.fetch_add(NP1_PROBE_SUPERFRAMESIZE, std::memory_order_relaxed);
 
                 neuropixels_input_.release_packet(tail_idx);
             }
@@ -81,8 +80,7 @@ class SignalParser {
             size_t target_width = current_width_.load(std::memory_order_relaxed);
             if (processed_any && target_width > 0) {
                 size_t active_consumer = consumer_slot_.load(std::memory_order_acquire);
-                size_t next_producer_slot =
-                    (producer_slot_.load(std::memory_order_relaxed) + 1) % RING_BUFFER_SLOTS;
+                size_t next_producer_slot = (producer_slot_.load(std::memory_order_relaxed) + 1) % RING_BUFFER_SLOTS;
                 if (next_producer_slot == active_consumer) {
                     next_producer_slot = (next_producer_slot + 1) % RING_BUFFER_SLOTS;
                 }
@@ -98,10 +96,11 @@ class SignalParser {
     }
 
     void update_ekg_buffer(size_t slot, size_t pixel_width) {
-        if (ring_render_buffers_[slot].size() != samples_history) {
-            ring_render_buffers_[slot].resize(samples_history, 0.0f);
+        size_t total_elements = 384 * samples_history;
+        if (ring_render_buffers_[slot].size() != total_elements) {
+            ring_render_buffers_[slot].resize(total_elements, 0.0f);
         }
-        std::copy_n(ap_history_.data(), samples_history, ring_render_buffers_[slot].data());
+        std::copy_n(ap_history_.data(), total_elements, ring_render_buffers_[slot].data());
     }
 
    public:
@@ -124,14 +123,13 @@ class SignalParser {
     void init_gl_resources() {
         glGenBuffers(1, &ssbo_raw_);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_raw_);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, 10 * 30000 * sizeof(float), nullptr,
-                     GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 384 * 10 * 30000 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
 
         glGenTextures(1, &render_tex_);
         glBindTexture(GL_TEXTURE_2D, render_tex_);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4096, 60, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4096, 23040, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
@@ -161,8 +159,7 @@ class SignalParser {
 
     void calculate_rate(size_t& ingestion_rate) {
         auto now = std::chrono::steady_clock::now();
-        auto duration =
-            std::chrono::duration_cast<std::chrono::microseconds>(now - last_rate_time_).count();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(now - last_rate_time_).count();
         if (duration >= 1000000) {
             size_t current_total = samples_since_last_check_.exchange(0, std::memory_order_relaxed);
             size_t calculated = (current_total * 1000000) / duration;
@@ -178,30 +175,25 @@ class SignalParser {
         size_t active_producer = producer_slot_.load(std::memory_order_acquire);
         consumer_slot_.store(active_producer, std::memory_order_release);
 
-        size_t current_history_size = ring_render_buffers_[active_producer].size();
+        size_t total_elements = ring_render_buffers_[active_producer].size();
+        size_t current_history_size = total_elements / 384;
 
-        if (current_history_size > 0) {
+        if (total_elements > 0) {
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_raw_);
-            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, current_history_size * sizeof(float),
-                            ring_render_buffers_[active_producer].data());
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, total_elements * sizeof(float), ring_render_buffers_[active_producer].data());
         }
 
-        size_t current_cursor = static_cast<size_t>(
-            total_samples_processed_ % (current_history_size > 0 ? current_history_size : 1));
+        size_t current_cursor = static_cast<size_t>(total_samples_processed_ % (current_history_size > 0 ? current_history_size : 1));
 
         glUseProgram(compute_program_);
-        glUniform1i(glGetUniformLocation(compute_program_, "u_total_samples"),
-                    static_cast<int>(current_history_size));
-        glUniform1i(glGetUniformLocation(compute_program_, "u_cursor_idx"),
-                    static_cast<int>(current_cursor));
-        glUniform1f(glGetUniformLocation(compute_program_, "u_v_scale"),
-                    voltage_scale_.load(std::memory_order_relaxed));
+        glUniform1i(glGetUniformLocation(compute_program_, "u_total_samples"), static_cast<int>(current_history_size));
+        glUniform1i(glGetUniformLocation(compute_program_, "u_cursor_idx"), static_cast<int>(current_cursor));
+        glUniform1f(glGetUniformLocation(compute_program_, "u_v_scale"), voltage_scale_.load(std::memory_order_relaxed));
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_raw_);
         glBindImageTexture(0, render_tex_, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
-        int groups = (4096 + 255) / 256;
-        glDispatchCompute(groups, 1, 1);
+        glDispatchCompute(16, 384, 1); // 16 * 256 = 4096 X-groups, 384 Y-groups
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     }
 

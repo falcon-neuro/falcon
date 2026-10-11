@@ -2,12 +2,16 @@
 #include "glad/gl.h"
 #include "imgui.h"
 #include "signal_parser.cpp"
+#include <string>
 
 class SignalViewer {
    private:
     SignalParser& signal_parser_;
     size_t ingestion_rate_ = 0;
     GLuint gl_custom_shader_line_program_ = 0;
+
+    int ui_duration_seconds_ = 3;
+    float ui_voltage_scale_ = 100.0f;
 
    public:
     SignalViewer(SignalParser& signal_parser) : signal_parser_(signal_parser) {}
@@ -16,7 +20,20 @@ class SignalViewer {
     void render() {
         signal_parser_.calculate_rate(ingestion_rate_);
         auto fps = static_cast<size_t>(ImGui::GetIO().Framerate);
+
         ImGui::Text("UI FPS: %.1zu | Ingest Rate: %.1zu Hz", fps, ingestion_rate_);
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::SliderInt("##Duration", &ui_duration_seconds_, 1, 10, "%d sec")) {
+            signal_parser_.update_history_duration(ui_duration_seconds_);
+        }
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::SliderFloat("##Scale", &ui_voltage_scale_, 10.0f, 1000.0f, "Scale: %.1f uV")) {
+            signal_parser_.set_voltage_scale(ui_voltage_scale_);
+        }
 
         int pixel_width = static_cast<int>(ImGui::GetContentRegionAvail().x);
         if (pixel_width < 10) pixel_width = 10;
@@ -25,20 +42,26 @@ class SignalViewer {
 
         GLuint render_tex = signal_parser_.get_render_texture();
 
-        if (ImGui::BeginChild("ChannelChild_0", ImVec2(0, 60), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar)) {
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-            ImVec2 p_min = ImGui::GetCursorScreenPos();
-            ImVec2 p_max = ImVec2(p_min.x + ImGui::GetContentRegionAvail().x, p_min.y + 60.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 2.0f));
 
-            glUseProgram(gl_custom_shader_line_program_);
-            glUniform1i(glGetUniformLocation(gl_custom_shader_line_program_, "u_channel_idx"), 0);
-            glUniform1f(glGetUniformLocation(gl_custom_shader_line_program_, "u_scale"), 150.0f);
+        for (int c = 0; c < 384; ++c) {
+            std::string child_id = "ChannelChild_" + std::to_string(c);
+            if (ImGui::BeginChild(child_id.c_str(), ImVec2(0, 60), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar)) {
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                ImVec2 p_min = ImGui::GetCursorScreenPos();
+                ImVec2 p_max = ImVec2(p_min.x + ImGui::GetContentRegionAvail().x, p_min.y + 60.0f);
 
-            draw_list->AddImage((ImTextureID) (uintptr_t) render_tex, p_min, p_max);
+                float uv_y0 = (float(c) * 60.0f) / 23040.0f;
+                float uv_y1 = (float(c + 1) * 60.0f) / 23040.0f;
 
-            ImGui::SetCursorPos(ImVec2(8.0f, 4.0f));
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel 0 [GPU]");
+                draw_list->AddImage((ImTextureID)(uintptr_t)render_tex, p_min, p_max, ImVec2(0.0f, uv_y0), ImVec2(1.0f, uv_y1));
+
+                ImGui::SetCursorPos(ImVec2(8.0f, 4.0f));
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel %d [GPU]", c);
+            }
+            ImGui::EndChild();
         }
-        ImGui::EndChild();
+
+        ImGui::PopStyleVar();
     }
 };
