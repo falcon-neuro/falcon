@@ -1,21 +1,18 @@
 #pragma once
+#include <string>
 #include "glad/gl.h"
 #include "imgui.h"
 #include "signal_parser.cpp"
-#include <string>
-
 class SignalViewer {
    private:
     SignalParser& signal_parser_;
     size_t ingestion_rate_ = 0;
-    GLuint gl_custom_shader_line_program_ = 0;
 
-    int ui_duration_seconds_ = 3;
+    float ui_duration_seconds_ = 3;
     float ui_voltage_scale_ = 100.0f;
 
    public:
     SignalViewer(SignalParser& signal_parser) : signal_parser_(signal_parser) {}
-    void set_raster_program(GLuint program_id) { gl_custom_shader_line_program_ = program_id; }
 
     void render() {
         signal_parser_.calculate_rate(ingestion_rate_);
@@ -24,10 +21,22 @@ class SignalViewer {
         ImGui::Text("UI FPS: %.1zu | Ingest Rate: %.1zu Hz", fps, ingestion_rate_);
         ImGui::SameLine();
 
-        ImGui::SetNextItemWidth(120.0f);
-        if (ImGui::SliderInt("##Duration", &ui_duration_seconds_, 1, 10, "%d sec")) {
+        ImGui::SetNextItemWidth(260.0f);
+        char format_buf[128];
+        double total_samples = static_cast<double>(ui_duration_seconds_ * 30000.0f);
+        double ram_bytes = 384.0 * total_samples * sizeof(uint16_t);
+        double ram_mb = ram_bytes / (1024.0 * 1024.0);
+
+        snprintf(format_buf, sizeof(format_buf), "%.4f sec - %.1f smp - %.1f MB",
+                 static_cast<double>(ui_duration_seconds_), total_samples, ram_mb);
+
+        if (ImGui::SliderFloat("##Duration", &ui_duration_seconds_, 0.0001f, 10.0f, format_buf,
+                               ImGuiSliderFlags_NoRoundToFormat)) {
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
             signal_parser_.update_history_duration(ui_duration_seconds_);
         }
+
         ImGui::SameLine();
 
         ImGui::SetNextItemWidth(150.0f);
@@ -46,7 +55,8 @@ class SignalViewer {
 
         for (int c = 0; c < 384; ++c) {
             std::string child_id = "ChannelChild_" + std::to_string(c);
-            if (ImGui::BeginChild(child_id.c_str(), ImVec2(0, 60), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar)) {
+            if (ImGui::BeginChild(child_id.c_str(), ImVec2(0, 60), ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_NoScrollbar)) {
                 ImDrawList* draw_list = ImGui::GetWindowDrawList();
                 ImVec2 p_min = ImGui::GetCursorScreenPos();
                 ImVec2 p_max = ImVec2(p_min.x + ImGui::GetContentRegionAvail().x, p_min.y + 60.0f);
@@ -54,7 +64,8 @@ class SignalViewer {
                 float uv_y0 = (float(c) * 60.0f) / 23040.0f;
                 float uv_y1 = (float(c + 1) * 60.0f) / 23040.0f;
 
-                draw_list->AddImage((ImTextureID)(uintptr_t)render_tex, p_min, p_max, ImVec2(0.0f, uv_y0), ImVec2(1.0f, uv_y1));
+                draw_list->AddImage((ImTextureID) (uintptr_t) render_tex, p_min, p_max,
+                                    ImVec2(0.0f, uv_y0), ImVec2(1.0f, uv_y1));
 
                 ImGui::SetCursorPos(ImVec2(8.0f, 4.0f));
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel %d [GPU]", c);

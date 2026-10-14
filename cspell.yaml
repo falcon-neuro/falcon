@@ -31,6 +31,7 @@ words:
   - endmacro
   - ETERM
   - FETCHCONTENT
+  - fklab
   - flatbuffer
   - FLATBUFFERS
   - flatc
@@ -40,6 +41,7 @@ words:
   - GLFW
   - GRAPHERROR
   - headeronly
+  - hippocampal
   - imgui
   - isautonomous
   - kbhit
@@ -74,8 +76,10 @@ words:
   - optvallen
   - outoforder
   - Oversample
+  - Parameteri
   - pgrep
   - pixz
+  - Programiv
   - RCVTIMEO
   - rdtsc
   - rdtscp
@@ -87,10 +91,14 @@ words:
   - Selectability
   - setcap
   - SNDMORE
+  - ssbo
+  - glTexParameteri
   - stdev
   - stim
+  - glGetShaderiv
   - streamheader
   - SUBDIRLIST
+  - GLsizeiptr
   - SUPERFRAMESIZE
   - taskset
   - unoptimized
