@@ -27,10 +27,10 @@ class SignalViewer {
         double ram_bytes = 384.0 * total_samples * sizeof(uint16_t);
         double ram_mb = ram_bytes / (1024.0 * 1024.0);
 
-        snprintf(format_buf, sizeof(format_buf), "%.4f sec - %.1f smp - %.1f MB",
+        snprintf(format_buf, sizeof(format_buf), "%.4f sec - %.f smp - %.1f MB",
                  static_cast<double>(ui_duration_seconds_), total_samples, ram_mb);
 
-        if (ImGui::SliderFloat("##Duration", &ui_duration_seconds_, 0.0001f, 10.0f, format_buf,
+        if (ImGui::SliderFloat("##Duration", &ui_duration_seconds_, 0.0001f, 100.0f, format_buf,
                                ImGuiSliderFlags_NoRoundToFormat)) {
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) {
@@ -68,7 +68,7 @@ class SignalViewer {
                                     ImVec2(0.0f, uv_y0), ImVec2(1.0f, uv_y1));
 
                 ImGui::SetCursorPos(ImVec2(8.0f, 4.0f));
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel %d [GPU]", c);
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel %d", c);
             }
             ImGui::EndChild();
         }

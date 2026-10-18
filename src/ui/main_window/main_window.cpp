@@ -32,8 +32,7 @@ class MainWindow {
     void init_opengl_resources() {
         if (is_initialized_) return;
 
-
-         signal_parser_.start();
+        signal_parser_.start();
         is_initialized_ = true;
     }
 

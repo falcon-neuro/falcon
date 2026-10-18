@@ -225,7 +225,7 @@ class NeuropixelsInput {
     }
 
     // TODO: dont expose AoS, expose SoA
-    // ...or offer both AoS and SoA 
+    // ...or offer both AoS and SoA
     bool peek_packet(electrodePacket*& packet_ptr, size_t& tail_idx_out) {
         size_t current_tail = m_tail.load(std::memory_order_relaxed);
         size_t current_head = m_head.load(std::memory_order_acquire);

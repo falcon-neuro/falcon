@@ -1,9 +1,9 @@
 #pragma once
 #include <immintrin.h>
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <mutex>
 #include <new>
 #include <thread>
 #include <vector>
@@ -16,19 +16,15 @@ class SignalParser {
     std::thread worker_thread_;
     alignas(std::hardware_destructive_interference_size) std::atomic<bool> running_{false};
 
-    std::vector<float> ap_history_;
+    std::vector<int16_t> cpu_ingest_buffer_;
+    std::vector<int16_t> cpu_swap_buffer_;
+    std::mutex buffer_mutex_;
+
     size_t samples_history = 3 * 30000;
     size_t write_idx_ = 0;
-
-    static constexpr size_t RING_BUFFER_SLOTS = 3;
-    std::vector<float> ring_render_buffers_[RING_BUFFER_SLOTS];
-
-    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> producer_slot_{0};
-    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> consumer_slot_{0};
-    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> current_width_{0};
-
     uint64_t total_samples_processed_ = 0;
 
+    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> current_width_{0};
     alignas(std::hardware_destructive_interference_size)
         std::atomic<uint64_t> samples_since_last_check_{0};
     std::chrono::steady_clock::time_point last_rate_time_;
@@ -41,57 +37,25 @@ class SignalParser {
 
     void collect_loop() {
         neuropixels_input_.start();
-        ap_history_.assign(384 * samples_history, 0.0f);
         electrodePacket* packet = nullptr;
         size_t tail_idx = 0;
 
         while (running_.load(std::memory_order_relaxed)) {
-            if (resize_pending_) {
-                size_t new_size = requested_history_.load(std::memory_order_relaxed);
-                ap_history_.assign(384 * new_size, 0.0f);
-                samples_history = new_size;
-                write_idx_ = 0;
-                total_samples_processed_ = 0;
-                resize_pending_ = false;
-            }
-
             bool processed_any = false;
 
             while (neuropixels_input_.peek_packet(packet, tail_idx)) {
                 processed_any = true;
 
-                for (size_t i = 0; i < NP1_PROBE_SUPERFRAMESIZE; ++i) {
-                    for (size_t c = 0; c < 384; ++c) {
-                        ap_history_[c * samples_history + write_idx_] =
-                            static_cast<float>(packet->apData[i][c]);
-                    }
-                    write_idx_ = (write_idx_ + 1) % samples_history;
+                {
+                    std::lock_guard<std::mutex> lock(buffer_mutex_);
+                    size_t current_size = cpu_ingest_buffer_.size();
+                    cpu_ingest_buffer_.resize(current_size + (12 * 384));
+                    std::memcpy(cpu_ingest_buffer_.data() + current_size, packet->apData,
+                                12 * 384 * sizeof(int16_t));
                 }
 
-                total_samples_processed_ += NP1_PROBE_SUPERFRAMESIZE;
-                samples_since_last_check_.fetch_add(NP1_PROBE_SUPERFRAMESIZE,
-                                                    std::memory_order_relaxed);
+                samples_since_last_check_.fetch_add(12, std::memory_order_relaxed);
                 neuropixels_input_.release_packet(tail_idx);
-            }
-
-            size_t target_width = current_width_.load(std::memory_order_relaxed);
-            if (processed_any && target_width > 0) {
-                size_t active_consumer = consumer_slot_.load(std::memory_order_acquire);
-                size_t next_producer_slot =
-                    (producer_slot_.load(std::memory_order_relaxed) + 1) % RING_BUFFER_SLOTS;
-                if (next_producer_slot == active_consumer) {
-                    next_producer_slot = (next_producer_slot + 1) % RING_BUFFER_SLOTS;
-                }
-
-                size_t total_elements = 384 * samples_history;
-                if (ring_render_buffers_[next_producer_slot].size() != total_elements) {
-                    ring_render_buffers_[next_producer_slot].resize(total_elements, 0.0f);
-                }
-                // TODO: don't copy the whole history, only copy the new samples
-                std::copy_n(ap_history_.data(), total_elements,
-                            ring_render_buffers_[next_producer_slot].data());
-
-                producer_slot_.store(next_producer_slot, std::memory_order_release);
             }
 
             if (!processed_any) {
@@ -101,10 +65,7 @@ class SignalParser {
     }
 
    public:
-    SignalParser() {
-
-    };
-
+    SignalParser() = default;
     ~SignalParser() { stop(); }
 
     void set_voltage_scale(float scale) { gpu_renderer_.set_voltage_scale(scale); }
@@ -116,7 +77,7 @@ class SignalParser {
     }
 
     void start() {
-        gpu_renderer_.init_gl_resources();
+        gpu_renderer_.init_gl_resources(samples_history);
         if (!running_.load(std::memory_order_relaxed)) {
             last_rate_time_ = std::chrono::steady_clock::now();
             samples_since_last_check_.store(0, std::memory_order_relaxed);
@@ -156,17 +117,32 @@ class SignalParser {
     void dispatch_downsample(size_t pixel_width) {
         current_width_.store(pixel_width, std::memory_order_relaxed);
 
-        size_t active_producer = producer_slot_.load(std::memory_order_acquire);
-        consumer_slot_.store(active_producer, std::memory_order_release);
+        if (resize_pending_) {
+            size_t new_size = requested_history_.load(std::memory_order_relaxed);
+            gpu_renderer_.resize_history_buffer(new_size);
+            samples_history = new_size;
+            write_idx_ = 0;
+            total_samples_processed_ = 0;
+            resize_pending_ = false;
+        }
 
-        size_t total_elements = ring_render_buffers_[active_producer].size();
-        size_t current_history_size = total_elements / 384;
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            cpu_swap_buffer_.swap(cpu_ingest_buffer_);
+        }
 
-        size_t current_cursor = static_cast<size_t>(
-            total_samples_processed_ % (current_history_size > 0 ? current_history_size : 1));
+        size_t total_elements = cpu_swap_buffer_.size();
+        size_t num_superframes = total_elements / (12 * 384);
+        size_t new_samples_count = num_superframes * 12;
 
-        gpu_renderer_.execute_downsample(ring_render_buffers_[active_producer],
-                                         current_history_size, current_cursor);
+        gpu_renderer_.execute_demux_and_downsample(cpu_swap_buffer_.data(), total_elements,
+                                                   num_superframes, samples_history, write_idx_,
+                                                   total_samples_processed_);
+
+        write_idx_ = (write_idx_ + new_samples_count) % samples_history;
+        total_samples_processed_ += new_samples_count;
+
+        cpu_swap_buffer_.clear();
     }
 
     GLuint get_render_texture() const { return gpu_renderer_.get_render_texture(); }

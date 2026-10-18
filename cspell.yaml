@@ -39,6 +39,9 @@ words:
   - frontend
   - ftrivial
   - GLFW
+  - glGetShaderiv
+  - GLsizeiptr
+  - glTexParameteri
   - GRAPHERROR
   - headeronly
   - hippocampal
@@ -92,13 +95,12 @@ words:
   - setcap
   - SNDMORE
   - ssbo
-  - glTexParameteri
   - stdev
   - stim
-  - glGetShaderiv
   - streamheader
   - SUBDIRLIST
-  - GLsizeiptr
+  - superframe
+  - superframes
   - SUPERFRAMESIZE
   - taskset
   - unoptimized
