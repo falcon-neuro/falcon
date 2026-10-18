@@ -29,7 +29,7 @@ Falcon is engineered for high-performance neural data processing where timing is
 *   **Neural Decoding:** Online detection and decoding of hippocampal replay patterns.
 *   **Closed-Loop Experiments:** Low-latency feedback loops for electrophysiology.
 
-For comprehensive guides and API references, please visit the [Documentation](https://falcon-neuro.org/docs).
+For comprehensive guides and API references, please visit the [Documentation](https://falcon-neuro.org).
 
 # Contributing
 
