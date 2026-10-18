@@ -180,10 +180,11 @@ class SignalRenderer {
     GLuint get_render_texture() const { return render_tex_; }
 
     size_t get_universal_available_vram_kb() {
+        const size_t fallback_size = 1024 * 512;
         const GLubyte* vendor_ptr = glGetString(GL_VENDOR);
         const GLubyte* renderer_ptr = glGetString(GL_RENDERER);
 
-        if (!vendor_ptr) return 1024 * 1024;  // Default fallback to 1GB if context fails
+        if (!vendor_ptr) return fallback_size;
 
         std::string vendor(reinterpret_cast<const char*>(vendor_ptr));
         std::string renderer(renderer_ptr ? reinterpret_cast<const char*>(renderer_ptr) : "");
@@ -206,7 +207,7 @@ class SignalRenderer {
             GLint amd_free_mem_info[4] = {0, 0, 0, 0};
             glGetIntegerv(GL_VBO_FREE_MEMORY_ATI, amd_free_mem_info);
             if (amd_free_mem_info[0] > 0) {
-                return static_cast<size_t>(amd_free_mem_info[0]);  // Returns free pool space in KB
+                return static_cast<size_t>(amd_free_mem_info[0]);
             }
         }
 
@@ -215,11 +216,10 @@ class SignalRenderer {
         // carve space directly out of host system RAM up to an OS-managed maximum limit.
         if (vendor.find("INTEL") != std::string::npos ||
             renderer.find("INTEL") != std::string::npos) {
-            return 2 * 1024 * 1024;  // Hard cap safe working reservation at 2GB to prevent host
-                                     // system thrashing
+            return fallback_size;
         }
 
-        return 1024 * 1024;  // Absolute generic fallback limit (1GB) for unhandled driver strings
+        return fallback_size;
     }
     void init_gl_resources(size_t initial_history_size) {
         demux_program_ =
