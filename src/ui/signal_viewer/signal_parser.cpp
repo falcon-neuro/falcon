@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <mutex>
 #include <new>
 #include <thread>
@@ -20,7 +21,7 @@ class SignalParser {
     std::vector<int16_t> cpu_swap_buffer_;
     std::mutex buffer_mutex_;
 
-    size_t samples_history = 3 * 30000;
+    size_t samples_history = 1 * 30000;
     size_t write_idx_ = 0;
     uint64_t total_samples_processed_ = 0;
 
@@ -30,7 +31,7 @@ class SignalParser {
     std::chrono::steady_clock::time_point last_rate_time_;
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
 
-    std::atomic<size_t> requested_history_{3 * 30000};
+    std::atomic<size_t> requested_history_{1 * 30000};
     bool resize_pending_ = false;
 
     SignalRenderer gpu_renderer_;
@@ -67,6 +68,10 @@ class SignalParser {
    public:
     SignalParser() = default;
     ~SignalParser() { stop(); }
+
+    void calculate_available_vram_kb(size_t& available_vram_kb) {
+        available_vram_kb = gpu_renderer_.get_universal_available_vram_kb();
+    }
 
     void set_voltage_scale(float scale) { gpu_renderer_.set_voltage_scale(scale); }
 

@@ -21,4 +21,5 @@ sudo apt-get install -y \
   libxi-dev \
   libgl1-mesa-dev \
   libegl1-mesa-dev \
-  python3-jinja2 
+  liburing-dev \
+  python3-jinja2

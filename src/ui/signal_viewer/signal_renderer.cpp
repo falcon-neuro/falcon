@@ -5,6 +5,9 @@
 #include <vector>
 #include "glad/gl.h"
 
+#define GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX 0x9049
+#define GL_VBO_FREE_MEMORY_ATI 0x87FB
+
 const char* DEMUX_COMPUTE_SHADER_SRC = R"glsl(
 #version 460 core
 #extension GL_NV_gpu_shader5 : enable
@@ -154,7 +157,6 @@ class SignalShaders {
         return program;
     }
 };
-
 class SignalRenderer {
    private:
     GLuint demux_program_ = 0;
@@ -177,6 +179,48 @@ class SignalRenderer {
     float get_voltage_scale() const { return voltage_scale_.load(std::memory_order_relaxed); }
     GLuint get_render_texture() const { return render_tex_; }
 
+    size_t get_universal_available_vram_kb() {
+        const GLubyte* vendor_ptr = glGetString(GL_VENDOR);
+        const GLubyte* renderer_ptr = glGetString(GL_RENDERER);
+
+        if (!vendor_ptr) return 1024 * 1024;  // Default fallback to 1GB if context fails
+
+        std::string vendor(reinterpret_cast<const char*>(vendor_ptr));
+        std::string renderer(renderer_ptr ? reinterpret_cast<const char*>(renderer_ptr) : "");
+
+        // Transform to uppercase for comparison consistency
+        std::transform(vendor.begin(), vendor.end(), vendor.begin(), ::toupper);
+        std::transform(renderer.begin(), renderer.end(), renderer.begin(), ::toupper);
+
+        // 1. NVIDIA Dedicated GPU Tracking
+        if (vendor.find("NVIDIA") != std::string::npos) {
+            GLint nvidia_available_kb = 0;
+            glGetIntegerv(GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX, &nvidia_available_kb);
+            if (nvidia_available_kb > 0) {
+                return static_cast<size_t>(nvidia_available_kb);
+            }
+        }
+
+        // 2. AMD / ATI Dedicated GPU Tracking
+        if (vendor.find("AMD") != std::string::npos || vendor.find("ATI") != std::string::npos) {
+            GLint amd_free_mem_info[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_VBO_FREE_MEMORY_ATI, amd_free_mem_info);
+            if (amd_free_mem_info[0] > 0) {
+                return static_cast<size_t>(amd_free_mem_info[0]);  // Returns free pool space in KB
+            }
+        }
+
+        // 3. INTEL or Integrated Silicon Fallback
+        // Intel integrated GPUs do not have dedicated physical VRAM pools; they dynamically
+        // carve space directly out of host system RAM up to an OS-managed maximum limit.
+        if (vendor.find("INTEL") != std::string::npos ||
+            renderer.find("INTEL") != std::string::npos) {
+            return 2 * 1024 * 1024;  // Hard cap safe working reservation at 2GB to prevent host
+                                     // system thrashing
+        }
+
+        return 1024 * 1024;  // Absolute generic fallback limit (1GB) for unhandled driver strings
+    }
     void init_gl_resources(size_t initial_history_size) {
         demux_program_ =
             SignalShaders::compile_shader_program(DEMUX_COMPUTE_SHADER_SRC, GL_COMPUTE_SHADER);
