@@ -22,7 +22,6 @@ class SignalViewer {
         signal_parser_.calculate_rate(ingestion_rate_);
         signal_parser_.calculate_available_vram_kb(available_vram_kb);
 
-        std::cout << available_vram_kb << "\n";
         auto fps = static_cast<size_t>(ImGui::GetIO().Framerate);
 
         ImGui::Text("UI FPS: %.1zu | Ingest Rate: %.1zu Hz", fps, ingestion_rate_);

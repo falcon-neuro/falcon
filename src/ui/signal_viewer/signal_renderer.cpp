@@ -7,44 +7,64 @@
 
 #define GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX 0x9049
 #define GL_VBO_FREE_MEMORY_ATI 0x87FB
+#include <iostream>
+#include <string>
 
-const char* DEMUX_COMPUTE_SHADER_SRC = R"glsl(
+const char* DEMUX_SHADER_NV = R"glsl(
 #version 460 core
 #extension GL_NV_gpu_shader5 : enable
-
 layout(local_size_x = 12, local_size_y = 1) in;
-
-layout(std430, binding = 0) readonly buffer RawInputPackets {
-    int16_t raw_ap_data[];
-};
-
-layout(std430, binding = 1) writeonly buffer RawSignal {
-    float samples[];
-};
-
-uniform int u_samples_history;
-uniform int u_write_idx;
-uniform int u_num_superframes;
-
+layout(std430, binding = 0) readonly buffer RawInputPackets { int16_t raw_ap_data[]; };
+layout(std430, binding = 1) writeonly buffer RawSignal { float samples[]; };
+uniform int u_samples_history; uniform int u_write_idx; uniform int u_num_superframes;
 void main() {
-    int sf_idx = int(gl_WorkGroupID.x);
-    int sample_in_sf = int(gl_LocalInvocationID.x);
-    int c = int(gl_WorkGroupID.y);
-
+    int sf_idx = int(gl_WorkGroupID.x); int sample_in_sf = int(gl_LocalInvocationID.x); int c = int(gl_WorkGroupID.y);
     if (sf_idx >= u_num_superframes || sample_in_sf >= 12 || c >= 384) return;
-
     int total_sample_offset = sf_idx * 12 + sample_in_sf;
     int target_history_idx = (u_write_idx + total_sample_offset) % u_samples_history;
-
     int raw_packet_stride = 12 * 384;
     int raw_idx = (sf_idx * raw_packet_stride) + (sample_in_sf * 384) + c;
-
     float val = float(raw_ap_data[raw_idx]);
-
     int channel_offset = c * u_samples_history;
     samples[channel_offset + target_history_idx] = val;
 }
 )glsl";
+
+const char* DEMUX_SHADER_GENERIC = R"glsl(
+#version 460 core
+layout(local_size_x = 12, local_size_y = 1) in;
+layout(std430, binding = 0) readonly buffer RawInputPackets { int raw_ap_data[]; };
+layout(std430, binding = 1) writeonly buffer RawSignal { float samples[]; };
+uniform int u_samples_history; uniform int u_write_idx; uniform int u_num_superframes;
+void main() {
+    int sf_idx = int(gl_WorkGroupID.x); int sample_in_sf = int(gl_LocalInvocationID.x); int c = int(gl_WorkGroupID.y);
+    if (sf_idx >= u_num_superframes || sample_in_sf >= 12 || c >= 384) return;
+    int total_sample_offset = sf_idx * 12 + sample_in_sf;
+    int target_history_idx = (u_write_idx + total_sample_offset) % u_samples_history;
+    int raw_packet_stride = 12 * 384;
+    int raw_idx = (sf_idx * raw_packet_stride) + (sample_in_sf * 384) + c;
+    int word_idx = raw_idx / 2;
+    int bit_shift = (raw_idx % 2) * 16;
+    int packed_val = raw_ap_data[word_idx];
+    int raw_val = (packed_val >> bit_shift) & 0xFFFF;
+    if ((raw_val & 0x8000) != 0) { raw_val |= 0xFFFF0000; }
+    float val = float(raw_val);
+    int channel_offset = c * u_samples_history;
+    samples[channel_offset + target_history_idx] = val;
+}
+)glsl";
+
+const char* get_demux_shader_source() {
+    const GLubyte* vendor_ptr = glGetString(GL_VENDOR);
+    if (!vendor_ptr) {
+        return DEMUX_SHADER_GENERIC;
+    }
+    std::string vendor(reinterpret_cast<const char*>(vendor_ptr));
+    if (vendor.find("NVIDIA") != std::string::npos) {
+        return DEMUX_SHADER_NV;
+    }
+    return DEMUX_SHADER_GENERIC;
+}
 
 const char* DOWN_COMPUTE_SHADER_SRC = R"glsl(
 #version 460 core
@@ -223,7 +243,7 @@ class SignalRenderer {
     }
     void init_gl_resources(size_t initial_history_size) {
         demux_program_ =
-            SignalShaders::compile_shader_program(DEMUX_COMPUTE_SHADER_SRC, GL_COMPUTE_SHADER);
+            SignalShaders::compile_shader_program(get_demux_shader_source(), GL_COMPUTE_SHADER);
         downsample_program_ =
             SignalShaders::compile_shader_program(DOWN_COMPUTE_SHADER_SRC, GL_COMPUTE_SHADER);
 
