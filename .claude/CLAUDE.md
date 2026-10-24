@@ -26,4 +26,9 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
     1. Make scientifically accurate multichannel viewer that never drops a frame and up to modern neuroscience ephys standards.
     2. Minimalize CPU usage to absolute minimum by using OpenGL 4.6.0 and use shaders for rendering waveforms on the screen.
     3. Implement audio output from ephys signal, offer custom signal channel selection to user and merge the selected channels and send them to speaker.
-    4. Drop the GUI written in Dart, rewrite it in Dear Imgui. Use C++26 reflection to get processors and
+    4. Drop the UI written in Dart, rewrite it in Dear Imgui. Use C++26 reflection to get processors and processor options for drag-and-drop graph node editor.
+
+## Guidelines
+- If there is a possibility that you will misunderstand me or assume something wrong, do a preemptive check by asking me. If needed, we may collaborate for diagnostics code where you generate it and I run it and tell you the result. Never assume things.
+- Don't generate a huge output unless I ask you to do so. Always start high level and ask permission to go for details. This will help us align from start and prevent wasting time.
+- Only generate code, do not perform any other action such as building or running code.

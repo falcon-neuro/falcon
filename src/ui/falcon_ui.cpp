@@ -49,6 +49,14 @@ class FalconUI {
         int major, minor, rev;
         glfwGetVersion(&major, &minor, &rev);
         printf("GLFW Version: %d.%d.%d\n", major, minor, rev);
+
+        // TODO: remove after Intel iGPU diagnostics
+        GLint max_tex = 0, max_ssbo = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+        glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &max_ssbo);
+        std::cout << "Renderer: " << glGetString(GL_RENDERER) << "\n"
+                  << "MAX_TEXTURE_SIZE: " << max_tex << "\n"
+                  << "MAX_SSBO_BLOCK: " << max_ssbo << "\n";
         return true;
     }
 

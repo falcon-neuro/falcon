@@ -261,6 +261,8 @@ class SignalRenderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4096, 23040, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      nullptr);
+        // TODO: remove after Intel iGPU diagnostics
+        std::cout << "texture glGetError: 0x" << std::hex << glGetError() << std::dec << "\n";
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
