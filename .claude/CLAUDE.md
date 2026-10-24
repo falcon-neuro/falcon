@@ -13,20 +13,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, Filter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress
-- **A:**  Refactor Falcon engine
-    1. Drop old lmax distruptor.
-    2. Architect SPSC architecture that minimizes cache misses.
-    3. Architect process scheduling engine for maximizing performance on all cores that dedicated to Falcon. Detect CPU microarch on the fly and change grub settings to isolate all cores but one for Falcon.
-- **B:** Use SIMD
-    1. Refactor existing scalar processors to SIMD using AVX512, with fallback to AVX2. Scalar implementation should be dropped and AVX2 should be mandatory to run Falcon.
-- **C:** JIT
-    1. Replace existing YAML based graph definition with "poor-mans-JIT".
-    2. Ship with clang compiler and compile the graph from the generated .cpp file.
-- **D:** UI
-    1. Make scientifically accurate multichannel viewer that never drops a frame and up to modern neuroscience ephys standards.
-    2. Minimalize CPU usage to absolute minimum by using OpenGL 4.6.0 and use shaders for rendering waveforms on the screen.
-    3. Implement audio output from ephys signal, offer custom signal channel selection to user and merge the selected channels and send them to speaker.
-    4. Drop the UI written in Dart, rewrite it in Dear Imgui. Use C++26 reflection to get processors and processor options for drag-and-drop graph node editor.
+- See [TODO.md](../TODO.md).
 
 ## Guidelines
 - If there is a possibility that you will misunderstand me or assume something wrong, do a preemptive check by asking me. If needed, we may collaborate for diagnostics code where you generate it and I run it and tell you the result. Never assume things.
