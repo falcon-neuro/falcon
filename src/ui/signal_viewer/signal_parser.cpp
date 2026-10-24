@@ -142,7 +142,7 @@ class SignalParser {
 
         gpu_renderer_.execute_demux_and_downsample(cpu_swap_buffer_.data(), total_elements,
                                                    num_superframes, samples_history, write_idx_,
-                                                   total_samples_processed_);
+                                                   total_samples_processed_, pixel_width);
 
         write_idx_ = (write_idx_ + new_samples_count) % samples_history;
         total_samples_processed_ += new_samples_count;
@@ -150,5 +150,9 @@ class SignalParser {
         cpu_swap_buffer_.clear();
     }
 
-    GLuint get_render_texture() const { return gpu_renderer_.get_render_texture(); }
+    void add_draw_callback(ImDrawList* draw_list, int first_channel, int channel_count,
+                           ImVec2 origin, float row_pitch) {
+        gpu_renderer_.add_draw_callback(draw_list, first_channel, channel_count, origin,
+                                        row_pitch);
+    }
 };

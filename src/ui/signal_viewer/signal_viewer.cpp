@@ -1,7 +1,7 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <iostream>
-#include <string>
 #include "glad/gl.h"
 #include "imgui.h"
 #include "signal_parser.cpp"
@@ -67,30 +67,44 @@ class SignalViewer {
 
         signal_parser_.dispatch_downsample(static_cast<size_t>(pixel_width));
 
-        GLuint render_tex = signal_parser_.get_render_texture();
+        constexpr int channel_count = 384;
+        constexpr float row_height = 60.0f;
+        constexpr float row_pitch = 62.0f;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 2.0f));
+        // Only channels inside the window's clip rect are drawn
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        ImVec2 list_start = ImGui::GetCursorScreenPos();
+        float visible_top = draw_list->GetClipRectMin().y - list_start.y;
+        float visible_bottom = draw_list->GetClipRectMax().y - list_start.y;
+        int first = std::clamp(static_cast<int>(visible_top / row_pitch), 0, channel_count);
+        int last = std::clamp(static_cast<int>(std::ceil(visible_bottom / row_pitch)), 0,
+                              channel_count);
 
-        for (int c = 0; c < 384; ++c) {
-            std::string child_id = "ChannelChild_" + std::to_string(c);
-            if (ImGui::BeginChild(child_id.c_str(), ImVec2(0, 60), ImGuiChildFlags_None,
-                                  ImGuiWindowFlags_NoScrollbar)) {
-                ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                ImVec2 p_min = ImGui::GetCursorScreenPos();
-                ImVec2 p_max = ImVec2(p_min.x + ImGui::GetContentRegionAvail().x, p_min.y + 60.0f);
-
-                float uv_y0 = (float(c) * 60.0f) / 23040.0f;
-                float uv_y1 = (float(c + 1) * 60.0f) / 23040.0f;
-
-                draw_list->AddImage((ImTextureID) (uintptr_t) render_tex, p_min, p_max,
-                                    ImVec2(0.0f, uv_y0), ImVec2(1.0f, uv_y1));
-
-                ImGui::SetCursorPos(ImVec2(8.0f, 4.0f));
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "AP Channel %d", c);
-            }
-            ImGui::EndChild();
+        ImU32 row_bg_color = ImGui::GetColorU32(ImVec4(0.06f, 0.06f, 0.08f, 1.0f));
+        for (int c = first; c < last; ++c) {
+            float row_y = list_start.y + static_cast<float>(c) * row_pitch;
+            draw_list->AddRectFilled(ImVec2(list_start.x, row_y),
+                                     ImVec2(list_start.x + static_cast<float>(pixel_width),
+                                            row_y + row_height),
+                                     row_bg_color);
         }
 
-        ImGui::PopStyleVar();
+        if (last > first) {
+            ImVec2 origin(list_start.x, list_start.y + static_cast<float>(first) * row_pitch);
+            signal_parser_.add_draw_callback(draw_list, first, last - first, origin, row_pitch);
+        }
+
+        ImU32 label_color = ImGui::GetColorU32(ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        char label[32];
+        for (int c = first; c < last; ++c) {
+            snprintf(label, sizeof(label), "AP Channel %d", c);
+            draw_list->AddText(
+                ImVec2(list_start.x + 8.0f, list_start.y + static_cast<float>(c) * row_pitch + 4.0f),
+                label_color, label);
+        }
+
+        // Reserves the full scroll height for all channels
+        ImGui::Dummy(ImVec2(static_cast<float>(pixel_width),
+                            static_cast<float>(channel_count) * row_pitch - (row_pitch - row_height)));
     }
 };
