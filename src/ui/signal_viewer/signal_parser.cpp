@@ -41,7 +41,10 @@ class SignalParser {
         electrodePacket* packet = nullptr;
         size_t tail_idx = 0;
 
-        while (running_.load(std::memory_order_relaxed)) {
+        while (true) {
+            uint32_t seq = neuropixels_input_.publish_seq();
+            if (!running_.load(std::memory_order_relaxed)) break;
+
             bool processed_any = false;
 
             while (neuropixels_input_.peek_packet(packet, tail_idx)) {
@@ -60,7 +63,7 @@ class SignalParser {
             }
 
             if (!processed_any) {
-                std::this_thread::yield();
+                neuropixels_input_.wait_for_packet(seq);
             }
         }
     }
@@ -102,6 +105,7 @@ class SignalParser {
     void stop() {
         if (running_.load(std::memory_order_relaxed)) {
             running_.store(false, std::memory_order_relaxed);
+            neuropixels_input_.wake_consumer();
             if (worker_thread_.joinable()) worker_thread_.join();
         }
     }

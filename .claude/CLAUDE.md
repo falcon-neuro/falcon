@@ -16,6 +16,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - See [TODO.md](../TODO.md).
 
 ## Guidelines
+- Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.
 - If there is a possibility that you will misunderstand me or assume something wrong, do a preemptive check by asking me. If needed, we may collaborate for diagnostics code where you generate it and I run it and tell you the result. Never assume things.
 - Don't generate a huge output unless I ask you to do so. Always start high level and ask permission to go for details. This will help us align from start and prevent wasting time.
 - Only generate code, do not perform any other action such as building or running code.

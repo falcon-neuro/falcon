@@ -33,6 +33,7 @@ class NeuropixelsInput {
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> m_head{0};
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> m_tail{0};
     alignas(std::hardware_destructive_interference_size) std::atomic<bool> m_running{false};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint32_t> m_publishSeq{0};
 
     std::thread m_receiverThread;
     std::string m_ip;
@@ -46,12 +47,13 @@ class NeuropixelsInput {
 
     uint64_t m_totalPacketsReceived{0};
     uint64_t m_totalPacketsDropped{0};
+    uint64_t m_droppedSinceStart{0};
     uint64_t m_totalBytesReceived{0};
     uint64_t m_ioUringErrors{0};
     uint64_t m_malformedPackets{0};
+    size_t m_maxRingFill{0};
 
     void logDiagnostics() {
-        return;
         auto now = std::chrono::steady_clock::now();
         if (now - m_lastLogTime >= std::chrono::seconds(1)) {
             auto duration =
@@ -70,8 +72,11 @@ class NeuropixelsInput {
             std::cout << "\033[2J\033[H" << std::flush;
             std::cout << "================ NEUROPIXELS INPUT DIAGNOSTICS ================\n";
             std::cout << "Ringbuffer Fill Level : " << fill << " / " << BUFFER_SIZE << "\n";
+            std::cout << "Ringbuffer Max Fill   : " << m_maxRingFill << " / " << BUFFER_SIZE
+                      << "\n";
             std::cout << "Total Packets Recv    : " << m_totalPacketsReceived << "\n";
             std::cout << "Total Packets Dropped : " << m_totalPacketsDropped << "\n";
+            std::cout << "Dropped Since Start   : " << m_droppedSinceStart << "\n";
             std::cout << "Malformed Packets     : " << m_malformedPackets << "\n";
             std::cout << "io_uring Errors       : " << m_ioUringErrors << "\n";
             std::cout << "Data Received Total   : " << m_totalBytesReceived << " bytes ("
@@ -84,6 +89,7 @@ class NeuropixelsInput {
             m_totalPacketsDropped = 0;
             m_malformedPackets = 0;
             m_ioUringErrors = 0;
+            m_maxRingFill = 0;
             m_lastLogTime = now;
         }
     }
@@ -136,8 +142,11 @@ class NeuropixelsInput {
                     if (user_data != uint64_t(-1)) {
                         m_totalPacketsReceived++;
                         m_head.store((user_data + 1) % BUFFER_SIZE, std::memory_order_release);
+                        m_publishSeq.fetch_add(1, std::memory_order_release);
+                        m_publishSeq.notify_one();
                     } else {
                         m_totalPacketsDropped++;
+                        m_droppedSinceStart++;
                     }
                 } else {
                     m_malformedPackets++;
@@ -151,6 +160,9 @@ class NeuropixelsInput {
             current_head = m_head.load(std::memory_order_relaxed);
             current_tail = m_tail.load(std::memory_order_acquire);
             dropping = ((current_head + 1) % BUFFER_SIZE == current_tail);
+
+            size_t fill = (current_head + BUFFER_SIZE - current_tail) % BUFFER_SIZE;
+            if (fill > m_maxRingFill) m_maxRingFill = fill;
 
             submit_recv_request(current_head, dropping);
         }
@@ -186,7 +198,8 @@ class NeuropixelsInput {
 
         int opt = 1;
         setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-        int rcvbuf = 1 * 1024 * 1024;
+        // Kernel doubles this, capped by net.core.rmem_max: 16 MiB -> 32 MiB buffer.
+        int rcvbuf = 16 * 1024 * 1024;
         setsockopt(m_sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
         struct sockaddr_in localAddr{};
@@ -238,5 +251,16 @@ class NeuropixelsInput {
 
     void release_packet(size_t expected_tail) {
         m_tail.store((expected_tail + 1) % BUFFER_SIZE, std::memory_order_release);
+    }
+
+    // Read publish_seq() before checking the ring, then pass it to wait_for_packet().
+    // Anything published (or wake_consumer()) after that read makes the wait return.
+    uint32_t publish_seq() const { return m_publishSeq.load(std::memory_order_acquire); }
+
+    void wait_for_packet(uint32_t seq) { m_publishSeq.wait(seq, std::memory_order_acquire); }
+
+    void wake_consumer() {
+        m_publishSeq.fetch_add(1, std::memory_order_release);
+        m_publishSeq.notify_all();
     }
 };
