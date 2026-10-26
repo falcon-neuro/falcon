@@ -13,7 +13,9 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, Filter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress
-- See [TODO.md](../TODO.md).
+- Prototype spec: [src/core/spec.md](../src/core/spec.md).
+- After the prototype: [src/core/beyond_prototype.md](../src/core/beyond_prototype.md).
+- Graph shapes atlas: [src/core/graph_shapes.md](../src/core/graph_shapes.md).
 
 ## Guidelines
 - Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.
