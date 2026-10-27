@@ -15,13 +15,13 @@ These two guide every design decision, from the sample format to the graph as a 
 ## Principles
 - **Everything fits in cache.** All rings and all processor state on a core must fit in that core's cache.
   - Hot data is what is touched for every sample: rings, and processor state such as filter coefficients and history. It is sized against L1/L2 per core and the shared L3.
-  - Cold data, such as stream metadata, is read only at graph start, never in the hot loop. Processors copy the few values they need into their own compact state (e.g. an input's 384 µV-per-bit scales, 1.5 KB).
+  - Cold data, such as stream metadata, is decided on compile time. Processors can have the few values they need into their own compact state (e.g. an input's 384 µV-per-bit scales, 1.5 KB).
   - Channels are padded to a multiple of 16, one AVX512 vector of float32, so a sample fills whole 64 B cache lines and SIMD loops have no leftover channels.
   - Ring bytes = samples × padded channels × bytes per sample. One float32 sample is 256 B (4 cache lines) at 64 channels and 1.5 KB at 384 channels (NP1). A 64-sample ring at 384 channels is 48 KB as int16 and 96 KB as float32.
 - **Every sample as soon as possible**: a buffer size of 1 by default (see **Buffer size**), and the smallest rings and buffers everywhere.
 - **No lost packets.** Rings and buffers start as small as possible. If packets get lost, the user makes them bigger: a bigger ring survives a short stall (see **Rings**), and a bigger buffer size lets a graph that is too slow keep up (see **Buffer size**).
-- **Replay**: replaying a recording should give about the same triggers as the live run; 99% matching is enough. For the same input, most processors give exactly the same output anyway, so no extra effort goes into making replays exactly identical (see **Exact replay** in beyond_prototype.md).
-- **64 channels first.** Design and optimise for 64 channels now. 2000 channels come next year, with a year to refactor (see **Scaling to 2000 channels** in beyond_prototype.md).
+- **Deterministic replay**: replaying a recording should give about the same triggers as the live run; 99% matching is enough. For the same input, most processors give exactly the same output anyway, so no extra effort goes into making replays exactly identical (see **Exact replay** in beyond_prototype.md).
+- **Low channel count first** Design and optimise for ~32-64 channels now. +2000 channels come next year, with a year to refactor (see **Scaling to 2000 channels** in beyond_prototype.md).
 
 ## Prototype plan
 Goal: a first engine that runs a real graph end to end. The basics are defined, and later optimisations stay possible.
@@ -38,9 +38,9 @@ Goal: a first engine that runs a real graph end to end. The basics are defined, 
 - **Machine setup** by hand: one core handles the OS and interrupts and all other cores are isolated for Falcon; interrupt batching is turned off on the network card that receives Ripple's data; the UDP receive buffer limit is raised so a short stall doesn't drop packets in the kernel. Automating these is tasks A.1, A.4 and A.5 in beyond_prototype.md.
 - **No live viewer.** The path for the viewer's data from the engine process to the UI process is not needed yet (see **Live viewer** in beyond_prototype.md).
 - **How we judge that it works**:
-  - Correct triggers: Ripple's software (Trellis) records the same session, if it can record alongside Falcon (to verify). A reference script applies the same filter and threshold to that recording. At least 99% of the triggers Falcon logged must match the sample numbers it detects. The rest can differ on samples right at the threshold, e.g. when the reference computes in float64 and Falcon in float32.
+  - Correct triggers: Ripple's software (Trellis) records the same session alongside Falcon. A reference script applies the same filter and threshold to that recording. At least 99% of the triggers Falcon logged must match the sample numbers it detects.
   - Latency inside Falcon: for each trigger, the engine logs the time from packet arrival to the TTL write, using the CPU's timestamp counter (TSC). The arrival time is read on the input core and the TTL time on the processing core, so the TSC must be invariant and synchronised across cores; to be checked on the target CPU.
-  - Latency end to end: the TTL output is wired back into a digital input of the Ripple system (if it has a free one), so the trigger is recorded on the same clock as the neural data.
+  - Latency end to end: the TTL output is wired back into a digital input of the Ripple system, so the trigger is recorded on the same clock as the neural data.
 - **How to prioritise**: decide now what is expensive to change later, and build the simplest version of everything else.
   - Expensive: what processor code sees, i.e. the `process()` signature, the buffer type and the sample type. Every processor depends on it, including the ones labs write in their own extensions.
   - Cheap: what only the engine sees, i.e. rings, threads, buffer assignment and the waiting strategy. These can be optimised later without touching any processor, as long as processors only ever see buffers, never rings.

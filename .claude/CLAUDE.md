@@ -7,7 +7,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Main use case is heavy computational work such as online hippocampal decoding for sub-1ms closed-loop experiments, such as memory impairment or improvement.
 - Secondary use case is basic closed-loop experiments such as spike detection or burst detection. Falcon is desirable for such basic experiments because it provides flexible experimental design while doing the heavy lifting for the low level communication to acquisition hardware such as Neuralynx, Blackrock, Ripple Neuromed, TDT, Neuropixels and more to come.
 - Falcon runs on Debian with preempt_rt, with 1 core handling OS and interrupts while all the remaining cores are dedicated to Falcon only.
-- Falcon requires at least AVX2 X86 CPU. For heavy pipelines, we recommend 9950X3D for AVX512, CL30 memory and such. Labs do buy our recommended high performance hardware to have the lowest latency possible.
+- Falcon requires at least AVX2 X86 CPU with `constant_tsc`. For heavy pipelines, we recommend 9950X3D for AVX512, CL30 memory and such. Labs do buy our recommended high performance hardware to have the lowest latency possible. Overall, we are safe to assume that the CPU will be post-2020.
 - We want flexibility, user friendliness, scalability for massive electrode arrays.
 - Only .cpp files, for minimalism.
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, Filter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
