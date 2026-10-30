@@ -18,22 +18,19 @@ These two guide every design decision, from the sample format to the graph as a 
   - Cold data, such as stream metadata, is decided on compile time. Processors can have the few values they need into their own compact state (e.g. an input's 384 µV-per-bit scales, 1.5 KB).
   - Channels are padded to a multiple of 16, one AVX512 vector of float32, so a sample fills whole 64 B cache lines and SIMD loops have no leftover channels.
   - Ring bytes = samples × padded channels × bytes per sample. One float32 sample is 256 B (4 cache lines) at 64 channels and 1.5 KB at 384 channels (NP1). A 64-sample ring at 384 channels is 48 KB as int16 and 96 KB as float32.
-- **Every sample as soon as possible**: a buffer size of 1 by default (see **Buffer size**), and the smallest rings and buffers everywhere.
-- **No lost packets.** Rings and buffers start as small as possible. If packets get lost, the user makes them bigger: a bigger ring survives a short stall (see **Rings**), and a bigger buffer size lets a graph that is too slow keep up (see **Buffer size**).
+- **Every sample as soon as possible**: one sample per pass (see **One sample per pass**), and the smallest rings everywhere.
+- **No lost packets.** Rings start as small as possible. If packets get lost, the user makes them bigger: a bigger ring survives a short stall (see **Rings**). A graph too slow to keep up is spread over more cores (see **Heavy processors** in beyond_prototype.md).
 - **Deterministic replay**: replaying a recording should give about the same triggers as the live run; 99% matching is enough. For the same input, most processors give exactly the same output anyway, so no extra effort goes into making replays exactly identical (see **Exact replay** in beyond_prototype.md).
-- **Low channel count first** Design and optimise for ~32-64 channels now. +2000 channels come next year, with a year to refactor (see **Scaling to 2000 channels** in beyond_prototype.md).
+- **Low channel count first** Design and optimise for ~32-64 channels now. +2000 channels come in the future (see **Scaling to +2000 channels** in beyond_prototype.md).
 
 ## Prototype plan
 Goal: a first engine that runs a real graph end to end. The basics are defined, and later optimisations stay possible.
 
 ### Agreed
 - **No generator.** We write `graph.cpp` by hand to test the engine. In the product, users never write it: the UI generates it from the processor nodes they drag and drop (see **Generator** in beyond_prototype.md).
-- **Input: Ripple Neuromed, 32 channels.** To verify against Ripple's documentation:
-  - the sample format (listed as floating point in µV under **Sample type**);
-  - how many samples each packet carries (the default **Buffer size** of 1 assumes Ripple delivers each sample immediately);
-  - the device timestamp each packet carries (see **Rings**);
-  - the rate of its raw stream (30 kHz expected), which goes into `graph.cpp` as a compile-time constant (see **Rates**);
-  - that its data arrives over UDP (see **Machine setup**).
+- **Input: Ripple Neuromed, 32 channels**, read through Ripple's C library (`xl_cont_raw` in xipplib). Its documentation confirms: the raw stream is 30 kHz (a compile-time constant in `graph.cpp`, see **Rates**), electrode data is float in µV, each call returns as many points as requested plus one 32-bit timestamp for the first point. There is no separate sample number: the timestamp counts 30 kHz ticks, one per sample, so the input widens it to 64 bits (32 bits wrap after about 40 hours) and uses it as the sample number (see **Buffers**). Still to verify:
+  - how soon a point is available through the library after the hardware sends it (one every 33 µs is expected, see **One sample per pass**);
+  - that its data arrives over UDP (see **Machine setup**), and whether the library runs threads of its own.
 - **Graph**: the Ripple input alone on its own core (see **Input processors**), a ring to one processing core that runs Filter → SpikeDetector → TTL output, the start/stop signal, and a minimal logger. This is shape 1 (chain) of graph_shapes.md. The processor interface must not rule out any other shape.
 - **Machine setup** by hand: one core handles the OS and interrupts and all other cores are isolated for Falcon; interrupt batching is turned off on the network card that receives Ripple's data; the UDP receive buffer limit is raised so a short stall doesn't drop packets in the kernel. Automating these is tasks A.1, A.4 and A.5 in beyond_prototype.md.
 - **No live viewer.** The path for the viewer's data from the engine process to the UI process is not needed yet (see **Live viewer** in beyond_prototype.md).
@@ -51,15 +48,11 @@ Goal: a first engine that runs a real graph end to end. The basics are defined, 
 - **UI and engine are separate programs.** In the product, the UI generates, compiles and runs the engine (see **Generator** in beyond_prototype.md). Compile time is not a concern (seconds with a build cache on a 9950X); runtime performance is.
 - **Hardware input/output latency** is outside the engine design. It is being worked out with the neurotech companies, who shape their firmware for it.
 
-### Buffer size
-The number of samples each processor handles per call, adjustable by the user like the buffer size in audio software. Not to be confused with the ring size (see **Rings**). The default is 1: each pass processes one time point across all channels. This is where nanosecond-level optimisation pays off.
-- With a buffer size of N, every processor runs once per N samples, e.g. 7,500 times per second instead of 30,000 at a buffer size of 4. Per-call costs (input checks, loading state, the ring hop between cores) are paid N times less often, which lets a slower CPU keep up without losing packets. The math per sample stays the same: filtering 4 samples is still 4 times the work of filtering 1.
-- A bigger buffer size adds latency, because a buffer waits until it has N samples.
-- **`process()` receives the whole buffer** and loops over its samples itself, like an audio callback. Calling `process()` once per sample instead would keep every processor at 30,000 calls per second and defeat the purpose.
-- **Compile-time constant**, like the channel count. At a buffer size of 1, the compiler removes each processor's loop over the buffer. Changing the buffer size means recompiling `graph.cpp`.
-- **Buffer layout**: sample-major for now, i.e. all channels of sample 0, then all channels of sample 1, and so on. SIMD works across channels (16 per AVX512 instruction), and it matches NP1's packet layout (`apData[12][384]`). Letting processors choose the layout is in beyond_prototype.md (**Buffer layout preference**).
-- The rest of this spec assumes a buffer size of 1 unless it says otherwise. What is still open above 1 is under **Buffer size above 1** in beyond_prototype.md.
-- Neuralynx and Ripple are expected to deliver each sample immediately (for Ripple, to verify; see **Agreed**). Neuropixels 1.0 sends 12 AP samples per packet at 2.5 kHz, so 0.4 ms is its latency floor. imec may provide Linux drivers that deliver single samples; until then, at a buffer size of 1, a 12-sample NP1 packet is processed in 12 passes back to back.
+### One sample per pass
+Each `process()` call handles at most one sample: one time point across all channels. There is no buffer size (samples per call, as in audio software). Batching samples only pays off when each call has a large fixed cost, such as Falcon 1's scheduling of hundreds of OS threads. Here each core runs one pinned thread, so batching would only add latency.
+- Neuralynx and Ripple are expected to deliver each sample immediately (for Ripple, to verify; see **Agreed**).
+- Neuropixels 1.0 sends 12 samples per packet, one packet every 0.4 ms, so 0.4 ms is its latency floor. Its sample rate is still 30 kHz: the 12 samples go through the graph one per pass, back to back (see **Buffers**), so a spike in the packet's 3rd sample triggers after 3 passes, not after all 12. If imec ever delivers single samples, nothing in the engine changes.
+- Adding batching later means rewriting every processor (see **Scaling to +2000 channels** in beyond_prototype.md).
 
 ### Processors
 - **One processor per stream**, never per channel or tetrode (Falcon 1's hundreds of processors were a major cause of slowness). A processor handles all channels with handwritten SIMD: every processor has a hand-crafted AVX512 version and a hand-crafted AVX2 fallback, rather than relying on the compiler to vectorize. The version for the machine is picked at compile time, since `graph.cpp` is compiled for the machine that runs it. There is no scalar code, and AVX2 is required to run Falcon. Per-group settings (e.g. per-tetrode thresholds) are arrays inside the processor.
@@ -71,9 +64,9 @@ The number of samples each processor handles per call, adjustable by the user li
   - A processor that acts on time checks the time itself on every pass, counting either CPU time or samples. Anything that ends an output, such as turning a TTL off 1 ms after a trigger, is timed in CPU time, so it ends even if the input stops. Such a processor must run on a spinning core (see **Waiting for data**).
 - **A processor is a plain struct** (for now): a `process()` function plus public fields, so `graph.cpp` sets its options with designated initializers (e.g. `Filter ap {.highpass = 300, .lowpass = 6000}`). All fields are public, including internal state such as filter history. No virtual functions: they would force one `process()` signature on every processor and rule out designated initializers. Later, C++26 reflection can read the option fields and `process()`'s parameters (its inputs and outputs) for the UI (other options for later: **Processor type alternatives** in beyond_prototype.md).
 - **The channel count is a compile-time constant**, so the compiler knows every loop's length and every buffer's size (e.g. 32 float32 channels are exactly two AVX512 vectors, or four AVX2 vectors). A processor never hardcodes it: the same code runs at 32, 64 or 2000 channels, and different streams can have different counts (e.g. the branches of a channel split, shape 9 in graph_shapes.md). A new channel count means regenerating and recompiling `graph.cpp`.
-- **Stream type**: the compile-time facts about a stream (channel count, sample rate, sample type, buffer size) are grouped in one named type, and each processor takes it as a template parameter:
+- **Stream type**: the compile-time facts about a stream (channel count, sample rate, sample type) are grouped in one named type, and each processor takes it as a template parameter:
   ```cpp
-  using RippleRaw = Stream<32, 30000, float, 1>;   // written once
+  using RippleRaw = Stream<32, 30000, float>;   // written once
 
   Filter<RippleRaw>        ap     {.highpass = 300};
   SpikeDetector<RippleRaw> spikes {.threshold = -50};
@@ -88,7 +81,7 @@ The number of samples each processor handles per call, adjustable by the user li
 
 **In/out buffers.** `process()` reads its input buffers, writes its output buffers and returns nothing, like an audio plugin. `graph.cpp` declares every buffer and passes the buffers as arguments, so the data flow is visible in the loop. Chosen for clarity: there is one way to hand over data.
 - As fast as returning values: each buffer is a local variable of its core's function, touched only by the inlined loop (see **Processors**), so the compiler can keep the buffer's count in a register. The samples go through L1 either way. This holds only while buffers stay local to their core's function.
-- A processor with several outputs takes several output buffers.
+- A processor can take several input and output buffers.
 - The engine owns the buffers, so the generator can later let processors share buffers, or let a filter overwrite its input in place, without touching any processor (see **Buffer reuse** in beyond_prototype.md). The UI's cache view can count every buffer from `graph.cpp` (task D.5 in beyond_prototype.md).
 - **No copies across rings**: a ring can hand a producer its next free slot as the output buffer, so the producer writes straight into the ring, as the input does in the sketch. A ring reader points its output buffer at the slot it reads.
 - **`out()` marks an output**: in the loop, every output buffer of a processor call is wrapped in `out()`, e.g. `lfp.process(raw_buf, out(lfp_buf));`. `out()` clears the buffer (count 0) right before the call, so a processor that returns at once leaves its output empty, and no author can forget to clear it. Clearing right before the producer, not at the start of the pass, keeps feedback connections working, since they read the previous pass's output. It costs one write per buffer per pass, and it shows the direction of the data in the loop.
@@ -159,26 +152,34 @@ void core3() {
 
 ### Buffers
 - A connection carries either samples (all channels of one time point; defined by sample type, channel count and rate) or events (see **Events**).
-- **A buffer is a pointer to data plus a count**: up to **Buffer size** samples, or the events produced on this pass (zero or more). Its storage belongs to the engine, but a producer can point it at data that already exists elsewhere (a ring slot, a socket receive buffer), so nothing is copied to hand data over.
+- **A buffer is a pointer to data plus a count**: 0 or 1 sample with its header, or the events produced on this pass (zero or more). Its storage belongs to the engine, but a producer can point it at data that already exists elsewhere (a ring slot, a socket receive buffer), so nothing is copied to hand data over.
+- **Each sample has a header** of three values, about 24 B, set by the input processor:
+  - its sample number: 64-bit, counted at the input's rate, with the same meaning on every device. Processors use it to match samples from different inputs, count samples and stamp events. The input derives it from the device's clock and never counts samples itself, so a lost sample shows up as a gap instead of shifting every later number without an error;
+  - the device's own timestamp for that sample, in the device's own unit, which links Falcon's samples to the device's recording (e.g. Trellis, for the correctness check under **Agreed**). Processors never calculate with it;
+  - its arrival time (TSC), for the latency check under **Agreed**. The prototype's chain takes a sample from the ring to the TTL in one pass, so the engine logs the latency as the TTL write time minus the arrival time of the sample read in that pass.
+  - Falcon 1 recorded the same two times (arrival time and device timestamp). Flags wait until something needs them.
+- **The header travels with its sample.** A processor reads its input's header as `in.header`, and starts each output sample with `out.emit(header)`, which copies the given header and sets the count to 1, so no sample exists without one. Usually it passes its input's header; a processor that outputs a sample late (e.g. after a lookahead) passes the header it kept with that sample. Whether a buffer holds a copy of the header or points at it in a ring slot is the engine's choice.
+  - Rejected: one header per chain, handed by `graph.cpp` to the processors that need it. After a processor that outputs late, it would give every later processor the wrong sample number without an error.
 - A count of 0 means nothing new on this pass.
-- After a burst, the extra samples wait where they already are (in the ring or the socket buffer) and are handed over one buffer per pass.
+- After a burst, the extra samples wait where they already are (in the ring or the socket buffer) and are handed over one per pass.
 - Small results that describe a state, such as "the TTL is high" or "a ripple is ongoing", are plain values passed by reference. They keep their value until their producer changes it, and stay in registers once inlined. Anything that means "new on this pass", such as a detection, goes in a buffer, so `out()` clears it (see **graph.cpp**).
-- A buffer's contents are valid only during the current pass, because its producer overwrites them on its next pass. Several processors can read the same buffer in that pass (e.g. `input_buf` is read by both `ap` and `lfp` in the sketch). A processor copies what it needs to keep and never keeps a pointer into a buffer.
+- A buffer's contents are valid only until its producer's next call, which overwrites them: for the rest of the current pass, or into the next pass for a feedback connection (see **Order** under **Per-core loop**). Several processors can read the same buffer in that pass (e.g. `input_buf` is read by both `ap` and `lfp` in the sketch). A processor copies what it needs to keep and never keeps a pointer into a buffer.
 - A buffer filled by a ring reader looks the same as one filled by a processor on the same core, so a processor can't tell whether its input crossed cores.
 
 ### Events
-A second, lightweight connection type: fixed-size records (sample number + payload) for sparse outputs such as spikes, ripple onsets and decoder results. Within one core they are handed over in event buffers. Between cores they go through event rings (see **Event rings between cores** in beyond_prototype.md). An event buffer has room for every channel firing in the same sample: a stimulation artifact crosses threshold on all channels at once, and a buffer too small for that would lose events. The same will hold for event rings.
+A second, lightweight connection type for sparse outputs such as spikes, ripple onsets and decoder results. Within one core they are handed over in event buffers. Between cores they go through event rings (see **Event rings between cores** in beyond_prototype.md).
+- **One record type per kind of event**: a plain fixed-size struct derived from `struct Event { u64 sample; };`, so the sample number always comes first, e.g. `struct Spike : Event { u32 channel; };`. The record type is part of the connection's type, so the compiler rejects connecting ripples to a processor that expects spikes. Processors that accept any kind of event (TTL output, recorder, logger) are templates over the record type.
+  - Rejected: one record type for all events (e.g. sample, channel, value), whose fields would mean different things for different producers, so a consumer could misread them without an error.
+  - No virtual functions: they would add a hidden 8 B pointer in front of `sample` in every record, and a record holding a pointer can't be copied byte for byte into a ring, shared memory or a file.
+- **No serialization code**: whatever saves or shows records (recorder, logger, UI) reads their fields through C++26 reflection, so an author only declares the struct. To verify: the bundled clang's support for C++26 reflection.
+- **The prototype's SpikeDetector** emits a `Spike` on the sample where a channel crosses the threshold, without waiting for the peak. Richer spike records come from separate processors later (see **Spike records** in beyond_prototype.md).
+- **Capacity**: an event buffer has room for every channel firing in the same sample: a stimulation artifact crosses threshold on all channels at once, and a buffer too small for that would lose events. Each producer fixes at compile time how many events it can emit in one pass, e.g. one per channel for a spike detector. The same will hold for event rings.
 
 ### Rings
 - A ring is inserted only where a connection crosses from one core to another: one ring per connection, in either direction. Two cores can have several rings between them. Each ring counts toward the cache of both the writer's and the reader's core.
 - **Size**: an adjustable number of samples, always a power of 2.
 - **One writer, one reader (SPSC)**, the simplest version: the prototype's only ring has one writer and one reader, and SPSC shares the fewest cache lines between the two cores. The old TODO list planned an SPSC design that minimizes cache misses. One writer with many readers is in beyond_prototype.md (**Rings with many readers**).
-- **Each sample's header** holds three values, about 24 B:
-  - its sample number, which processors use to match samples from different inputs;
-  - the device's own timestamp for that sample, which links Falcon's samples to the device's recording (e.g. Trellis, for the correctness check under **Agreed**);
-  - its arrival time (TSC), for the latency check under **Agreed**. The prototype's chain takes a sample from the ring to the TTL in one pass, so the engine logs the latency as the TTL write time minus the arrival time of the sample read in that pass.
-  - Falcon 1 recorded the same two times (arrival time and device timestamp). Flags wait until something needs them.
-- **The header sits in the slot**, in front of the samples: the simplest layout. Since samples fill whole cache lines, the header adds one cache line per sample (3 instead of 2 at 32 channels). Headers in a separate array would save half a line per sample, a later optimisation (see **Ring header layout** in beyond_prototype.md).
+- **The header** (see **Buffers**) **sits in the slot**, in front of the samples: the simplest layout. Since samples fill whole cache lines, the header adds one cache line per sample (3 instead of 2 at 32 channels). Headers in a separate array would save half a line per sample, a later optimisation (see **Ring header layout** in beyond_prototype.md).
 - **A full data ring is a failure.** The writer never waits, and there is no backpressure. The failure is logged, and the user must change the graph or the hardware. Log rings are the exception (see **Logging**).
 - **Reading**: on the reading core, a ring reader works like any processor in the loop. It points its output buffer at the next slot, or leaves it empty (count 0) if this reader has read everything. Checking it is a memory read.
 - **Hop cost**: about 20 ns for the write position within a CCD and about 80 ns across CCDs, plus pulling the slot itself, header included (3 cache lines at 32 float32 channels, 5 at 64, 25 at 384; to be measured). Keep connected cores on one CCD.
@@ -228,4 +229,10 @@ Input processors convert every sample to µV. Every processor after the input re
 - Lower rates inside a graph come from processors that output only every N samples (see **Processors**).
 
 ## Open questions
-None for the prototype. What is still to verify is listed under **Agreed** (Ripple's documentation, Trellis recording alongside Falcon, the TSC across cores).
+The processor interface as actual C++ types, since it is what's expensive to change (see **How to prioritise** under **Agreed**). Settled so far: the sample's header (see **Buffers**) and event records (see **Events**). Still open, in this order:
+1. **Signatures** of `process()` and the setup function: how inputs, outputs, states and options appear in them.
+2. **The buffer interface processors see**: the exact form of `load` and `store` on sample buffers and how they combine with `out.emit(header)`, and how a processor adds events to and reads events from an event buffer.
+
+Low priority, in beyond_prototype.md: under **Scaling to +2000 channels**, replace the note that several samples per call would help with the conclusion we reached instead: when every device delivers one sample every 33 µs, batching gains nothing, and splitting the channels across cores (shape 9) keeps each core's state in cache without adding latency.
+
+What is still to verify is listed under **Agreed** (Ripple's documentation, Trellis recording alongside Falcon, the TSC across cores) and under **Events** (C++26 reflection in the bundled clang).

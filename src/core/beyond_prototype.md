@@ -64,16 +64,6 @@ A processor author must copy what they need to keep and never keep a pointer int
 - Mostly prevented already: processors read samples only through the buffer's load/store helpers (see **Sample type** in spec.md), so they never get a raw pointer to keep.
 - Still possible: keeping a reference to a buffer and reading it in a later pass, when it already holds newer data or nothing. Candidate safety net: a debug build that fills every buffer with NaN after its pass, so such a mistake shows at once in a test. Release builds pay nothing. Not needed for the prototype, whose processors we write ourselves.
 
-### Buffer layout preference
-- For now, buffers are sample-major (see **Buffer size** in spec.md): an array of samples, each holding all channels (AoS).
-- Idea: each processor declares at compile time whether it prefers sample-major (AoS) or channel-major (SoA: all samples of channel 0, then all samples of channel 1, and so on). The upstream input processor sees the preference at compile time and arranges the buffer in that order, so no processor has to reorder it. Sample-major suits IIR filters, which step through time but handle all channels in parallel; channel-major suits filters and windows over time (e.g. FIR filters, waveform extraction).
-- Open: what happens when processors that read the same input prefer different layouts.
-
-### Buffer size above 1
-The prototype runs at a buffer size of 1 (see **Buffer size** in spec.md). Open for bigger buffers:
-- One value for the whole graph, like an audio device's buffer size, or one per input or per core?
-- Processors that change the rate or join inputs: e.g. a decimator by 30 at a buffer size of 12 outputs 0 or 1 sample per buffer, so a buffer of a continuous stream can hold fewer samples than the buffer size.
-
 ### Sample width: float16
 The prototype uses float32 (see **Sample type** in spec.md). Processors load and store samples through the buffer's helpers, so switching to float16 later changes only the stream type, not any processor. Still open: whether to switch.
 - The format must hold: spikes within about ±500 µV, LFP up to a few mV, and stimulation artifacts that drive the ADC to its full range (e.g. ±8 mV on Blackrock).
@@ -105,7 +95,13 @@ The prototype uses float32 (see **Sample type** in spec.md). Processors load and
 - If the delay between chains matters, the user drags one of the chains onto another core in the node editor. The engine does nothing special. Moving a chain costs one more busy core: more heat, and cores are limited (a 9950X3D has 16, one is reserved for the OS, and in the first implementation each input takes one). In the example it adds no ring, since p3 → p4 already crosses cores; if p4 also read p2 directly, that connection would become a ring too.
 
 ### Feedback connections
-- **Feedback connections** are one pass late, so a feedback loop carries at least one sample of delay. In the generated loop, a feedback connection is a buffer that a processor reads before its producer writes it in the pass, so it still holds the previous pass's result. Like any buffer, its contents are valid for one pass only, so the processor that reads it copies what it needs to keep.
+Decided:
+- Feedback is mostly a state (e.g. an adaptive threshold, "a stimulation is ongoing", the last stimulation's sample number), passed by reference like any state (see **Buffers** in spec.md). A state keeps its value, so its reader sees it whenever it runs.
+- Across cores, a feedback connection is an ordinary ring.
+- Within a chain, feedback through a buffer (events or samples) is a known weakness of the engine, not worth more engine work:
+  - The reader sees the producer's output from the previous pass (see `out()` under **graph.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
+  - It sees that output during one pass only, and live that pass is usually an empty one. So the reader must read its feedback input even when its other inputs are empty, and copy what it needs (the rule for several inputs, see **Processors** in spec.md).
+  - A reader that skips it misses feedback without an error, e.g. the last sample of every 12-sample Neuropixels 1.0 packet.
 
 ### Buffer reuse
 Decided:
@@ -119,6 +115,14 @@ Open (formerly open question 9): how buffers are assigned, i.e. which connection
 
 ### Event rings between cores
 - Between cores, events go through a small ring of fixed-size records (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
+
+### Spike records
+The prototype's `Spike` holds only the sample number and the channel (see **Events** in spec.md). Richer records, each made by its own processor from the detector's spikes and the filtered stream, so the path from detector to TTL never waits for them:
+- the peak amplitude, about 0.1–0.3 ms after the crossing;
+- per-group marks for clusterless decoding, e.g. `template <int N> struct GroupSpike : Event { u32 group; float peak[N]; };` (32 B for a tetrode);
+- the waveform, e.g. 40 samples per channel of a tetrode (656 B), about 20 samples late (shape 14 in graph_shapes.md).
+
+In all of them, `sample` is the sample number of the threshold crossing, so every record of one spike carries the same number and they can be matched.
 
 ### Slow readers
 - **Slow readers** (viewer, recorder, audio) subscribe to what the hot loop publishes and never slow down the hot cores. The viewer is just another processor in the graph.
@@ -153,6 +157,11 @@ The prototype puts each sample's header in its ring slot, in front of the sample
 - **hardware wait** (MWAITX on AMD, UMWAIT on Intel): the core sleeps until the ring's write-position cache line is written. No OS involved, caches kept, low power. Added only if a diagnostic on the target machine shows its wake-up time is close to spin.
 - A hardware wait watches a single memory address range (one cache line) per core. A core whose loop reads several rings (e.g. one per chain) can sleep on only one of them; data arriving in another ring does not wake the core.
 
+### Huge pages
+- Each core's memory (rings, processor state, buffers) in 2 MB pages instead of 4 KB pages, so the CPU needs far fewer address translations (TLB entries). At any channel count; the gain is to be measured.
+- Pages reserved at boot, not Linux's transparent huge pages: those are merged by a kernel thread (khugepaged) while the graph runs, which sends TLB-flush interrupts to the realtime cores.
+- Engine-only, no processor changes: e.g. each core thread's stack lives in a huge page, so processors and buffers stay local variables of the core's function (see **Per-core loop** in spec.md).
+
 ### Vector chains
 - Register reuse inside a chain: pass one SIMD vector of channels at a time through consecutive per-channel processors.
   - Values then stay in registers instead of going through L1 at every processor boundary (~2–5 ns per boundary at 384 channels; an estimate, to be measured).
@@ -173,16 +182,15 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
   - Cost: each TSC read takes tens of CPU cycles (to be measured), paid at every processor boundary on every pass. Always on, or only in a separate measurement build of `graph.cpp`?
   - Realtime cores never print, so the timestamps would go through a ring to a non-realtime core, like log messages (see **Logging** in spec.md).
   - TSC values from different cores are only comparable if the TSC is invariant and synchronised across cores; to be checked on the target CPUs.
-  - Related: the open question **Rings** in spec.md (a TSC timestamp in each sample's header) and task A.2 (benchmark each processor on the target machine before the graph runs).
+  - Related: the arrival time in each sample's header (see **Buffers** in spec.md) and task A.2 (benchmark each processor on the target machine before the graph runs).
 
-### Scaling to 2000 channels
-- Ignored while designing for 64. Notes for next year:
+### Scaling to +2000 channels
+- Ignored while designing for 64 channels. Notes for the future:
   - A float32 sample is 8 KB (125 cache lines), so every core crossing gets about 5× more expensive.
   - Ring depth competes with cache: 1 ms of ring is 240 KB.
   - Processor state no longer fits L1: one 4-section filter is 64 KB, more than Zen 5's 48 KB.
-  - 2000 channels usually means several devices, possibly with separate clocks, so combining them is a join across sources (shape 5 in graph_shapes.md).
+  - At one sample per pass (see **One sample per pass** in spec.md), such a filter reloads its state from L2 for every sample (estimate: a few hundred ns per filter). Several samples per call would keep a group of channels' state in registers across those samples, but adds latency and means rewriting every processor.
   - The sample width (float16 vs float32, see **Sample width: float16**) halves or doubles all of these.
-  - Use huge pages to avoid TLB misses.
 
 ## UI
 - **Live viewer**: the viewer is a processor in the engine and the UI is a separate program, so the viewer's data has to cross from the engine process to the UI process. Not designed yet, and not part of the prototype.
@@ -196,7 +204,7 @@ From the former TODO.md. Its other tasks are now part of spec.md.
 - **A:**  Refactor Falcon engine
     1. Detect CPU microarch on the fly and change grub settings to isolate all cores but one for Falcon.
     2. Advanced, later: benchmark each processor on the target machine with synthetic data (at the configured channel count), so the UI can show whether each core keeps up before the graph runs. Needs careful design, since other programs running on the machine (e.g. a browser) skew the results.
-    3. Advanced, later: track how many blocks each ring actually uses during a run, and log a hint when it's far below its size (e.g. only 2 of 64 used → shrink to 4), since oversized rings waste cache.
+    3. Advanced, later: track how many slots each ring actually uses during a run, and log a hint when it's far below its size (e.g. only 2 of 64 used → shrink to 4), since oversized rings waste cache.
     4. Check the UDP receive buffer limit (`net.core.rmem_max`) at startup. Debian's default (212992) caps socket buffers at ~416 KiB, only a few ms of Neuropixels data, so any short receiver stall makes the kernel drop packets where Falcon can't see them. If it's below 32 MiB, Falcon asks the user, and on approval sets it immediately and persists it in `/etc/sysctl.d/` (needs root, e.g. via pkexec), so users never set it by hand.
     5. Turn off interrupt batching (coalescing) on the network card that receives acquisition data. Batching makes packets sent 33 µs apart reach Falcon two or three at a time and adds a delay of its own (e.g. `ethtool -C <nic> adaptive-rx off rx-usecs 0`).
     6. Advanced, later: kernel bypass for network inputs (AF_XDP, or DPDK). The card writes packets straight into Falcon's memory with no kernel copy, and checking for a packet is a memory read, so an input can live in a processing core's loop instead of on its own core. AF_XDP can take only the UDP data and leave the TCP control connection to the kernel. Catches: an `electrodePacket` is 10,056 bytes, bigger than a 9,000-byte jumbo frame, so either Falcon reassembles the IP fragments or the sender sends smaller packets. Also, the card's receive ring becomes the buffer that has to prevent packet loss.
@@ -225,4 +233,4 @@ From the former TODO.md. Its other tasks are now part of spec.md.
     2. Two connections between Falcon and the sender: UDP for data (`electrodePacket`), plain TCP with length-prefixed JSON for control (probe list, IMRO = per-channel electrode site and gain table, start/stop, status).
     3. Samples arrive as raw ADC counts. Falcon converts them to µV and orders channels by depth using the config the sender reports as applied (not the one requested). Config changes are only allowed while streaming is stopped.
     4. IMRO editor in the Falcon UI. NP1 has 960 recording sites on the shank but only 384 channels; each channel N can read site N, N+384 or N+768 (bank 0/1/2), so a channel's number doesn't always match its height on the shank. The editor draws the shank, lets the user mark regions to record from, enforces one site per channel, sets gains, and saves/loads `.imro` files (SpikeGLX format) that are sent to the sender.
-    5. Rewrite `src/processors/neuropixels_input.cpp` (the current version is a sketch). It runs alone on its own spinning core, checks the socket without sleeping (no `io_uring_wait_cqe`, no `notify_one()` per packet), and hands each block to the processing cores through a ring.
+    5. Rewrite `src/processors/neuropixels_input.cpp` (the current version is a sketch). It runs alone on its own spinning core, checks the socket without sleeping (no `io_uring_wait_cqe`, no `notify_one()` per packet), and writes each packet's 12 samples into the ring to the processing cores.
