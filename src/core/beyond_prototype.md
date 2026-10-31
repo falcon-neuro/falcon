@@ -168,6 +168,10 @@ The prototype puts each sample's header in its ring slot, in front of the sample
   - Deferred as premature optimisation.
   - Adding it later without touching processors needs per-channel processors written in a per-vector form: a per-sample "do I run?" plus a per-vector `process()` that returns its output instead of writing it.
 
+
+### False sharing
+- `alignas(64)` is not enough. Switch `alignas(64)` → `alignas(128)` on data written by different threads (counters, filter state) to stop neighbor-line prefetch interference; verify with perf c2c.
+
 ### Exact replay
 Not a goal: a replay should give about the same triggers as the live run (99% matching is enough), and for the same input most processors give exactly the same output anyway (see **Principles** in spec.md). If exact replays are ever needed, e.g. for regression tests, these break exactness:
 - logic that depends on CPU time, e.g. a TTL pulse timed in CPU time;
