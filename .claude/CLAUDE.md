@@ -25,3 +25,14 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Planning, including plan mode, is brainstorming. Never prompt me with selection prompts (multiple-choice questions); we discuss in plain text.
 - Always start slow and high level, without diving deep. Only after we have discussed the high level do we go into specifics.
 - We are dealing with complex software architecture: there are no easy solutions, only trade-offs. If the answers were easy, I wouldn't brainstorm with you, so don't present a choice as obvious; work through the trade-offs with me.
+- One question or topic per message, never several. Queue the other pending points in the open questions of spec.md and raise them one per turn.
+
+## Spec sessions
+Engine planning works only from the docs under **In progress** and this file.
+- Don't read or cite source files (the old `falcon/` engine, the `src/` sketches) unless I ask or we start writing code. They are what is being replaced; reading them anchors the spec on it.
+- beyond_prototype.md is parked: leave its topics out of the discussion until the prototype engine works.
+- **Simplest first.** For what only the engine sees (cheap to change, see **How to prioritise** in spec.md), recommend the simplest version and offer to park the better one, and any optimisation or safety net, in beyond_prototype.md. For what processor code sees (expensive to change), push to get it right now.
+- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
+
+## Memory
+- Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the src/core docs. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.
