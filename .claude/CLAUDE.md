@@ -36,3 +36,4 @@ Engine planning works only from the docs under **In progress** and this file.
 
 ## Memory
 - Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the src/core docs. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.
+- **Stateless chat.** I may close the chat at any moment and resume in a new one exactly where I left off. So the files must always hold everything discussed: write each decision, conclusion and new question into the files in the same turn it comes up (questions go to the open questions of spec.md). Nothing may live only in the chat.
