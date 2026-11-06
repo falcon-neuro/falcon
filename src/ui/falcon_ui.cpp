@@ -8,6 +8,13 @@
 #include <iostream>
 #include "main_window/main_window.cpp"
 
+// Everything about this UI is just a "demo" for checking
+// capabilities of imgui and opengl and compute shaders.
+// This UI only has signal viewer, yet it should be the
+// main ui where graph design happens, as well as graph management,
+// sort of like open ephys 2026 alternative but much more sophisticated
+// and of course capable of interfacing with many more ephys systems
+// and do closed loop with sub 1ms latency on massive electrode arrays.
 class FalconUI {
    private:
     GLFWwindow* m_window = nullptr;

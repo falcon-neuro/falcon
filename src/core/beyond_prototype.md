@@ -55,14 +55,16 @@ Decided:
 - **Extension versioning is the lab's responsibility.** Falcon doesn't track extension versions, since an extension folder may not be a git repo. A missing extension still shows up as a compile error naming its namespace when `graph.cpp` is built.
 
 ### Processor type alternatives
-For now a processor is a plain struct with public fields (see **Processors** in spec.md). Options for later:
-- Options in a nested struct (`Filter ap {{.highpass = 300}}`), so the processor's internal state can be private.
+A processor is a struct with an `Options` template parameter (see **Processors** in spec.md). Option for later:
 - A concept that checks at compile time what every processor must provide, so lab authors get a clear error. Since each processor's inputs differ, it can only check the parts they all share (e.g. that options are primitives or file paths).
 
 ### Rules that fail silently
 A processor author must copy what they need to keep and never keep a pointer into a buffer (see **Buffers** in spec.md). Breaking this rule gives wrong triggers and no error, and keeping such a pointer compiles without a warning. When it breaks depends on where the buffer points: an engine-owned buffer is overwritten on the next pass, so the bug shows at once; a ring slot is overwritten only when the ring wraps around (e.g. 64 samples later), so a short test passes. The same processor can therefore work on one core layout and give wrong values on another.
 - Mostly prevented already: processors read samples only through the buffer's load/store helpers (see **Sample type** in spec.md), so they never get a raw pointer to keep.
 - Still possible: keeping a reference to a buffer and reading it in a later pass, when it already holds newer data or nothing. Candidate safety net: a debug build that fills every buffer with NaN after its pass, so such a mistake shows at once in a test. Release builds pay nothing. Not needed for the prototype, whose processors we write ourselves.
+
+### Processor tests
+- Every processor gets tests. They catch mistakes the processor interface doesn't prevent, e.g. a sample processor that never calls `set_header`, so its output is always empty and everything downstream stays silent (see **Operations a processor uses** under **Buffers** in spec.md).
 
 ### Sample width: float16
 The prototype uses float32 (see **Sample type** in spec.md). Processors load and store samples through the buffer's helpers, so switching to float16 later changes only the stream type, not any processor. Still open: whether to switch.
@@ -99,7 +101,7 @@ Decided:
 - Feedback is mostly a state (e.g. an adaptive threshold, "a stimulation is ongoing", the last stimulation's sample number), passed by reference like any state (see **Buffers** in spec.md). A state keeps its value, so its reader sees it whenever it runs.
 - Across cores, a feedback connection is an ordinary ring.
 - Within a chain, feedback through a buffer (events or samples) is a known weakness of the engine, not worth more engine work:
-  - The reader sees the producer's output from the previous pass (see `out()` under **graph.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
+  - The reader sees the producer's output from the previous pass (see **`Out` clears an output buffer** under **graph.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
   - It sees that output during one pass only, and live that pass is usually an empty one. So the reader must read its feedback input even when its other inputs are empty, and copy what it needs (the rule for several inputs, see **Processors** in spec.md).
   - A reader that skips it misses feedback without an error, e.g. the last sample of every 12-sample Neuropixels 1.0 packet.
 
@@ -115,6 +117,7 @@ Open (formerly open question 9): how buffers are assigned, i.e. which connection
 
 ### Event rings between cores
 - Between cores, events go through a small ring of fixed-size records (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
+- In the prototype, `Events<E, N>` holds its records inside itself. Reading from an event ring without a copy needs it to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
 
 ### Spike records
 The prototype's `Spike` holds only the sample number and the channel (see **Events** in spec.md). Richer records, each made by its own processor from the detector's spikes and the filtered stream, so the path from detector to TTL never waits for them:
@@ -141,7 +144,10 @@ In all of them, `sample` is the sample number of the threshold crossing, so ever
   - c. sent as a special first record in the stream
 
 ### Channel selection
-- What happens when the user only wants some channels, e.g. channels 16 to 24, and discards the rest? It touches the stream type (channel count), the padding of channels to a multiple of 16, and where the other channels are dropped (in the input, or in a processor). Not designed yet.
+- What happens when the user only wants some channels, e.g. channels 16 to 24, and discards the rest? It touches the stream type (channel count), the padding of channels to a multiple of 16, and where the other channels are dropped (in the input, or in a processor).
+- Decided direction: a **packer** processor (working name; also called input formatter or rearranger) copies the needed channels into a smaller stream, padded to a multiple of 16, so the processors downstream see only those channels and stay plain vector loops (processors have no single-channel access, see **Operations a processor uses** under **Buffers** in spec.md). Its option is the list of channels to keep, and its output stream type has the packed channel count.
+  - It can run on the input's core, right after the input, so the ring to the processing cores carries only the packed channels: e.g. 16 of 384 float32 channels take 2 cache lines per sample instead of 25 (see **Hop cost** in spec.md).
+  - Still to design: how the packer picks channels out of the input's vectors.
 
 ### Rings with many readers
 The prototype's rings have one writer and one reader (SPSC, see **Rings** in spec.md). With SPSC, fan-out to several cores writes the same sample into each ring. The alternative for later:
@@ -195,6 +201,9 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
   - Processor state no longer fits L1: one 4-section filter is 64 KB, more than Zen 5's 48 KB.
   - At one sample per pass (see **One sample per pass** in spec.md), such a filter reloads its state from L2 for every sample (estimate: a few hundred ns per filter). Several samples per call would keep a group of channels' state in registers across those samples, but adds latency and means rewriting every processor.
   - The sample width (float16 vs float32, see **Sample width: float16**) halves or doubles all of these.
+
+### Engine states
+- Deferred. The prototype runs once per engine program: stop ends the program (see **Start, stop and config** in spec.md). Later, the program can stay alive between runs, with states such as ready and running, so a stop ends only the loops and a new start doesn't spawn a new program.
 
 ## UI
 - **Live viewer**: the viewer is a processor in the engine and the UI is a separate program, so the viewer's data has to cross from the engine process to the UI process. Not designed yet, and not part of the prototype.

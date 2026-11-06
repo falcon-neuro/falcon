@@ -68,8 +68,12 @@ target_link_libraries(imgui PUBLIC
     glad_gl_core_46
 )
 
+# add_executable(falcon
+#     src/main.cpp
+# )
+
 add_executable(falcon
-    src/main.cpp
+    src/pipelines/monotonous_event_pipeline.cpp
 )
 
 target_compile_options(falcon PRIVATE

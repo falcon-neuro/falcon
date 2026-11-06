@@ -23,7 +23,8 @@ struct electrodePacket {
     int16_t lfpData[NP1_PROBE_CHANNEL_COUNT];
     uint16_t Status[NP1_PROBE_SUPERFRAMESIZE];
 };
-
+// This is not a "processor" yet, it's just a simple implementation to test the UI
+// In the future, it should inherit some sort of processor interface (probably without virtual methods, inheritance is just a concept, not meant for actual OOP inheritance)
 class NeuropixelsInput {
    private:
     static constexpr size_t BUFFER_SIZE = 1024;
