@@ -4,10 +4,10 @@
 #include <functional>
 
 class BottomPanel {
-   private:
+private:
     std::function<void()> on_close_;
 
-   public:
+public:
     explicit BottomPanel(std::function<void()> on_close) : on_close_(std::move(on_close)) {}
     ~BottomPanel() = default;
 

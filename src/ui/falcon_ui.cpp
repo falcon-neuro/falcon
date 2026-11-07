@@ -17,7 +17,7 @@
 // and of course capable of interfacing with many more ephys systems
 // and do closed loop with sub 1ms latency on massive electrode arrays.
 class FalconUI {
-   private:
+private:
     GLFWwindow* window_ = nullptr;
     MainWindow main_window_;
     MainWindowController main_window_controller_;
@@ -111,7 +111,7 @@ class FalconUI {
         glfwTerminate();
     }
 
-   public:
+public:
     FalconUI() : main_window_(main_window_controller_) {}
 
     ~FalconUI() { shutdown(); }

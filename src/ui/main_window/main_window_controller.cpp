@@ -1,10 +1,10 @@
 #pragma once
 class MainWindowController {
-   private:
+private:
     bool is_left_sidebar_visible_ = true;
     bool is_bottom_bar_visible_ = true;
 
-   public:
+public:
     MainWindowController() = default;
     ~MainWindowController() = default;
 

@@ -16,8 +16,8 @@ struct EventLogger {
     void process(Connections connections) {
         for (const Record& event : connections.input) {
             ++received;
-            // Until C++26 reflection reads every field of any record (see Events in src/core/spec.md),
-            // only a field named `count` is printed, if the record has one.
+            // Until C++26 reflection reads every field of any record (see Events in
+            // src/core/spec.md), only a field named `count` is printed, if the record has one.
             if constexpr (requires { event.count; }) {
                 std::println("EventLogger: event {}, count {}", received, event.count);
             } else {

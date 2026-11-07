@@ -9,7 +9,7 @@
 #include "../signal_viewer/signal_viewer.cpp"
 
 class MainWindow {
-   private:
+private:
     MainWindowController& main_window_controller_;
     LeftPanel left_panel_;
     BottomPanel bottom_panel_;
@@ -18,7 +18,7 @@ class MainWindow {
     SignalParser signal_parser_;
     bool is_initialized_ = false;
 
-   public:
+public:
     MainWindow(MainWindowController& main_window_controller)
         : main_window_controller_(main_window_controller),
           left_panel_([this] { main_window_controller_.set_left_sidebar_visible(false); }),

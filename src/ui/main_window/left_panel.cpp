@@ -4,10 +4,10 @@
 #include "../common/fonts.cpp"
 
 class LeftPanel {
-   private:
+private:
     std::function<void()> on_close_;
 
-   public:
+public:
     explicit LeftPanel(std::function<void()> on_close) : on_close_(std::move(on_close)) {}
     ~LeftPanel() = default;
 

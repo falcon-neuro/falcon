@@ -12,7 +12,7 @@
 #include "signal_renderer.cpp"
 
 class SignalParser {
-   private:
+private:
     static constexpr size_t sample_rate = 30000;  // AP band, samples per second
     // int16 values in one packet's AP data: 12 samples of 384 channels
     static constexpr size_t ap_values_per_packet =
@@ -76,7 +76,7 @@ class SignalParser {
         }
     }
 
-   public:
+public:
     SignalParser() = default;
     ~SignalParser() { stop(); }
 
@@ -172,7 +172,6 @@ class SignalParser {
 
     void add_draw_callback(ImDrawList* draw_list, int first_channel, int channel_count,
                            ImVec2 origin, float row_pitch) {
-        gpu_renderer_.add_draw_callback(draw_list, first_channel, channel_count, origin,
-                                        row_pitch);
+        gpu_renderer_.add_draw_callback(draw_list, first_channel, channel_count, origin, row_pitch);
     }
 };

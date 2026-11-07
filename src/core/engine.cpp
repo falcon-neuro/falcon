@@ -68,7 +68,8 @@ struct SampleHeader {
 template <typename StreamInfoType>
 struct SampleWithHeader {
     SampleHeader header;
-    alignas(64) std::array<typename StreamInfoType::ChannelValue, StreamInfoType::padded_channels> values;
+    alignas(64)
+        std::array<typename StreamInfoType::ChannelValue, StreamInfoType::padded_channels> values;
 };
 
 // 0 or 1 sample. `sample` points at the buffer's own storage, or at a ring slot, so nothing is
@@ -110,7 +111,8 @@ struct Out;
 
 template <typename StreamInfoType>
 struct In<SampleBuffer<StreamInfoType>> {
-    In(const SampleBuffer<StreamInfoType>& samples) : header(samples.sample->header), buffer_(samples) {}
+    In(const SampleBuffer<StreamInfoType>& samples)
+        : header(samples.sample->header), buffer_(samples) {}
 
     const SampleHeader& header;
 
@@ -118,7 +120,8 @@ struct In<SampleBuffer<StreamInfoType>> {
 
     [[nodiscard]] SimdVector load(int simd_vector_index) const {
         const float* address =
-            &buffer_.sample->values[static_cast<std::size_t>(simd_vector_index * FLOATS_PER_SIMD_VECTOR)];
+            &buffer_.sample
+                 ->values[static_cast<std::size_t>(simd_vector_index * FLOATS_PER_SIMD_VECTOR)];
         // Not if constexpr: nothing here depends on StreamInfoType, so the discarded branch would
         // still be type-checked, and an __m512 doesn't convert to the AVX2 build's SimdVector.
 #ifdef __AVX512F__
@@ -145,7 +148,8 @@ struct Out<SampleBuffer<StreamInfoType>> {
 
     void store(int simd_vector_index, SimdVector values) {
         float* address =
-            &buffer_.sample->values[static_cast<std::size_t>(simd_vector_index * FLOATS_PER_SIMD_VECTOR)];
+            &buffer_.sample
+                 ->values[static_cast<std::size_t>(simd_vector_index * FLOATS_PER_SIMD_VECTOR)];
         // Not if constexpr, for the same reason as in load().
 #ifdef __AVX512F__
         _mm512_store_ps(address, values);

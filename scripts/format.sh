@@ -17,6 +17,9 @@ FILES=$(git ls-files --cached --others --exclude-standard $FILE_EXTS)
 # Directories to ignore even if they are tracked by git
 MANUAL_EXCLUDE="
 falcon_gui
+falcon
+lib
+extensions
 "
 
 # Filter out manual excludes

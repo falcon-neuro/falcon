@@ -3,11 +3,11 @@
 #include <functional>
 
 class MainViewport {
-   private:
+private:
     std::function<void()> on_show_left_;
     std::function<void()> on_show_bottom_;
 
-   public:
+public:
     MainViewport(std::function<void()> on_show_left, std::function<void()> on_show_bottom)
         : on_show_left_(std::move(on_show_left)), on_show_bottom_(std::move(on_show_bottom)) {}
     ~MainViewport() = default;
