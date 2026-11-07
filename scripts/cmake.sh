@@ -9,6 +9,6 @@ fi
 
 mkdir -p build && cd build
 cmake .. \
-  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_BUILD_TYPE=Profile \
   -DCMAKE_C_COMPILER=/usr/local/bin/clang \
   -DCMAKE_CXX_COMPILER=/usr/local/bin/clang++

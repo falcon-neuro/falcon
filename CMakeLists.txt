@@ -91,6 +91,7 @@ target_compile_options(falcon PRIVATE
     -Wnull-dereference
     -Wdouble-promotion
     -Wformat=2
+    -Werror
     -ftrivial-auto-var-init=pattern
     -stdlib=libc++
     $<$<CONFIG:Debug>:-O0 -g>
@@ -116,3 +117,21 @@ target_link_libraries(falcon PRIVATE
     rt
     uring
 )
+
+# Profile builds also write the disassembly of falcon's own code to <build dir>/output/falcon.S.
+# GNU objdump, not llvm-objdump: Disassembly Explorer can't read llvm-objdump's "; file:line" markers.
+if(CMAKE_BUILD_TYPE STREQUAL "Profile")
+    find_program(GNU_OBJDUMP NAMES objdump REQUIRED)
+    set(FALCON_DISASSEMBLY_FILE "${CMAKE_BINARY_DIR}/output/falcon.S")
+    cmake_path(GET FALCON_DISASSEMBLY_FILE PARENT_PATH FALCON_DISASSEMBLY_DIRECTORY)
+    add_custom_command(
+        OUTPUT ${FALCON_DISASSEMBLY_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${FALCON_DISASSEMBLY_DIRECTORY}
+        COMMAND ${GNU_OBJDUMP} -d -l -C -M intel --insn-width=15 $<TARGET_OBJECTS:falcon> > ${FALCON_DISASSEMBLY_FILE}
+        DEPENDS falcon
+        COMMAND_EXPAND_LISTS
+        VERBATIM
+        COMMENT "Disassembling falcon into ${FALCON_DISASSEMBLY_FILE}"
+    )
+    add_custom_target(falcon_disassembly ALL DEPENDS ${FALCON_DISASSEMBLY_FILE})
+endif()

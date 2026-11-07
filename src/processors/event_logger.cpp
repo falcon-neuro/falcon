@@ -7,11 +7,22 @@
 // Printing is a system call, so it runs on a non-realtime core (see Logging in src/core/spec.md).
 template <std::derived_from<Event> E, int N>
 struct EventLogger {
-    u64 received = 0;   // events received since the start
+    struct Connections {
+        In<Events<E, N>> incoming_events;
+    };
 
-    void process(In<Events<E, N>> incoming_events) {
-        for (const E& _ : incoming_events) {
-            std::println("EventLogger: event {}", ++received);
+    u64 received = 0;  // events received since the start
+
+    void process(Connections connections) {
+        for (const E& event : connections.incoming_events) {
+            ++received;
+            // Until C++26 reflection reads every field of any record (see Events in src/core/spec.md),
+            // only a field named `count` is printed, if the record has one.
+            if constexpr (requires { event.count; }) {
+                std::println("EventLogger: event {}, count {}", received, event.count);
+            } else {
+                std::println("EventLogger: event {}", received);
+            }
         }
     }
 };

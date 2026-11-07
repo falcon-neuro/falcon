@@ -9,8 +9,9 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Falcon runs on Debian with preempt_rt, with 1 core handling OS and interrupts while all the remaining cores are dedicated to Falcon only.
 - Falcon requires at least AVX2 X86 CPU with `constant_tsc`. For heavy pipelines, we recommend 9950X3D for AVX512, CL30 memory and such. Labs do buy our recommended high performance hardware to have the lowest latency possible. Overall, we are safe to assume that the CPU will be post-2020.
 - We want flexibility, user friendliness, scalability for massive electrode arrays.
-- Code safety matters much more than brevity: when they conflict, choose safety (descriptive names, never `i` or `in`; braces everywhere; strict clang-tidy, see `.clang-tidy`).
+- Code safety matters much more than brevity: when they conflict, choose safety (descriptive names, never `i` or `in`; braces everywhere; strict clang-tidy, see `.clang-tidy`). We write the processors, rarely, and users only build graphs in the UI, so more code to write is never a reason to skip a check: a mistake found only after a clinical session can't be undone.
 - Only .cpp files, for minimalism.
+- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does.
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, Filter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress
@@ -33,7 +34,7 @@ Engine planning works only from the docs under **In progress** and this file.
 - Don't read or cite source files (the old `falcon/` engine, the `src/` sketches) unless I ask or we start writing code. They are what is being replaced; reading them anchors the spec on it.
 - beyond_prototype.md is parked: leave its topics out of the discussion until the prototype engine works.
 - **Simplest first.** For what only the engine sees (cheap to change, see **How to prioritise** in spec.md), recommend the simplest version and offer to park the better one, and any optimisation or safety net, in beyond_prototype.md. For what processor code sees (expensive to change), push to get it right now. Outside the hot loop (setup, teardown, failure handling), any simple solution is fine: propose it briefly and don't overengineer it or debate it at length.
-- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
+- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
 
 ## Memory
 - Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the src/core docs. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.

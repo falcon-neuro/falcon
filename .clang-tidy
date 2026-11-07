@@ -9,7 +9,11 @@ Checks:
   - -readability-magic-numbers            # pipeline parameters
 
 WarningsAsErrors: '*'
-HeaderFilterRegex: ''
+# A processor template is analyzed only where a pipeline instantiates it, so report into included files.
+HeaderFilterRegex: '(^|.*/)src/.*'
+# Not ExtraArgs: it lands after the "--" in borrowed compile commands, where it reads as a file name.
+ExtraArgsBefore:
+  - '-Wno-pragma-once-outside-header'
 CheckOptions:
   - key: readability-identifier-naming.TypedefCase
     value: CamelCase

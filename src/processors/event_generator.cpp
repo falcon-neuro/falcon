@@ -1,11 +1,16 @@
 #pragma once
 #include <chrono>
+#include <thread>
 #include "../core/engine.cpp"
 
 // EventGenerator: emits a ScheduledEvent at a fixed rate, like Falcon 1's EventSource.
-// process() never waits (see Processors in src/core/spec.md): it checks the clock on every pass and returns at once until the next event is due.
+// It is an input processor, so it may sleep its core's thread: each pass sleeps until the next event
+// is due, then emits it, so the core doesn't spin. A stop signal is seen only after the current sleep
+// ends, so stopping can take up to one period (1 / rate).
 // ScheduledEvent comes from a timer, not a stream, so it derives from Event directly and has no header.
-struct ScheduledEvent : Event {};
+struct ScheduledEvent : Event {
+    u32 count = 0;   // number of this event since the start, from 1
+};
 
 struct EventGeneratorOptions {
     double rate = 1;   // events per second (Hz)
@@ -13,22 +18,23 @@ struct EventGeneratorOptions {
 
 template <EventGeneratorOptions O>
 struct EventGenerator {
+    struct Connections {
+        Out<Events<ScheduledEvent, 1>> scheduled_events;
+    };
+
     std::chrono::steady_clock::time_point start;   // set on the first pass
     std::chrono::steady_clock::time_point due;     // when the next event is due
     u64 emitted = 0;                               // events emitted so far
 
-    void process(Out<Events<ScheduledEvent, 1>> out) {
+    void process(Connections connections) {
         using namespace std::chrono;
-        steady_clock::time_point now = steady_clock::now();
         if (emitted == 0) {
-            start = due = now;   // the first pass starts the clock
+            start = due = steady_clock::now();   // the first pass starts the clock
         }
-        if (now < due) {
-            return;
-        }
+        std::this_thread::sleep_until(due);
 
-        out.push(ScheduledEvent {});
         ++emitted;
-        due = start + duration_cast<steady_clock::duration>(duration<double>(emitted / O.rate));   // on a fixed schedule, so the events don't drift
+        connections.scheduled_events.push(ScheduledEvent {.count = static_cast<u32>(emitted)});
+        due = start + duration_cast<steady_clock::duration>(duration<double>(static_cast<double>(emitted) / O.rate));   // on a fixed schedule, so the events don't drift
     }
 };

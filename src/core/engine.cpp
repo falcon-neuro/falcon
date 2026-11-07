@@ -8,6 +8,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <exception>
 #include <format>
 #include <initializer_list>
@@ -38,8 +39,8 @@ struct Events {
 };
 
 // --- In and Out (see process() signature in spec.md) ---
-// Every process() parameter is an In<T> or an Out<T>, and each exposes only what its direction
-// allows.
+// process() takes one struct, Connections, declared inside its processor. Every member of it is an
+// In<T> or an Out<T>, and each exposes only what its direction allows.
 
 template <typename T>
 struct In;
@@ -54,8 +55,8 @@ struct In<Events<E, N>> {
 
     [[nodiscard]] bool is_empty() const { return buffer.count == 0; }
     [[nodiscard]] int size() const { return buffer.count; }
-    const E* begin() const { return buffer.records.data(); }
-    const E* end() const { return buffer.records.data() + buffer.count; }
+    [[nodiscard]] const E* begin() const { return buffer.records.data(); }
+    [[nodiscard]] const E* end() const { return buffer.records.data() + buffer.count; }
 };
 
 template <std::derived_from<Event> E, int N>
@@ -67,14 +68,15 @@ struct Out<Events<E, N>> {
     Out(Events<E, N>& events) : buffer(events) { buffer.count = 0; }
 
     void push(const E& record) {
-        buffer.records[buffer.count++] = record;
+        buffer.records[static_cast<std::size_t>(buffer.count++)] = record;
     }  // unchecked: the producer never pushes more than N per pass
 };
 
 // --- Cores (see Per-core loop and Start, stop and config in spec.md) ---
 
-std::atomic<bool> running =
-    true;  // cleared by Ctrl+C or SIGTERM; every core's loop runs while it is set
+// Every core's loop runs while it is set. Cleared by run() on a stop signal, or by a core whose
+// constructor failed.
+std::atomic<bool> running = true;
 std::atomic<bool> failed = false;   // set when a constructor threw on any core
 std::latch* built = nullptr;        // the start barrier, created by run()
 thread_local bool arrived = false;  // whether this core has reached the start barrier
@@ -93,14 +95,48 @@ struct Core {
                      // loop
 };
 
+// The stop signals: SIGINT (Ctrl+C) and SIGTERM (see Start, stop and config in spec.md).
+sigset_t stop_signals() {
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGINT);
+    sigaddset(&signals, SIGTERM);
+    return signals;
+}
+
+// Waits for a stop signal while the cores run, then clears `running`. The timeout ends the wait
+// when `running` was cleared without a signal (a constructor failed, or a core's thread couldn't be
+// started).
+void wait_for_stop_signal(const sigset_t& signals) {
+    while (running) {
+        const timespec timeout{.tv_sec = 0, .tv_nsec = 100'000'000};  // 100 ms
+        const int signal_number = sigtimedwait(&signals, nullptr, &timeout);
+        if (signal_number > 0) {
+            // Temporary: printed directly until the logger exists (see Logging in spec.md). fputs,
+            // unlike println, can't throw, so no exception leaves run().
+
+            std::fputs(signal_number == SIGINT ? "\nCtrl+C received, stopping\n"
+                                               : "\nSIGTERM received, stopping\n",
+                       stderr);
+            running = false;
+        }
+    }
+}
+
 // Runs one pinned thread per core until stopped. Returns 1 if the graph didn't start, 0 otherwise.
 // A core's thread that can't be started also means the graph doesn't start, so no exception leaves
 // run().
 int run(std::initializer_list<Core> cores) {
+    // Blocked before any core's thread starts, so every thread inherits the block and no stop
+    // signal ever interrupts a core's loop. Only wait_for_stop_signal() takes them.
+    const sigset_t signals = stop_signals();
+    if (pthread_sigmask(SIG_BLOCK, &signals, nullptr) != 0) {
+        std::fputs("can't block the stop signals\n", stderr);
+        return 1;
+    }
+
     std::latch latch(static_cast<std::ptrdiff_t>(cores.size()));
     built = &latch;
-    std::signal(SIGINT, [](int) { running = false; });
-    std::signal(SIGTERM, [](int) { running = false; });
 
     std::vector<std::thread> threads;
     try {
@@ -141,6 +177,8 @@ int run(std::initializer_list<Core> cores) {
             latch.count_down();
         }
     }
+
+    wait_for_stop_signal(signals);
     for (std::thread& thread : threads) {
         thread.join();
     }

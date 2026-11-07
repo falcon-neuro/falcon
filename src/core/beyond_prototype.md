@@ -65,6 +65,8 @@ A processor author must copy what they need to keep and never keep a pointer int
 
 ### Processor tests
 - Every processor gets tests. They catch mistakes the processor interface doesn't prevent, e.g. a sample processor that never calls `set_header`, so its output is always empty and everything downstream stays silent (see **Operations a processor uses** under **Buffers** in spec.md).
+- Each processor is also run with every optional connection left out, since using a missing one compiles and is undefined behaviour (see **Required and optional connections** under **Processors** in spec.md).
+- The tests also matter for linting: clang-tidy analyzes a processor's code only where something instantiates its template, so a processor that no pipeline and no test instantiates is never checked.
 
 ### Sample width: float16
 The prototype uses float32 (see **Sample type** in spec.md). Processors load and store samples through the buffer's helpers, so switching to float16 later changes only the stream type, not any processor. Still open: whether to switch.

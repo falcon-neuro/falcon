@@ -13,4 +13,8 @@
     },
     "clangd.path": "/usr/local/bin/clangd",
     "clangd.checkUpdates": false,
+    "disasexpl.useBinaryParsing": true,
+    "disasexpl.associations": {
+        "**/*.cpp": "${workspaceFolder}/build/output/falcon.S",
+    },
 }
