@@ -68,6 +68,10 @@ A processor author must copy what they need to keep and never keep a pointer int
 - Each processor is also run with every optional connection left out, since using a missing one compiles and is undefined behaviour (see **Required and optional connections** under **Processors** in spec.md).
 - The tests also matter for linting: clang-tidy analyzes a processor's code only where something instantiates its template, so a processor that no pipeline and no test instantiates is never checked.
 
+### FIR filter
+The prototype's Filter is IIR only (see **Filter** in spec.md). Falcon 1 also had FIR filter files (32 taps for Neuralynx's spike filter, 101 for a low-pass example). An FIR filter would be its own processor: its state is the last N input samples of every channel, not two floats per section (101 taps at 384 channels is 155 KB, beyond L1), and its delay is half its length. The generator would write its taps into `graph.cpp` like the biquad coefficients.
+- Coefficients as template arguments are encoded into the processor's symbol names. Hundreds are fine; thousands would bloat the symbols and slow the compile. If it ever matters, `graph.cpp` can declare them as a `constexpr` array and pass a reference to it as the template argument (allowed since C++20), so they stay compile-time constants. To be measured.
+
 ### Sample width: float16
 The prototype uses float32 (see **Sample type** in spec.md). Processors load and store samples through the buffer's helpers, so switching to float16 later changes only the stream type, not any processor. Still open: whether to switch.
 - The format must hold: spikes within about ±500 µV, LFP up to a few mV, and stimulation artifacts that drive the ADC to its full range (e.g. ±8 mV on Blackrock).
@@ -106,6 +110,12 @@ Decided:
   - The reader sees the producer's output from the previous pass (see **`Out` clears an output buffer** under **graph.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
   - It sees that output during one pass only, and live that pass is usually an empty one. So the reader must read its feedback input even when its other inputs are empty, and copy what it needs (the rule for several inputs, see **Processors** in spec.md).
   - A reader that skips it misses feedback without an error, e.g. the last sample of every 12-sample Neuropixels 1.0 packet.
+
+### State values across cores
+Open: in the prototype, a state value connects processors on the same core as a plain value (see **State values** under **Buffers** in spec.md). One whose producer and reader are on different cores needs a ring, like a feedback connection across cores (see **Feedback connections**), or an atomic value.
+
+### Runtime control
+Open: Falcon 1 let clients such as the UI read and write a processor's states while the graph ran (its `external` state permissions), e.g. to watch a value or to switch stimulation on and off during a session. Here every option is a compile-time constant and changing one restarts the engine program (see **Every option is a compile-time constant** in spec.md). Is a switch that the UI flips during a run needed, and how does it reach the realtime cores?
 
 ### Buffer reuse
 Decided:
@@ -215,6 +225,7 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
 - Deferred. The prototype runs once per engine program: stop ends the program (see **Start, stop and config** in spec.md). Later, the program can stay alive between runs, with states such as ready and running, so a stop ends only the loops and a new start doesn't spawn a new program.
 
 ## UI
+- **Ring fill levels**: the UI shows each ring's peak fill while the graph runs, so the user sees that the pipeline is healthy before a ring overflows (the prototype only warns once samples are dropped, see **Rings** in spec.md). Cheap to track: the ring's writer already reads both positions for every sample, so it can keep the highest fill level since the last report, read by a non-realtime thread like the drop count. Related: task A.3.
 - **Live viewer**: the viewer is a processor in the engine and the UI is a separate program, so the viewer's data has to cross from the engine process to the UI process. Not designed yet, and not part of the prototype.
 - The UI shows a cache view with per-core L1/L2/L3 usage, so the user sees when the graph is about to spill out of cache (see **Principles** in spec.md, and task D.5).
 - **Viewing data without a graph** (UI topic, formerly an open question): maybe the UI runs a small generated engine, e.g. NeuropixelsInput → Viewer.

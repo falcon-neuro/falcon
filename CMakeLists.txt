@@ -73,11 +73,12 @@ target_link_libraries(imgui PUBLIC
 # )
 
 add_executable(falcon
-    src/pipelines/monotonous_event_pipeline.cpp
+    src/pipelines/filter_comparison_pipeline.cpp
 )
 
 target_compile_options(falcon PRIVATE
     -mavx2
+    -mfma
     -Wall
     -Wextra
     -Wpedantic

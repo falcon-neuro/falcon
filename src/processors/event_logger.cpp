@@ -1,11 +1,25 @@
 #pragma once
+#include <chrono>
 #include <concepts>
+#include <cstdint>
+#include <format>
 #include <print>
+#include <string>
 #include "../core/engine.cpp"
 
-// EventLogger: prints every event it receives to the console, like Falcon 1's EventLogger.
-// Printing is a system call, so it runs on a non-realtime core (see Logging in src/core/spec.md).
-template <std::derived_from<EventRecord> Record, int Capacity>
+// EventLogger: prints the events it receives to the console, like Falcon 1's EventLogger: each one,
+// or how many arrived in each second. Printing is a system call, so it runs on a non-realtime core
+// (see Logging in src/core/spec.md).
+
+enum class LoggingStyle : std::uint8_t { EveryEvent, CountPerSecond };
+
+struct EventLoggerOptions {
+    Str label = "EventLogger";  // starts every line, so several loggers can be told apart
+    LoggingStyle style = LoggingStyle::EveryEvent;
+};
+
+template <std::derived_from<EventRecord> Record, int Capacity,
+          EventLoggerOptions options = EventLoggerOptions{}>
 struct EventLogger {
     struct Connections {
         EventInputBuffer<Record, Capacity> input;
@@ -14,15 +28,55 @@ struct EventLogger {
     u64 received = 0;  // events received since the start
 
     void process(Connections connections) {
+        if constexpr (options.style == LoggingStyle::EveryEvent) {
+            print_every_event(connections);
+        } else {
+            static_assert(options.style == LoggingStyle::CountPerSecond);
+            print_count_per_second(connections);
+        }
+    }
+
+private:
+    bool has_started_ = false;
+    std::chrono::steady_clock::time_point second_start_;
+    u64 received_this_second_ = 0;
+
+    // Checked on every pass, so a second with no events still prints its 0.
+    void print_count_per_second(Connections connections) {
+        const auto received_now = static_cast<u64>(connections.input.size());
+        received += received_now;
+        received_this_second_ += received_now;
+
+        const auto now = std::chrono::steady_clock::now();
+        if (!has_started_) {
+            second_start_ = now;
+            has_started_ = true;
+        }
+        if (now - second_start_ >= std::chrono::seconds(1)) {
+            std::println("{}: {} events in the last second ({} in total)", options.label.c_str(),
+                         received_this_second_, received);
+            received_this_second_ = 0;
+            second_start_ += std::chrono::seconds(1);
+        }
+    }
+
+    void print_every_event(Connections connections) {
         for (const Record& event : connections.input) {
             ++received;
+            std::string line = std::format("{}: event {}", options.label.c_str(), received);
             // Until C++26 reflection reads every field of any record (see Events in
-            // src/core/spec.md), only a field named `count` is printed, if the record has one.
-            if constexpr (requires { event.count; }) {
-                std::println("EventLogger: event {}, count {}", received, event.count);
-            } else {
-                std::println("EventLogger: event {}", received);
+            // src/core/spec.md), only a stream event's sample number and fields named `channel`
+            // and `count` are printed.
+            if constexpr (std::derived_from<Record, StreamEventRecord>) {
+                line += std::format(", sample {}", event.header.sample_number);
             }
+            if constexpr (requires { event.channel; }) {
+                line += std::format(", channel {}", event.channel);
+            }
+            if constexpr (requires { event.count; }) {
+                line += std::format(", count {}", event.count);
+            }
+            std::println("{}", line);
         }
     }
 };
