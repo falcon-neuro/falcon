@@ -12,19 +12,19 @@ class MainViewport {
         : on_show_left_(std::move(on_show_left)), on_show_bottom_(std::move(on_show_bottom)) {}
     ~MainViewport() = default;
 
-    void render(bool left_sidebar_visible, bool bottom_bar_visible) {
+    void render(bool is_left_sidebar_visible, bool is_bottom_bar_visible) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1.0f));
 
-        bool printed_button = false;
-        if (!left_sidebar_visible && on_show_left_) {
+        bool has_printed_button = false;
+        if (!is_left_sidebar_visible && on_show_left_) {
             if (ImGui::Button("Reveal Left Panel")) {
                 on_show_left_();
             }
-            printed_button = true;
+            has_printed_button = true;
         }
 
-        if (!bottom_bar_visible && on_show_bottom_) {
-            if (printed_button) {
+        if (!is_bottom_bar_visible && on_show_bottom_) {
+            if (has_printed_button) {
                 ImGui::SameLine();
             }
             if (ImGui::Button("Reveal Status Panel")) {

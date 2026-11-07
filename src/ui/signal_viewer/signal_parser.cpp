@@ -21,7 +21,7 @@ class SignalParser {
 
     NeuropixelsInput neuropixels_input_;
     std::thread worker_thread_;
-    alignas(std::hardware_destructive_interference_size) std::atomic<bool> running_{false};
+    alignas(std::hardware_destructive_interference_size) std::atomic<bool> is_running_{false};
 
     std::vector<int16_t> cpu_ingest_buffer_;
     std::vector<int16_t> cpu_swap_buffer_;
@@ -38,7 +38,7 @@ class SignalParser {
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
 
     std::atomic<size_t> requested_history_{1 * sample_rate};
-    bool resize_pending_ = false;
+    bool is_resize_pending_ = false;
 
     SignalRenderer gpu_renderer_;
 
@@ -49,14 +49,14 @@ class SignalParser {
 
         while (true) {
             uint32_t seq = neuropixels_input_.publish_seq();
-            if (!running_.load(std::memory_order_relaxed)) {
+            if (!is_running_.load(std::memory_order_relaxed)) {
                 break;
             }
 
-            bool processed_any = false;
+            bool has_processed_any = false;
 
             while (neuropixels_input_.peek_packet(packet, tail_idx)) {
-                processed_any = true;
+                has_processed_any = true;
 
                 {
                     std::scoped_lock lock(buffer_mutex_);
@@ -70,7 +70,7 @@ class SignalParser {
                 neuropixels_input_.release_packet(tail_idx);
             }
 
-            if (!processed_any) {
+            if (!has_processed_any) {
                 neuropixels_input_.wait_for_packet(seq);
             }
         }
@@ -89,17 +89,17 @@ class SignalParser {
     void update_history_duration(float seconds) {
         requested_history_.store(static_cast<size_t>(std::round(seconds * 30000)),
                                  std::memory_order_relaxed);
-        resize_pending_ = true;
+        is_resize_pending_ = true;
     }
 
     void start() {
         gpu_renderer_.init_gl_resources(samples_history_);
-        if (!running_.load(std::memory_order_relaxed)) {
+        if (!is_running_.load(std::memory_order_relaxed)) {
             last_rate_time_ = std::chrono::steady_clock::now();
             samples_since_last_check_.store(0, std::memory_order_relaxed);
             samples_per_sec_.store(0, std::memory_order_relaxed);
 
-            running_.store(true, std::memory_order_relaxed);
+            is_running_.store(true, std::memory_order_relaxed);
             worker_thread_ = std::thread(&SignalParser::collect_loop, this);
 #ifdef __linux__
             cpu_set_t cpuset;
@@ -111,8 +111,8 @@ class SignalParser {
     }
 
     void stop() {
-        if (running_.load(std::memory_order_relaxed)) {
-            running_.store(false, std::memory_order_relaxed);
+        if (is_running_.load(std::memory_order_relaxed)) {
+            is_running_.store(false, std::memory_order_relaxed);
             neuropixels_input_.wake_consumer();
             if (worker_thread_.joinable()) {
                 worker_thread_.join();
@@ -136,13 +136,13 @@ class SignalParser {
     void dispatch_downsample(size_t pixel_width) {
         current_width_.store(pixel_width, std::memory_order_relaxed);
 
-        if (resize_pending_) {
+        if (is_resize_pending_) {
             size_t new_size = requested_history_.load(std::memory_order_relaxed);
             gpu_renderer_.resize_history_buffer(new_size);
             samples_history_ = new_size;
             write_idx_ = 0;
             total_samples_processed_ = 0;
-            resize_pending_ = false;
+            is_resize_pending_ = false;
         }
 
         {

@@ -21,8 +21,7 @@
 #include <type_traits>
 #include <vector>
 
-// Falcon engine (see src/core/spec.md). So far: streams and sample buffers, events, In and Out,
-// and one pinned thread per core with the start barrier.
+// Falcon engine (see src/core/spec.md).
 
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
@@ -34,56 +33,54 @@ using u64 = std::uint64_t;
 #endif
 
 #ifdef __AVX512F__
-inline constexpr bool AVX512 = true;
+inline constexpr bool HAS_AVX512 = true;
 #else
-inline constexpr bool AVX512 = false;
+inline constexpr bool HAS_AVX512 = false;
 #endif
 
-inline constexpr int FLOATS_PER_VECTOR = AVX512 ? 16 : 8;
-using FloatVector = std::conditional_t<AVX512, __m512, __m256>;
+inline constexpr int FLOATS_PER_SIMD_VECTOR = HAS_AVX512 ? 16 : 8;
+using SimdVector = std::conditional_t<HAS_AVX512, __m512, __m256>;
 
 // --- Streams and samples (see Stream type, Buffers and Sample type in spec.md) ---
 
 template <int ChannelCount, double SampleRate, typename SampleType>
-struct Stream {
+struct StreamInfo {
     static_assert(ChannelCount > 0);
     static_assert(SampleRate > 0);
-    // float16 would need load() and store() to convert (see Sample width: float16 in
-    // beyond_prototype.md).
     static_assert(std::same_as<SampleType, float>, "only float32 samples are implemented");
 
     static constexpr int channels = ChannelCount;
     static constexpr double rate = SampleRate;  // Hz
-    using Value = SampleType;
-    // A multiple of 16, one AVX512 vector of float32, so SIMD loops have no leftover channels.
+    using ChannelValue = SampleType;
+    // 16 floats are one AVX512 vector, so SIMD loops have no leftover channels.
     static constexpr int padded_channels = (ChannelCount + 15) / 16 * 16;
-    static constexpr int vectors = padded_channels / FLOATS_PER_VECTOR;
+    static constexpr int simd_vectors = padded_channels / FLOATS_PER_SIMD_VECTOR;
 };
 
-// Set by the input processor, travels with its sample (see Buffers in spec.md).
-struct Header {
+// Set by the input processor. Other processors pass it on and never make one up (see Buffers in
+// spec.md).
+struct SampleHeader {
     u64 sample_number = 0;     // counted at the input's rate, derived from the device's clock
     u64 device_timestamp = 0;  // in the device's own unit; processors never calculate with it
     u64 arrival_tsc = 0;       // CPU timestamp counter when the sample arrived
 };
 
-// One sample with its header in front, the layout of a ring slot (see Rings in spec.md).
-template <typename StreamType>
-struct SampleSlot {
-    Header header;
-    alignas(64) std::array<typename StreamType::Value, StreamType::padded_channels> values;
+template <typename StreamInfoType>
+struct SampleWithHeader {
+    SampleHeader header;
+    alignas(64) std::array<typename StreamInfoType::ChannelValue, StreamInfoType::padded_channels> values;
 };
 
-// 0 or 1 sample. `slot` points at the buffer's own storage, or at a ring slot, so nothing is
+// 0 or 1 sample. `sample` points at the buffer's own storage, or at a ring slot, so nothing is
 // copied across rings (see graph.cpp in spec.md).
-template <typename StreamType>
+template <typename StreamInfoType>
 struct SampleBuffer {
-    SampleSlot<StreamType> storage{};
-    SampleSlot<StreamType>* slot = &storage;
+    SampleWithHeader<StreamInfoType> storage{};
+    SampleWithHeader<StreamInfoType>* sample = &storage;
     int count = 0;
 
     SampleBuffer() = default;
-    // A copy's slot would still point at the original's storage.
+    // A copy's `sample` would still point at the original's storage.
     SampleBuffer(const SampleBuffer&) = delete;
     SampleBuffer& operator=(const SampleBuffer&) = delete;
 };
@@ -91,12 +88,12 @@ struct SampleBuffer {
 // --- Events (see Events in spec.md) ---
 
 // Base of every event record. Empty: an event from a timer has no sample to point to.
-struct Event {};
+struct EventRecord {};
 
 // Up to Capacity records produced on this pass (see Capacity in spec.md).
 // The records sit inside the buffer; pointing at a ring slot instead comes with event rings
 // (beyond_prototype.md).
-template <std::derived_from<Event> Record, int Capacity>
+template <std::derived_from<EventRecord> Record, int Capacity>
 struct EventBuffer {
     std::array<Record, Capacity> records;
     int count = 0;
@@ -111,20 +108,19 @@ struct In;
 template <typename Kind>
 struct Out;
 
-template <typename StreamType>
-struct In<SampleBuffer<StreamType>> {
-    In(const SampleBuffer<StreamType>& samples) : header(samples.slot->header), buffer_(samples) {}
+template <typename StreamInfoType>
+struct In<SampleBuffer<StreamInfoType>> {
+    In(const SampleBuffer<StreamInfoType>& samples) : header(samples.sample->header), buffer_(samples) {}
 
-    const Header& header;
+    const SampleHeader& header;
 
     [[nodiscard]] bool is_empty() const { return buffer_.count == 0; }
 
-    // Channel vector `vector_index` as float32, in the compiled instruction set's register.
-    [[nodiscard]] FloatVector load(int vector_index) const {
+    [[nodiscard]] SimdVector load(int simd_vector_index) const {
         const float* address =
-            &buffer_.slot->values[static_cast<std::size_t>(vector_index * FLOATS_PER_VECTOR)];
-        // Not if constexpr: nothing here depends on StreamType, so the discarded branch would
-        // still be type-checked, and an __m512 doesn't convert to the AVX2 build's FloatVector.
+            &buffer_.sample->values[static_cast<std::size_t>(simd_vector_index * FLOATS_PER_SIMD_VECTOR)];
+        // Not if constexpr: nothing here depends on StreamInfoType, so the discarded branch would
+        // still be type-checked, and an __m512 doesn't convert to the AVX2 build's SimdVector.
 #ifdef __AVX512F__
         return _mm512_load_ps(address);
 #else
@@ -133,24 +129,23 @@ struct In<SampleBuffer<StreamType>> {
     }
 
 private:
-    const SampleBuffer<StreamType>& buffer_;
+    const SampleBuffer<StreamInfoType>& buffer_;
 };
 
-template <typename StreamType>
-struct Out<SampleBuffer<StreamType>> {
+template <typename StreamInfoType>
+struct Out<SampleBuffer<StreamInfoType>> {
     // Clears the buffer right before its producer runs (see Out clears an output buffer in
     // spec.md).
-    Out(SampleBuffer<StreamType>& samples) : buffer_(samples) { buffer_.count = 0; }
+    Out(SampleBuffer<StreamInfoType>& samples) : buffer_(samples) { buffer_.count = 0; }
 
-    // Starts this pass's output sample (see The header travels with its sample in spec.md).
-    void set_header(const Header& header) {
-        buffer_.slot->header = header;
+    void set_header(const SampleHeader& header) {
+        buffer_.sample->header = header;
         buffer_.count = 1;
     }
 
-    void store(int vector_index, FloatVector values) {
+    void store(int simd_vector_index, SimdVector values) {
         float* address =
-            &buffer_.slot->values[static_cast<std::size_t>(vector_index * FLOATS_PER_VECTOR)];
+            &buffer_.sample->values[static_cast<std::size_t>(simd_vector_index * FLOATS_PER_SIMD_VECTOR)];
         // Not if constexpr, for the same reason as in load().
 #ifdef __AVX512F__
         _mm512_store_ps(address, values);
@@ -160,10 +155,10 @@ struct Out<SampleBuffer<StreamType>> {
     }
 
 private:
-    SampleBuffer<StreamType>& buffer_;
+    SampleBuffer<StreamInfoType>& buffer_;
 };
 
-template <std::derived_from<Event> Record, int Capacity>
+template <std::derived_from<EventRecord> Record, int Capacity>
 struct In<EventBuffer<Record, Capacity>> {
     In(const EventBuffer<Record, Capacity>& events) : buffer_(events) {}
 
@@ -176,7 +171,7 @@ private:
     const EventBuffer<Record, Capacity>& buffer_;
 };
 
-template <std::derived_from<Event> Record, int Capacity>
+template <std::derived_from<EventRecord> Record, int Capacity>
 struct Out<EventBuffer<Record, Capacity>> {
     // Clears the buffer right before its producer runs (see Out clears an output buffer in
     // spec.md).
@@ -190,27 +185,41 @@ private:
     EventBuffer<Record, Capacity>& buffer_;
 };
 
+template <typename StreamInfoType>
+using SampleInputBuffer = In<SampleBuffer<StreamInfoType>>;
+template <typename StreamInfoType>
+using SampleOutputBuffer = Out<SampleBuffer<StreamInfoType>>;
+template <std::derived_from<EventRecord> Record, int Capacity>
+using EventInputBuffer = In<EventBuffer<Record, Capacity>>;
+template <std::derived_from<EventRecord> Record, int Capacity>
+using EventOutputBuffer = Out<EventBuffer<Record, Capacity>>;
+template <typename StateType>
+using StateInput = In<StateType>;
+template <typename StateType>
+using StateOutput = Out<StateType>;
+
 // --- Cores (see Per-core loop and Start, stop and config in spec.md) ---
 
-// Every core's loop runs while it is set. Cleared by run() on a stop signal, or by a core whose
-// constructor failed.
-std::atomic<bool> running = true;
-std::atomic<bool> failed = false;   // set when a constructor threw on any core
-std::latch* built = nullptr;        // the start barrier, created by run()
-thread_local bool arrived = false;  // whether this core has reached the start barrier
+// Every core's loop runs while it is set. Cleared by run_on_cores() on a stop signal, or by a core
+// whose constructor failed.
+std::atomic<bool> is_cores_running = true;
+// Set when a constructor threw on any core, or a core's thread couldn't be started.
+std::atomic<bool> has_startup_failed = false;
+std::latch* start_barrier = nullptr;  // created by run_on_cores()
+thread_local bool has_arrived_at_start_barrier = false;
 
-// Start barrier: every core calls this once its processors are built.
-// Returns false if a constructor failed on any core, so the core returns without running its loop.
-bool all_built() {
-    arrived = true;
-    built->arrive_and_wait();
-    return !failed;
+// Every core calls this once its processors are built. Returns false if startup failed on any
+// core, so the core returns without running its loop.
+bool wait_at_start_barrier() {
+    has_arrived_at_start_barrier = true;
+    start_barrier->arrive_and_wait();
+    return !has_startup_failed;
 }
 
-struct Core {
-    int cpu;         // CPU core the thread is pinned to
-    void (*body)();  // declares the core's processors and buffers, calls all_built(), then runs its
-                     // loop
+struct CoreThread {
+    int core_number;        // CPU core the thread is pinned to
+    void (*entry_point)();  // declares the core's processors and buffers, calls
+                            // wait_at_start_barrier(), then runs its loop
 };
 
 // The stop signals: SIGINT (Ctrl+C) and SIGTERM (see Start, stop and config in spec.md).
@@ -222,29 +231,28 @@ sigset_t stop_signals() {
     return signals;
 }
 
-// Waits for a stop signal while the cores run, then clears `running`. The timeout ends the wait
-// when `running` was cleared without a signal (a constructor failed, or a core's thread couldn't be
-// started).
+// Waits for a stop signal while the cores run, then clears `is_cores_running`. The timeout ends the
+// wait when `is_cores_running` was cleared without a signal (startup failed).
 void wait_for_stop_signal(const sigset_t& signals) {
-    while (running) {
+    while (is_cores_running) {
         const timespec timeout{.tv_sec = 0, .tv_nsec = 100'000'000};  // 100 ms
         const int signal_number = sigtimedwait(&signals, nullptr, &timeout);
         if (signal_number > 0) {
             // Temporary: printed directly until the logger exists (see Logging in spec.md). fputs,
-            // unlike println, can't throw, so no exception leaves run().
+            // unlike println, can't throw, so no exception leaves run_on_cores().
 
             std::fputs(signal_number == SIGINT ? "\nCtrl+C received, stopping\n"
                                                : "\nSIGTERM received, stopping\n",
                        stderr);
-            running = false;
+            is_cores_running = false;
         }
     }
 }
 
 // Runs one pinned thread per core until stopped. Returns 1 if the graph didn't start, 0 otherwise.
 // A core's thread that can't be started also means the graph doesn't start, so no exception leaves
-// run().
-int run(std::initializer_list<Core> cores) {
+// run_on_cores().
+int run_on_cores(std::initializer_list<CoreThread> core_threads) {
     // Blocked before any core's thread starts, so every thread inherits the block and no stop
     // signal ever interrupts a core's loop. Only wait_for_stop_signal() takes them.
     const sigset_t signals = stop_signals();
@@ -253,45 +261,46 @@ int run(std::initializer_list<Core> cores) {
         return 1;
     }
 
-    std::latch latch(static_cast<std::ptrdiff_t>(cores.size()));
-    built = &latch;
+    std::latch latch(static_cast<std::ptrdiff_t>(core_threads.size()));
+    start_barrier = &latch;
 
     std::vector<std::thread> threads;
     try {
-        threads.reserve(cores.size());
-        for (Core core : cores) {
-            threads.emplace_back([core] {
+        threads.reserve(core_threads.size());
+        for (CoreThread core_thread : core_threads) {
+            threads.emplace_back([core_thread] {
                 try {
                     cpu_set_t set;
                     CPU_ZERO(&set);
-                    CPU_SET(core.cpu, &set);
+                    CPU_SET(core_thread.core_number, &set);
                     if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
-                        throw std::runtime_error(std::format("can't pin to CPU {}", core.cpu));
+                        throw std::runtime_error(
+                            std::format("can't pin to CPU {}", core_thread.core_number));
                     }
                     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);  // see Flush-to-zero in spec.md
                     _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
-                    core.body();
+                    core_thread.entry_point();
                 } catch (const std::exception& error) {
                     // A constructor failed (see Exceptions only outside the loop in spec.md).
-                    std::println(stderr, "core {}: {}", core.cpu, error.what());
-                    failed = true;
-                    running = false;
-                    if (!arrived) {
-                        built->count_down();  // release the cores waiting at the barrier
+                    std::println(stderr, "core {}: {}", core_thread.core_number, error.what());
+                    has_startup_failed = true;
+                    is_cores_running = false;
+                    if (!has_arrived_at_start_barrier) {
+                        start_barrier->count_down();  // release the cores waiting at the barrier
                     }
                 }
             });
         }
     } catch (const std::exception& error) {
         // A core's thread couldn't be started. Count down once for every core that never started,
-        // so the started ones pass the start barrier, see failed and return. fputs, unlike
-        // println, can't throw here.
+        // so the started ones pass the start barrier, see has_startup_failed and return. fputs,
+        // unlike println, can't throw here.
         std::fputs("can't start a core's thread: ", stderr);
         std::fputs(error.what(), stderr);
         std::fputs("\n", stderr);
-        failed = true;
-        running = false;
-        for (std::size_t missing = threads.size(); missing < cores.size(); ++missing) {
+        has_startup_failed = true;
+        is_cores_running = false;
+        for (std::size_t missing = threads.size(); missing < core_threads.size(); ++missing) {
             latch.count_down();
         }
     }
@@ -300,5 +309,5 @@ int run(std::initializer_list<Core> cores) {
     for (std::thread& thread : threads) {
         thread.join();
     }
-    return failed ? 1 : 0;
+    return has_startup_failed ? 1 : 0;
 }

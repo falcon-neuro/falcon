@@ -105,7 +105,7 @@ void main() {
 
     float min_val = 1e10;
     float max_val = -1e10;
-    bool near_cursor = false;
+    bool is_near_cursor = false;
 
     int channel_offset = channel * history_stride;
 
@@ -114,7 +114,7 @@ void main() {
         if (sample_value < min_val) min_val = sample_value;
         if (sample_value > max_val) max_val = sample_value;
         if (abs(sample_idx - u_cursor_idx) < 150) {
-            near_cursor = true;
+            is_near_cursor = true;
         }
     }
 
@@ -128,7 +128,7 @@ void main() {
 
     // (0, -1) collapses the bar to zero height, leaving the sweep cursor gap empty
     envelope[channel * u_width + column] =
-        (near_cursor && abs(column - cursor_x) < 4) ? vec2(0.0, -1.0) : vec2(y_min, y_max);
+        (is_near_cursor && abs(column - cursor_x) < 4) ? vec2(0.0, -1.0) : vec2(y_min, y_max);
 }
 )glsl";
 

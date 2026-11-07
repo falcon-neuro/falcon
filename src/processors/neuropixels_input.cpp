@@ -43,7 +43,7 @@ private:
 
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> head_{0};
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> tail_{0};
-    alignas(std::hardware_destructive_interference_size) std::atomic<bool> running_{false};
+    alignas(std::hardware_destructive_interference_size) std::atomic<bool> is_running_{false};
     alignas(std::hardware_destructive_interference_size) std::atomic<uint32_t> publish_seq_{0};
 
     std::thread receiver_thread_;
@@ -107,19 +107,19 @@ private:
         }
     }
 
-    void submit_recv_request(size_t slot_idx, bool drop) {
+    void submit_recv_request(size_t slot_idx, bool is_dropping) {
         io_uring_sqe* sqe = io_uring_get_sqe(&uring_);
         if (!sqe) {
             io_uring_errors_++;
             return;
         }
 
-        void* buf_addr =
-            drop ? static_cast<void*>(&drop_packet_) : static_cast<void*>(&ring_buffer_[slot_idx]);
+        void* buf_addr = is_dropping ? static_cast<void*>(&drop_packet_)
+                                     : static_cast<void*>(&ring_buffer_[slot_idx]);
         size_t buf_len = sizeof(electrodePacket);
 
         io_uring_prep_recv(sqe, socket_fd_, buf_addr, buf_len, 0);
-        sqe->user_data = drop ? drop_slot : static_cast<uint64_t>(slot_idx);
+        sqe->user_data = is_dropping ? drop_slot : static_cast<uint64_t>(slot_idx);
 
         io_uring_submit(&uring_);
     }
@@ -128,12 +128,12 @@ private:
         size_t current_head = head_.load(std::memory_order_relaxed);
         size_t current_tail = tail_.load(std::memory_order_acquire);
 
-        bool dropping = ((current_head + 1) % buffer_size == current_tail);
-        submit_recv_request(current_head, dropping);
+        bool is_dropping = ((current_head + 1) % buffer_size == current_tail);
+        submit_recv_request(current_head, is_dropping);
 
         io_uring_cqe* cqe = nullptr;
 
-        while (running_.load(std::memory_order_relaxed)) {
+        while (is_running_.load(std::memory_order_relaxed)) {
             log_diagnostics();
 
             int ret = io_uring_wait_cqe(&uring_, &cqe);
@@ -174,12 +174,12 @@ private:
 
             current_head = head_.load(std::memory_order_relaxed);
             current_tail = tail_.load(std::memory_order_acquire);
-            dropping = ((current_head + 1) % buffer_size == current_tail);
+            is_dropping = ((current_head + 1) % buffer_size == current_tail);
 
             size_t fill = (current_head + buffer_size - current_tail) % buffer_size;
             max_ring_fill_ = std::max(fill, max_ring_fill_);
 
-            submit_recv_request(current_head, dropping);
+            submit_recv_request(current_head, is_dropping);
         }
     }
 
@@ -234,10 +234,10 @@ public:
     }
 
     void start() {
-        if (running_.load(std::memory_order_relaxed)) {
+        if (is_running_.load(std::memory_order_relaxed)) {
             return;
         }
-        running_.store(true, std::memory_order_relaxed);
+        is_running_.store(true, std::memory_order_relaxed);
         receiver_thread_ = std::thread(&NeuropixelsInput::receiver_loop, this);
 
 #ifdef __linux__
@@ -249,10 +249,10 @@ public:
     }
 
     void stop() {
-        if (!running_.load(std::memory_order_relaxed)) {
+        if (!is_running_.load(std::memory_order_relaxed)) {
             return;
         }
-        running_.store(false, std::memory_order_relaxed);
+        is_running_.store(false, std::memory_order_relaxed);
 
         io_uring_sqe* sqe = io_uring_get_sqe(&uring_);
         if (sqe) {

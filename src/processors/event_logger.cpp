@@ -5,10 +5,10 @@
 
 // EventLogger: prints every event it receives to the console, like Falcon 1's EventLogger.
 // Printing is a system call, so it runs on a non-realtime core (see Logging in src/core/spec.md).
-template <std::derived_from<Event> Record, int Capacity>
+template <std::derived_from<EventRecord> Record, int Capacity>
 struct EventLogger {
     struct Connections {
-        In<EventBuffer<Record, Capacity>> input;
+        EventInputBuffer<Record, Capacity> input;
     };
 
     u64 received = 0;  // events received since the start

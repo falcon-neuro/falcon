@@ -13,16 +13,16 @@ void core1() {
     // Connections
     EventBuffer<ScheduledEvent, 1> dummy_generator_to_example_logger_event_buffer;
 
-    if (!all_built()) {
+    if (!wait_at_start_barrier()) {
         return;
     }
 
-    while (running) {
+    while (is_cores_running) {
         dummy_generator.process({.output = dummy_generator_to_example_logger_event_buffer});
         example_logger.process({.input = dummy_generator_to_example_logger_event_buffer});
     }
 }
 
 int main() {
-    return run({{.cpu = 1, .body = core1}});
+    return run_on_cores({{.core_number = 1, .entry_point = core1}});
 }

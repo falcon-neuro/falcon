@@ -124,7 +124,7 @@ Open (formerly open question 9): how buffers are assigned, i.e. which connection
 ### Spike records
 The prototype's `Spike` holds only the sample number and the channel (see **Events** in spec.md). Richer records, each made by its own processor from the detector's spikes and the filtered stream, so the path from detector to TTL never waits for them:
 - the peak amplitude, about 0.1–0.3 ms after the crossing;
-- per-group marks for clusterless decoding, e.g. `template <int ChannelsPerGroup> struct GroupSpike : Event { u32 group; float peak[ChannelsPerGroup]; };` (32 B for a tetrode);
+- per-group marks for clusterless decoding, e.g. `template <int ChannelsPerGroup> struct GroupSpike : EventRecord { u32 group; float peak[ChannelsPerGroup]; };` (32 B for a tetrode);
 - the waveform, e.g. 40 samples per channel of a tetrode (656 B), about 20 samples late (shape 14 in graph_shapes.md).
 
 In all of them, `sample` is the sample number of the threshold crossing, so every record of one spike carries the same number and they can be matched.

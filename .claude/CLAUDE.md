@@ -9,9 +9,9 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Falcon runs on Debian with preempt_rt, with 1 core handling OS and interrupts while all the remaining cores are dedicated to Falcon only.
 - Falcon requires at least AVX2 X86 CPU with `constant_tsc`. For heavy pipelines, we recommend 9950X3D for AVX512, CL30 memory and such. Labs do buy our recommended high performance hardware to have the lowest latency possible. Overall, we are safe to assume that the CPU will be post-2020.
 - We want flexibility, user friendliness, scalability for massive electrode arrays.
-- Code safety matters much more than brevity: when they conflict, choose safety (descriptive names, never `i` or `in`; braces everywhere; strict clang-tidy, see `.clang-tidy`). We write the processors, rarely, and users only build graphs in the UI, so more code to write is never a reason to skip a check: a mistake found only after a clinical session can't be undone.
+- Code safety matters much more than brevity: when they conflict, choose safety (descriptive names, never `i` or `in`; bools start with `is_` or `has_`; braces everywhere; strict clang-tidy, see `.clang-tidy`). We write the processors, rarely, and users only build graphs in the UI, so more code to write is never a reason to skip a check: a mistake found only after a clinical session can't be undone.
 - Only .cpp files, for minimalism.
-- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does.
+- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does. Code outlives our discussions: comments never carry decision history, rejected options, plans or progress ("so far"), and never quote doc headings as if they explained the code; that context lives in the src/core docs.
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, Filter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress

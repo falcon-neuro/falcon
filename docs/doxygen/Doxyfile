@@ -1,7 +1,7 @@
 PROJECT_NAME           = "Falcon"
 OUTPUT_DIRECTORY       = build
 
-INPUT                  = docs/ falcon/ extensions/
+INPUT                  = docs/ src/
 EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/**
 
 FILE_PATTERNS          = *.hpp *.cpp *.h *.md
