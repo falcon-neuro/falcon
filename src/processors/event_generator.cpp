@@ -20,8 +20,12 @@ struct EventGenerator {
     void process(Out<Events<ScheduledEvent, 1>> out) {
         using namespace std::chrono;
         steady_clock::time_point now = steady_clock::now();
-        if (emitted == 0) start = due = now;   // the first pass starts the clock
-        if (now < due) return;
+        if (emitted == 0) {
+            start = due = now;   // the first pass starts the clock
+        }
+        if (now < due) {
+            return;
+        }
 
         out.push(ScheduledEvent {});
         ++emitted;

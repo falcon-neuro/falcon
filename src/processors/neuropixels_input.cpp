@@ -5,15 +5,20 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <string>
 #include <thread>
 #include <vector>
 
+// Copy pasted from the Neuropixels library: a reference to the original data structure, which we
+// don't modify yet (perhaps in the future). So clang-tidy skips this block.
+// NOLINTBEGIN
 #define NP1_PROBE_CHANNEL_COUNT 384
 #define NP1_PROBE_SUPERFRAMESIZE 12
 
@@ -23,245 +28,272 @@ struct electrodePacket {
     int16_t lfpData[NP1_PROBE_CHANNEL_COUNT];
     uint16_t Status[NP1_PROBE_SUPERFRAMESIZE];
 };
+// NOLINTEND
+
 // This is not a "processor" yet, it's just a simple implementation to test the UI
-// In the future, it should inherit some sort of processor interface (probably without virtual methods, inheritance is just a concept, not meant for actual OOP inheritance)
+// In the future, it should inherit some sort of processor interface (probably without virtual
+// methods, inheritance is just a concept, not meant for actual OOP inheritance)
 class NeuropixelsInput {
-   private:
+private:
     static constexpr size_t BUFFER_SIZE = 1024;
+    // user_data of a receive into drop_packet_, used when the ring is full
+    static constexpr uint64_t DROP_SLOT = std::numeric_limits<uint64_t>::max();
 
-    alignas(64) std::vector<electrodePacket> m_ringBuffer;
+    alignas(64) std::vector<electrodePacket> ring_buffer_;
 
-    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> m_head{0};
-    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> m_tail{0};
-    alignas(std::hardware_destructive_interference_size) std::atomic<bool> m_running{false};
-    alignas(std::hardware_destructive_interference_size) std::atomic<uint32_t> m_publishSeq{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> head_{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<size_t> tail_{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<bool> running_{false};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint32_t> publish_seq_{0};
 
-    std::thread m_receiverThread;
-    std::string m_ip;
-    int m_port;
-    int m_sockfd{-1};
+    std::thread receiver_thread_;
+    std::string ip_;
+    int port_;
+    int socket_fd_{-1};
 
-    io_uring m_ring;
-    alignas(64) electrodePacket m_dropPacket;
+    io_uring uring_;
+    alignas(64) electrodePacket drop_packet_;
 
-    std::chrono::steady_clock::time_point m_lastLogTime{std::chrono::steady_clock::now()};
+    std::chrono::steady_clock::time_point last_log_time_{std::chrono::steady_clock::now()};
 
-    uint64_t m_totalPacketsReceived{0};
-    uint64_t m_totalPacketsDropped{0};
-    uint64_t m_droppedSinceStart{0};
-    uint64_t m_totalBytesReceived{0};
-    uint64_t m_ioUringErrors{0};
-    uint64_t m_malformedPackets{0};
-    size_t m_maxRingFill{0};
+    uint64_t total_packets_received_{0};
+    uint64_t total_packets_dropped_{0};
+    uint64_t dropped_since_start_{0};
+    uint64_t total_bytes_received_{0};
+    uint64_t io_uring_errors_{0};
+    uint64_t malformed_packets_{0};
+    size_t max_ring_fill_{0};
 
-    void logDiagnostics() {
+    void log_diagnostics() {
         auto now = std::chrono::steady_clock::now();
-        if (now - m_lastLogTime >= std::chrono::seconds(1)) {
+        if (now - last_log_time_ >= std::chrono::seconds(1)) {
             auto duration =
-                std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastLogTime).count();
-            if (duration == 0) duration = 1;
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log_time_).count();
+            if (duration == 0) {
+                duration = 1;
+            }
 
-            size_t head = m_head.load(std::memory_order_relaxed);
-            size_t tail = m_tail.load(std::memory_order_relaxed);
+            size_t head = head_.load(std::memory_order_relaxed);
+            size_t tail = tail_.load(std::memory_order_relaxed);
             size_t fill = (head >= tail) ? (head - tail) : (BUFFER_SIZE - (tail - head));
 
-            double mibReceived = static_cast<double>(m_totalBytesReceived) / (1024.0 * 1024.0);
-            double packetRate =
-                static_cast<double>(m_totalPacketsReceived + m_totalPacketsDropped) /
+            double mib_received = static_cast<double>(total_bytes_received_) / (1024.0 * 1024.0);
+            double packet_rate =
+                static_cast<double>(total_packets_received_ + total_packets_dropped_) /
                 (static_cast<double>(duration) / 1000.0);
 
             std::cout << "\033[2J\033[H" << std::flush;
             std::cout << "================ NEUROPIXELS INPUT DIAGNOSTICS ================\n";
             std::cout << "Ringbuffer Fill Level : " << fill << " / " << BUFFER_SIZE << "\n";
-            std::cout << "Ringbuffer Max Fill   : " << m_maxRingFill << " / " << BUFFER_SIZE
+            std::cout << "Ringbuffer Max Fill   : " << max_ring_fill_ << " / " << BUFFER_SIZE
                       << "\n";
-            std::cout << "Total Packets Recv    : " << m_totalPacketsReceived << "\n";
-            std::cout << "Total Packets Dropped : " << m_totalPacketsDropped << "\n";
-            std::cout << "Dropped Since Start   : " << m_droppedSinceStart << "\n";
-            std::cout << "Malformed Packets     : " << m_malformedPackets << "\n";
-            std::cout << "io_uring Errors       : " << m_ioUringErrors << "\n";
-            std::cout << "Data Received Total   : " << m_totalBytesReceived << " bytes ("
-                      << mibReceived << " MiB)\n";
-            std::cout << "Current Packet Rate   : " << packetRate << " pkts/sec\n";
+            std::cout << "Total Packets Recv    : " << total_packets_received_ << "\n";
+            std::cout << "Total Packets Dropped : " << total_packets_dropped_ << "\n";
+            std::cout << "Dropped Since Start   : " << dropped_since_start_ << "\n";
+            std::cout << "Malformed Packets     : " << malformed_packets_ << "\n";
+            std::cout << "io_uring Errors       : " << io_uring_errors_ << "\n";
+            std::cout << "Data Received Total   : " << total_bytes_received_ << " bytes ("
+                      << mib_received << " MiB)\n";
+            std::cout << "Current Packet Rate   : " << packet_rate << " pkts/sec\n";
             std::cout << "===============================================================\n";
 
-            m_totalBytesReceived = 0;
-            m_totalPacketsReceived = 0;
-            m_totalPacketsDropped = 0;
-            m_malformedPackets = 0;
-            m_ioUringErrors = 0;
-            m_maxRingFill = 0;
-            m_lastLogTime = now;
+            total_bytes_received_ = 0;
+            total_packets_received_ = 0;
+            total_packets_dropped_ = 0;
+            malformed_packets_ = 0;
+            io_uring_errors_ = 0;
+            max_ring_fill_ = 0;
+            last_log_time_ = now;
         }
     }
 
     void submit_recv_request(size_t slot_idx, bool drop) {
-        io_uring_sqe* sqe = io_uring_get_sqe(&m_ring);
+        io_uring_sqe* sqe = io_uring_get_sqe(&uring_);
         if (!sqe) {
-            m_ioUringErrors++;
+            io_uring_errors_++;
             return;
         }
 
         void* buf_addr =
-            drop ? static_cast<void*>(&m_dropPacket) : static_cast<void*>(&m_ringBuffer[slot_idx]);
+            drop ? static_cast<void*>(&drop_packet_) : static_cast<void*>(&ring_buffer_[slot_idx]);
         size_t buf_len = sizeof(electrodePacket);
 
-        io_uring_prep_recv(sqe, m_sockfd, buf_addr, buf_len, 0);
-        sqe->user_data = drop ? uint64_t(-1) : static_cast<uint64_t>(slot_idx);
+        io_uring_prep_recv(sqe, socket_fd_, buf_addr, buf_len, 0);
+        sqe->user_data = drop ? DROP_SLOT : static_cast<uint64_t>(slot_idx);
 
-        io_uring_submit(&m_ring);
+        io_uring_submit(&uring_);
     }
 
-    void receiverLoop() {
-        size_t current_head = m_head.load(std::memory_order_relaxed);
-        size_t current_tail = m_tail.load(std::memory_order_acquire);
+    void receiver_loop() {
+        size_t current_head = head_.load(std::memory_order_relaxed);
+        size_t current_tail = tail_.load(std::memory_order_acquire);
 
         bool dropping = ((current_head + 1) % BUFFER_SIZE == current_tail);
         submit_recv_request(current_head, dropping);
 
         io_uring_cqe* cqe = nullptr;
 
-        while (m_running.load(std::memory_order_relaxed)) {
-            logDiagnostics();
+        while (running_.load(std::memory_order_relaxed)) {
+            log_diagnostics();
 
-            int ret = io_uring_wait_cqe(&m_ring, &cqe);
+            int ret = io_uring_wait_cqe(&uring_, &cqe);
             if (ret < 0) {
-                if (ret == -EINTR) continue;
-                m_ioUringErrors++;
+                if (ret == -EINTR) {
+                    continue;
+                }
+                io_uring_errors_++;
                 std::this_thread::yield();
                 continue;
             }
 
             int res = cqe->res;
             uint64_t user_data = cqe->user_data;
-            io_uring_cqe_seen(&m_ring, cqe);
+            io_uring_cqe_seen(&uring_, cqe);
 
             if (res > 0) {
-                m_totalBytesReceived += static_cast<uint64_t>(res);
+                total_bytes_received_ += static_cast<uint64_t>(res);
 
                 if (res == sizeof(electrodePacket)) {
-                    if (user_data != uint64_t(-1)) {
-                        m_totalPacketsReceived++;
-                        m_head.store((user_data + 1) % BUFFER_SIZE, std::memory_order_release);
-                        m_publishSeq.fetch_add(1, std::memory_order_release);
-                        m_publishSeq.notify_one();
+                    if (user_data != DROP_SLOT) {
+                        total_packets_received_++;
+                        head_.store((user_data + 1) % BUFFER_SIZE, std::memory_order_release);
+                        publish_seq_.fetch_add(1, std::memory_order_release);
+                        publish_seq_.notify_one();
                     } else {
-                        m_totalPacketsDropped++;
-                        m_droppedSinceStart++;
+                        total_packets_dropped_++;
+                        dropped_since_start_++;
                     }
                 } else {
-                    m_malformedPackets++;
+                    malformed_packets_++;
                 }
             } else if (res < 0) {
                 if (res != -EAGAIN && res != -EWOULDBLOCK && res != -EINTR) {
-                    m_ioUringErrors++;
+                    io_uring_errors_++;
                 }
             }
 
-            current_head = m_head.load(std::memory_order_relaxed);
-            current_tail = m_tail.load(std::memory_order_acquire);
+            current_head = head_.load(std::memory_order_relaxed);
+            current_tail = tail_.load(std::memory_order_acquire);
             dropping = ((current_head + 1) % BUFFER_SIZE == current_tail);
 
             size_t fill = (current_head + BUFFER_SIZE - current_tail) % BUFFER_SIZE;
-            if (fill > m_maxRingFill) m_maxRingFill = fill;
+            max_ring_fill_ = std::max(fill, max_ring_fill_);
 
             submit_recv_request(current_head, dropping);
         }
     }
 
-   public:
-    NeuropixelsInput(std::string ip = "0.0.0.0", int port = 6363)
-        : m_ip(std::move(ip)), m_port(port) {
-        m_ringBuffer.resize(BUFFER_SIZE);
+public:
+    NeuropixelsInput(std::string ip_address = "0.0.0.0", int port = 6363)
+        : ip_(std::move(ip_address)), port_(port) {
+        ring_buffer_.resize(BUFFER_SIZE);
 
-        if (io_uring_queue_init(512, &m_ring, 0) < 0) {
+        if (io_uring_queue_init(512, &uring_, 0) < 0) {
             std::cerr << "Failed to initialize io_uring queue\n";
         }
 
-        if (initSocket()) {
+        if (init_socket()) {
             std::cout << "Socket initialized\n";
         }
     }
 
     ~NeuropixelsInput() {
         stop();
-        io_uring_queue_exit(&m_ring);
-        if (m_sockfd != -1) {
-            shutdown(m_sockfd, SHUT_RDWR);
-            close(m_sockfd);
+        io_uring_queue_exit(&uring_);
+        if (socket_fd_ != -1) {
+            shutdown(socket_fd_, SHUT_RDWR);
+            close(socket_fd_);
         }
     }
 
-    bool initSocket() {
-        if (m_sockfd != -1) return true;
-        m_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (m_sockfd < 0) return false;
+    bool init_socket() {
+        if (socket_fd_ != -1) {
+            return true;
+        }
+        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (socket_fd_ < 0) {
+            return false;
+        }
 
         int opt = 1;
-        setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
         // Kernel doubles this, capped by net.core.rmem_max: 16 MiB -> 32 MiB buffer.
         int rcvbuf = 16 * 1024 * 1024;
-        setsockopt(m_sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+        setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
-        struct sockaddr_in localAddr{};
-        localAddr.sin_family = AF_INET;
-        localAddr.sin_port = htons(static_cast<uint16_t>(m_port));
-        if (inet_pton(AF_INET, m_ip.c_str(), &localAddr.sin_addr) <= 0) return false;
-        if (bind(m_sockfd, (struct sockaddr*) &localAddr, sizeof(localAddr)) < 0) return false;
+        struct sockaddr_in local_addr{};
+        local_addr.sin_family = AF_INET;
+        local_addr.sin_port = htons(static_cast<uint16_t>(port_));
+        if (inet_pton(AF_INET, ip_.c_str(), &local_addr.sin_addr) <= 0) {
+            return false;
+        }
+        if (bind(socket_fd_, reinterpret_cast<sockaddr*>(&local_addr), sizeof(local_addr)) < 0) {
+            return false;
+        }
         return true;
     }
 
     void start() {
-        if (m_running.load(std::memory_order_relaxed)) return;
-        m_running.store(true, std::memory_order_relaxed);
-        m_receiverThread = std::thread(&NeuropixelsInput::receiverLoop, this);
+        if (running_.load(std::memory_order_relaxed)) {
+            return;
+        }
+        running_.store(true, std::memory_order_relaxed);
+        receiver_thread_ = std::thread(&NeuropixelsInput::receiver_loop, this);
 
-#if defined(__linux__)
+#ifdef __linux__
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(5, &cpuset);
-        pthread_setaffinity_np(m_receiverThread.native_handle(), sizeof(cpu_set_t), &cpuset);
+        pthread_setaffinity_np(receiver_thread_.native_handle(), sizeof(cpu_set_t), &cpuset);
 #endif
     }
 
     void stop() {
-        if (!m_running.load(std::memory_order_relaxed)) return;
-        m_running.store(false, std::memory_order_relaxed);
+        if (!running_.load(std::memory_order_relaxed)) {
+            return;
+        }
+        running_.store(false, std::memory_order_relaxed);
 
-        io_uring_sqe* sqe = io_uring_get_sqe(&m_ring);
+        io_uring_sqe* sqe = io_uring_get_sqe(&uring_);
         if (sqe) {
             io_uring_prep_nop(sqe);
-            io_uring_submit(&m_ring);
+            io_uring_submit(&uring_);
         }
 
-        if (m_sockfd != -1) shutdown(m_sockfd, SHUT_RDWR);
-        if (m_receiverThread.joinable()) m_receiverThread.join();
+        if (socket_fd_ != -1) {
+            shutdown(socket_fd_, SHUT_RDWR);
+        }
+        if (receiver_thread_.joinable()) {
+            receiver_thread_.join();
+        }
     }
 
     // TODO: dont expose AoS, expose SoA
     // ...or offer both AoS and SoA
     bool peek_packet(electrodePacket*& packet_ptr, size_t& tail_idx_out) {
-        size_t current_tail = m_tail.load(std::memory_order_relaxed);
-        size_t current_head = m_head.load(std::memory_order_acquire);
-        if (current_tail == current_head) return false;
+        size_t current_tail = tail_.load(std::memory_order_relaxed);
+        size_t current_head = head_.load(std::memory_order_acquire);
+        if (current_tail == current_head) {
+            return false;
+        }
 
-        packet_ptr = &m_ringBuffer[current_tail];
+        packet_ptr = &ring_buffer_[current_tail];
         tail_idx_out = current_tail;
         return true;
     }
 
     void release_packet(size_t expected_tail) {
-        m_tail.store((expected_tail + 1) % BUFFER_SIZE, std::memory_order_release);
+        tail_.store((expected_tail + 1) % BUFFER_SIZE, std::memory_order_release);
     }
 
     // Read publish_seq() before checking the ring, then pass it to wait_for_packet().
     // Anything published (or wake_consumer()) after that read makes the wait return.
-    uint32_t publish_seq() const { return m_publishSeq.load(std::memory_order_acquire); }
+    uint32_t publish_seq() const { return publish_seq_.load(std::memory_order_acquire); }
 
-    void wait_for_packet(uint32_t seq) { m_publishSeq.wait(seq, std::memory_order_acquire); }
+    void wait_for_packet(uint32_t seq) { publish_seq_.wait(seq, std::memory_order_acquire); }
 
     void wake_consumer() {
-        m_publishSeq.fetch_add(1, std::memory_order_release);
-        m_publishSeq.notify_all();
+        publish_seq_.fetch_add(1, std::memory_order_release);
+        publish_seq_.notify_all();
     }
 };

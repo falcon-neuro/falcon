@@ -6,6 +6,7 @@
 #include <backends/imgui_impl_opengl3.h>
 #include <glad/gl.h>
 #include <iostream>
+#include <print>
 #include "main_window/main_window.cpp"
 
 // Everything about this UI is just a "demo" for checking
@@ -17,14 +18,14 @@
 // and do closed loop with sub 1ms latency on massive electrode arrays.
 class FalconUI {
    private:
-    GLFWwindow* m_window = nullptr;
+    GLFWwindow* window_ = nullptr;
     MainWindow main_window_;
     MainWindowController main_window_controller_;
 
-    bool initWindowContext() {
+    bool init_window_context() {
         glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 
-        if (!glfwInit()) {
+        if (glfwInit() == GLFW_FALSE) {
             std::cerr << "Failed to initialize GLFW\n";
             return false;
         }
@@ -34,31 +35,34 @@ class FalconUI {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
-        m_window = glfwCreateWindow(1280, 720, "Falcon", nullptr, nullptr);
-        if (!m_window) {
+        window_ = glfwCreateWindow(1280, 720, "Falcon", nullptr, nullptr);
+        if (!window_) {
             std::cerr << "Failed to create GLFW window\n";
             glfwTerminate();
             return false;
         }
 
-        glfwMaximizeWindow(m_window);
+        glfwMaximizeWindow(window_);
 
-        glfwMakeContextCurrent(m_window);
+        glfwMakeContextCurrent(window_);
         glfwSwapInterval(1);
 
-        if (!gladLoadGL(glfwGetProcAddress)) {
+        if (gladLoadGL(glfwGetProcAddress) == 0) {  // returns the GL version, 0 on failure
             std::cerr << "Failed to initialize GLAD loader\n";
             return false;
         }
 
         std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << "\n";
         std::cout << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << "\n";
-        int major, minor, rev;
+        int major = 0;
+        int minor = 0;
+        int rev = 0;
         glfwGetVersion(&major, &minor, &rev);
-        printf("GLFW Version: %d.%d.%d\n", major, minor, rev);
+        std::println("GLFW Version: {}.{}.{}", major, minor, rev);
 
         // TODO: remove after Intel iGPU diagnostics
-        GLint max_tex = 0, max_ssbo = 0;
+        GLint max_tex = 0;
+        GLint max_ssbo = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
         glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &max_ssbo);
         std::cout << "Renderer: " << glGetString(GL_RENDERER) << "\n"
@@ -67,12 +71,14 @@ class FalconUI {
         return true;
     }
 
-    bool initImGui() {
+    bool init_imgui() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        RegisterFonts();
+        ImGuiIO& imgui_io = ImGui::GetIO();
+        // ImGui's flags are signed ints by its API
+        // NOLINTNEXTLINE(bugprone-signed-bitwise)
+        imgui_io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        register_fonts();
         ImGui::StyleColorsDark();
 
         ImGuiStyle& style = ImGui::GetStyle();
@@ -84,8 +90,12 @@ class FalconUI {
         style.WindowPadding = ImVec2(0.0f, 0.0f);
         style.Colors[ImGuiCol_Text] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-        if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true)) return false;
-        if (!ImGui_ImplOpenGL3_Init("#version 460")) return false;
+        if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
+            return false;
+        }
+        if (!ImGui_ImplOpenGL3_Init("#version 460")) {
+            return false;
+        }
 
         return true;
     }
@@ -95,8 +105,8 @@ class FalconUI {
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
-        if (m_window) {
-            glfwDestroyWindow(m_window);
+        if (window_) {
+            glfwDestroyWindow(window_);
         }
         glfwTerminate();
     }
@@ -106,20 +116,25 @@ class FalconUI {
 
     ~FalconUI() { shutdown(); }
 
-    GLFWwindow* getWindow() const { return m_window; }
+    GLFWwindow* get_window() const { return window_; }
 
     bool setup() {
-        if (!initWindowContext()) return false;
-        if (!initImGui()) return false;
+        if (!init_window_context()) {
+            return false;
+        }
+        if (!init_imgui()) {
+            return false;
+        }
         return true;
     }
 
     void run() {
-        while (!glfwWindowShouldClose(m_window)) {
+        while (glfwWindowShouldClose(window_) == GLFW_FALSE) {
             glfwPollEvents();
 
-            int display_w, display_h;
-            glfwGetFramebufferSize(m_window, &display_w, &display_h);
+            int display_w = 0;
+            int display_h = 0;
+            glfwGetFramebufferSize(window_, &display_w, &display_h);
             glViewport(0, 0, display_w, display_h);
 
             ImGui_ImplOpenGL3_NewFrame();
@@ -130,12 +145,15 @@ class FalconUI {
             ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
             ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
 
+            // ImGui's flags are signed ints by its API
+            // NOLINTBEGIN(bugprone-signed-bitwise)
             ImGuiWindowFlags window_flags =
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+            // NOLINTEND(bugprone-signed-bitwise)
 
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, (ImVec4) ImColor(0xffffffff));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImColor(0xffffffff).Value);
             ImGui::Begin("Falcon", nullptr, window_flags);
 
             main_window_.render();
@@ -150,7 +168,7 @@ class FalconUI {
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-            glfwSwapBuffers(m_window);
+            glfwSwapBuffers(window_);
         }
     }
 };

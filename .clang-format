@@ -4,13 +4,12 @@ BasedOnStyle: Google
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
+AccessModifierOffset: -4   # private: in line with class
 ColumnLimit: 100
 SpaceBeforeParens: ControlStatements
 PointerAlignment: Left
 DerivePointerAlignment: false
-SpaceAfterCStyleCast: true
 Cpp11BracedListStyle: true
-ConstructorInitializerAllOnOneLineOrOnePerLine: true
 
 # Modern readability
 AllowShortFunctionsOnASingleLine: InlineOnly
@@ -33,6 +32,7 @@ IndentGotoLabels: true
 
 # Extra modern preferences
 BreakBeforeBraces: Attach
+InsertBraces: true   # braces everywhere, as .clang-tidy requires
 SpacesInParentheses: false
 SpacesInAngles: false
 SpaceBeforeRangeBasedForLoopColon: true

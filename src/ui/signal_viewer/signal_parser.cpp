@@ -13,6 +13,12 @@
 
 class SignalParser {
    private:
+    static constexpr size_t SAMPLE_RATE = 30000;  // AP band, samples per second
+    // int16 values in one packet's AP data: 12 samples of 384 channels
+    static constexpr size_t AP_VALUES_PER_PACKET =
+        size_t{NP1_PROBE_SUPERFRAMESIZE} * NP1_PROBE_CHANNEL_COUNT;
+    static_assert(sizeof(electrodePacket::apData) == AP_VALUES_PER_PACKET * sizeof(int16_t));
+
     NeuropixelsInput neuropixels_input_;
     std::thread worker_thread_;
     alignas(std::hardware_destructive_interference_size) std::atomic<bool> running_{false};
@@ -21,7 +27,7 @@ class SignalParser {
     std::vector<int16_t> cpu_swap_buffer_;
     std::mutex buffer_mutex_;
 
-    size_t samples_history = 1 * 30000;
+    size_t samples_history_ = 1 * SAMPLE_RATE;
     size_t write_idx_ = 0;
     uint64_t total_samples_processed_ = 0;
 
@@ -31,7 +37,7 @@ class SignalParser {
     std::chrono::steady_clock::time_point last_rate_time_;
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
 
-    std::atomic<size_t> requested_history_{1 * 30000};
+    std::atomic<size_t> requested_history_{1 * SAMPLE_RATE};
     bool resize_pending_ = false;
 
     SignalRenderer gpu_renderer_;
@@ -43,7 +49,9 @@ class SignalParser {
 
         while (true) {
             uint32_t seq = neuropixels_input_.publish_seq();
-            if (!running_.load(std::memory_order_relaxed)) break;
+            if (!running_.load(std::memory_order_relaxed)) {
+                break;
+            }
 
             bool processed_any = false;
 
@@ -51,11 +59,11 @@ class SignalParser {
                 processed_any = true;
 
                 {
-                    std::lock_guard<std::mutex> lock(buffer_mutex_);
+                    std::scoped_lock lock(buffer_mutex_);
                     size_t current_size = cpu_ingest_buffer_.size();
-                    cpu_ingest_buffer_.resize(current_size + (12 * 384));
+                    cpu_ingest_buffer_.resize(current_size + AP_VALUES_PER_PACKET);
                     std::memcpy(cpu_ingest_buffer_.data() + current_size, packet->apData,
-                                12 * 384 * sizeof(int16_t));
+                                sizeof(packet->apData));
                 }
 
                 samples_since_last_check_.fetch_add(12, std::memory_order_relaxed);
@@ -72,8 +80,8 @@ class SignalParser {
     SignalParser() = default;
     ~SignalParser() { stop(); }
 
-    void calculate_available_vram_kb(size_t& available_vram_kb) {
-        available_vram_kb = gpu_renderer_.get_universal_available_vram_kb();
+    static void calculate_available_vram_kb(size_t& available_vram_kb) {
+        available_vram_kb = SignalRenderer::get_universal_available_vram_kb();
     }
 
     void set_voltage_scale(float scale) { gpu_renderer_.set_voltage_scale(scale); }
@@ -85,7 +93,7 @@ class SignalParser {
     }
 
     void start() {
-        gpu_renderer_.init_gl_resources(samples_history);
+        gpu_renderer_.init_gl_resources(samples_history_);
         if (!running_.load(std::memory_order_relaxed)) {
             last_rate_time_ = std::chrono::steady_clock::now();
             samples_since_last_check_.store(0, std::memory_order_relaxed);
@@ -93,7 +101,7 @@ class SignalParser {
 
             running_.store(true, std::memory_order_relaxed);
             worker_thread_ = std::thread(&SignalParser::collect_loop, this);
-#if defined(__linux__)
+#ifdef __linux__
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
             CPU_SET(6, &cpuset);
@@ -106,7 +114,9 @@ class SignalParser {
         if (running_.load(std::memory_order_relaxed)) {
             running_.store(false, std::memory_order_relaxed);
             neuropixels_input_.wake_consumer();
-            if (worker_thread_.joinable()) worker_thread_.join();
+            if (worker_thread_.joinable()) {
+                worker_thread_.join();
+            }
         }
     }
 
@@ -129,26 +139,32 @@ class SignalParser {
         if (resize_pending_) {
             size_t new_size = requested_history_.load(std::memory_order_relaxed);
             gpu_renderer_.resize_history_buffer(new_size);
-            samples_history = new_size;
+            samples_history_ = new_size;
             write_idx_ = 0;
             total_samples_processed_ = 0;
             resize_pending_ = false;
         }
 
         {
-            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            std::scoped_lock lock(buffer_mutex_);
             cpu_swap_buffer_.swap(cpu_ingest_buffer_);
         }
 
         size_t total_elements = cpu_swap_buffer_.size();
-        size_t num_superframes = total_elements / (12 * 384);
-        size_t new_samples_count = num_superframes * 12;
+        size_t num_superframes = total_elements / AP_VALUES_PER_PACKET;
+        size_t new_samples_count = num_superframes * NP1_PROBE_SUPERFRAMESIZE;
 
-        gpu_renderer_.execute_demux_and_downsample(cpu_swap_buffer_.data(), total_elements,
-                                                   num_superframes, samples_history, write_idx_,
-                                                   total_samples_processed_, pixel_width);
+        gpu_renderer_.execute_demux_and_downsample({
+            .raw_packets = cpu_swap_buffer_.data(),
+            .total_elements = total_elements,
+            .num_superframes = num_superframes,
+            .history_size = samples_history_,
+            .write_idx = write_idx_,
+            .total_processed = total_samples_processed_,
+            .width = pixel_width,
+        });
 
-        write_idx_ = (write_idx_ + new_samples_count) % samples_history;
+        write_idx_ = (write_idx_ + new_samples_count) % samples_history_;
         total_samples_processed_ += new_samples_count;
 
         cpu_swap_buffer_.clear();

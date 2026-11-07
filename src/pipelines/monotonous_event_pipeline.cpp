@@ -10,9 +10,10 @@ void core1() {
     EventLogger<ScheduledEvent, 1> logger;
     Events<ScheduledEvent, 1> events;
 
-    if (!all_built())
-        return;  // start barrier: wait for every core, return if a constructor failed on any of
-                 // them
+    // Start barrier: wait for every core, return if a constructor failed on any of them.
+    if (!all_built()) {
+        return;
+    }
 
     while (running) {
         generator.process(

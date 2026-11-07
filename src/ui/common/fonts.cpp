@@ -1,5 +1,6 @@
 #pragma once
 #include <imgui.h>
+#include <array>
 #include <iostream>
 #include <map>
 
@@ -10,57 +11,59 @@ struct FontKey {
     FontStyle style;
 
     bool operator<(const FontKey& other) const {
-        if (size != other.size) return size < other.size;
+        if (size != other.size) {
+            return size < other.size;
+        }
         return style < other.style;
     }
 };
 
-inline std::map<FontKey, ImFont*> g_Fonts;
+inline std::map<FontKey, ImFont*> ui_fonts;
 
-void RegisterFonts() {
-    ImGuiIO& io = ImGui::GetIO();
+void register_fonts() {
+    ImGuiIO& imgui_io = ImGui::GetIO();
 
     ImFontConfig font_config;
     font_config.OversampleH = 2;
     font_config.OversampleV = 2;
     font_config.PixelSnapH = true;
 
-    const int sizes[] = {14, 16, 18, 24, 32, 48, 118};
+    constexpr std::array sizes{14, 16, 18, 24, 32, 48, 118};
 
     const char* regular_path = "assets/Inter-VariableFont_opsz,wght.ttf";
     const char* italic_path = "assets/Inter-Italic-VariableFont_opsz,wght.ttf";
     const char* bold_path = "assets/Inter_24pt-Bold.ttf";
 
     for (int size : sizes) {
-        float pixel_size = static_cast<float>(size);
+        auto pixel_size = static_cast<float>(size);
 
-        g_Fonts[{size, FontStyle::Regular}] =
-            io.Fonts->AddFontFromFileTTF(regular_path, pixel_size, &font_config);
-        g_Fonts[{size, FontStyle::Bold}] =
-            io.Fonts->AddFontFromFileTTF(bold_path, pixel_size, &font_config);
-        g_Fonts[{size, FontStyle::Italic}] =
-            io.Fonts->AddFontFromFileTTF(italic_path, pixel_size, &font_config);
+        ui_fonts[{.size = size, .style = FontStyle::Regular}] =
+            imgui_io.Fonts->AddFontFromFileTTF(regular_path, pixel_size, &font_config);
+        ui_fonts[{.size = size, .style = FontStyle::Bold}] =
+            imgui_io.Fonts->AddFontFromFileTTF(bold_path, pixel_size, &font_config);
+        ui_fonts[{.size = size, .style = FontStyle::Italic}] =
+            imgui_io.Fonts->AddFontFromFileTTF(italic_path, pixel_size, &font_config);
     }
 
-    ImFont* custom_font = g_Fonts[{16, FontStyle::Regular}];
+    ImFont* custom_font = ui_fonts[{.size = 16, .style = FontStyle::Regular}];
 
     if (custom_font == nullptr) {
         std::cerr
             << "Warning: Failed to load custom TTF font file. Falling back to default font.\n";
     } else {
-        io.FontDefault = custom_font;
+        imgui_io.FontDefault = custom_font;
     }
 }
 
-inline void PushUIFont(int size, FontStyle style) {
-    auto it = g_Fonts.find({size, style});
-    if (it != g_Fonts.end()) {
-        ImGui::PushFont(it->second);
+inline void push_ui_font(int size, FontStyle style) {
+    auto found = ui_fonts.find({.size = size, .style = style});
+    if (found != ui_fonts.end()) {
+        ImGui::PushFont(found->second);
     } else {
-        ImGui::PushFont(g_Fonts[{16, FontStyle::Regular}]);
+        ImGui::PushFont(ui_fonts[{.size = 16, .style = FontStyle::Regular}]);
     }
 }
 
-inline void PopUIFont() {
+inline void pop_ui_font() {
     ImGui::PopFont();
 }

@@ -239,7 +239,7 @@ Each input processor runs alone on its own spinning core and hands samples to th
 - Falcon 1's yielding and sleeping (`falcon/portpolicy.hpp`) are dropped. On an isolated core with one thread, yielding is just spinning plus system calls, and sleeping backs off to 1 ms (30 sample periods at 30 kHz).
 
 ### Start, stop and config
-- **One run per engine program.** Start means the UI spawns the engine program. The program builds every processor (see **Start barrier** under **Per-core loop**): if a constructor failed, it logs the error and exits; otherwise it runs the loops. Stop is one signal for the whole graph, never per processor: the loops end, the destructors release the processors' resources, and the program exits. So every run builds its processors from scratch.
+- **One run per engine program.** Start means the UI spawns the engine program. The program builds every processor (see **Start barrier** under **Per-core loop**): if a constructor failed, or a core's thread couldn't be started, it logs the error and exits; otherwise it runs the loops. Stop is one signal for the whole graph, never per processor: the loops end, the destructors release the processors' resources, and the program exits. So every run builds its processors from scratch.
 - A config change needs a new engine program anyway (see **Every option is a compile-time constant** under **Processors**).
 - An engine program that stays alive between runs is in beyond_prototype.md (**Engine states**).
 
@@ -271,8 +271,12 @@ Input processors convert every sample to µV. Every processor after the input re
 - Lower rates inside a graph come from processors that output only every N samples (see **Processors**).
 
 ## Open questions
-The processor interface as actual C++ types, since it is what's expensive to change (see **How to prioritise** under **Agreed**). All settled: the sample's header, the buffer types `Samples<S>` and `Events<E, N>` and the operations a processor uses on them (see **Buffers**), the event bases `Event` and `StreamEvent` (see **Events**), and the processor's form with its `Options`, constructor, destructor and `process()` signature (see **Processors**). No open questions remain on it.
+-resolve this asap- what happens if a processor have process signature with many inputs and outputs and only a few of them is given? can we/ should we implement a "buffer is populated" signal to processor to prevent redundant calculations in the code? If so, can we do this in runtime so the redundant code block is completely eliminated from machine code?
+
+The processor interface as actual C++ types, since it is what's expensive to change (see **How to prioritise** under **Agreed**). All settled: the sample's header, the buffer types `Samples<S>` and `Events<E, N>` and the operations a processor uses on them (see **Buffers**), the event bases `Event` and `StreamEvent` (see **Events**), and the processor's form with its `Options`, constructor, destructor and `process()` signature (see **Processors**). One question remains on it: how to name `process()` parameters. `.clang-tidy` rejects names shorter than 3 characters, so the `in` in this spec's examples is out. The name is also the port's name in the UI (see **`process()` signature** under **Processors**), so it should say what flows through it, e.g. `incoming_events`. The same goes for template parameters (`Events<E, N>`, `Samples<S>`): processor authors read and write them too, and no `.clang-tidy` rule checks them yet.
 
 Low priority, in beyond_prototype.md: under **Scaling to +2000 channels**, replace the note that several samples per call would help with the conclusion we reached instead: when every device delivers one sample every 33 µs, batching gains nothing, and splitting the channels across cores (shape 9) keeps each core's state in cache without adding latency.
 
 What is still to verify is listed under **Agreed** (Ripple's documentation, Trellis recording alongside Falcon, the TSC across cores) and under **Boundaries** (the C++26 features in the bundled clang).
+
+

@@ -1,17 +1,22 @@
 #pragma once
 #include <immintrin.h>
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <string>
 #include <vector>
 #include "glad/gl.h"
 #include "imgui.h"
+// Enums of two GL extensions that glad doesn't load. Not named GL_..., so a glad that does
+// load them can't clash with these names.
+constexpr GLenum NVX_CURRENT_AVAILABLE_VIDMEM_KB = 0x9049;  // GL_NVX_gpu_memory_info
+constexpr GLenum ATI_VBO_FREE_MEMORY = 0x87FB;              // GL_ATI_meminfo
 
-#define GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX 0x9049
-#define GL_VBO_FREE_MEMORY_ATI 0x87FB
-#include <iostream>
-#include <string>
-
-const char* DEMUX_SHADER_NV = R"glsl(
+constexpr const char* DEMUX_SHADER_NV = R"glsl(
 #version 460 core
 #extension GL_NV_gpu_shader5 : enable
 layout(local_size_x = 12, local_size_y = 1) in;
@@ -31,7 +36,7 @@ void main() {
 }
 )glsl";
 
-const char* DEMUX_SHADER_GENERIC = R"glsl(
+constexpr const char* DEMUX_SHADER_GENERIC = R"glsl(
 #version 460 core
 layout(local_size_x = 12, local_size_y = 1) in;
 layout(std430, binding = 0) readonly buffer RawInputPackets { int raw_ap_data[]; };
@@ -61,13 +66,13 @@ const char* get_demux_shader_source() {
         return DEMUX_SHADER_GENERIC;
     }
     std::string vendor(reinterpret_cast<const char*>(vendor_ptr));
-    if (vendor.find("NVIDIA") != std::string::npos) {
+    if (vendor.contains("NVIDIA")) {
         return DEMUX_SHADER_NV;
     }
     return DEMUX_SHADER_GENERIC;
 }
 
-const char* DOWN_COMPUTE_SHADER_SRC = R"glsl(
+constexpr const char* DOWN_COMPUTE_SHADER_SRC = R"glsl(
 #version 460 core
 layout(local_size_x = 256, local_size_y = 1) in;
 
@@ -128,7 +133,7 @@ void main() {
 )glsl";
 
 // No vertex buffer: gl_VertexID picks the column and quad corner, gl_InstanceID the channel
-const char* WAVEFORM_VERTEX_SHADER_SRC = R"glsl(
+constexpr const char* WAVEFORM_VERTEX_SHADER_SRC = R"glsl(
 #version 460 core
 layout(std430, binding = 2) readonly buffer Envelope {
     vec2 envelope[];
@@ -157,7 +162,7 @@ void main() {
 }
 )glsl";
 
-const char* WAVEFORM_FRAGMENT_SHADER_SRC = R"glsl(
+constexpr const char* WAVEFORM_FRAGMENT_SHADER_SRC = R"glsl(
 #version 460 core
 out vec4 frag_color;
 void main() {
@@ -166,29 +171,29 @@ void main() {
 )glsl";
 
 class SignalShaders {
-   public:
+public:
     static bool check_compile_errors(GLuint shader, const std::string& type) {
-        GLint success;
+        GLint success = GL_FALSE;
         if (type != "PROGRAM") {
             glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-            if (!success) {
+            if (success == GL_FALSE) {
                 GLint log_length = 0;
                 glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
-                std::vector<GLchar> infoLog(static_cast<std::size_t>(log_length));
-                glGetShaderInfoLog(shader, log_length, NULL, infoLog.data());
+                std::vector<GLchar> info_log(static_cast<std::size_t>(log_length));
+                glGetShaderInfoLog(shader, log_length, nullptr, info_log.data());
                 std::cerr << "ERROR::SHADER_COMPILATION_ERROR of type: " << type << "\n"
-                          << infoLog.data() << "\n";
+                          << info_log.data() << "\n";
                 return false;
             }
         } else {
             glGetProgramiv(shader, GL_LINK_STATUS, &success);
-            if (!success) {
+            if (success == GL_FALSE) {
                 GLint log_length = 0;
                 glGetProgramiv(shader, GL_INFO_LOG_LENGTH, &log_length);
-                std::vector<GLchar> infoLog(static_cast<std::size_t>(log_length));
-                glGetProgramInfoLog(shader, log_length, NULL, infoLog.data());
+                std::vector<GLchar> info_log(static_cast<std::size_t>(log_length));
+                glGetProgramInfoLog(shader, log_length, nullptr, info_log.data());
                 std::cerr << "ERROR::PROGRAM_LINKING_ERROR of type: " << type << "\n"
-                          << infoLog.data() << "\n";
+                          << info_log.data() << "\n";
                 return false;
             }
         }
@@ -197,7 +202,7 @@ class SignalShaders {
 
     static GLuint compile_shader_program(const char* src, GLenum type) {
         GLuint shader = glCreateShader(type);
-        glShaderSource(shader, 1, &src, NULL);
+        glShaderSource(shader, 1, &src, nullptr);
         glCompileShader(shader);
         if (!check_compile_errors(shader, type == GL_COMPUTE_SHADER ? "COMPUTE" : "OTHER")) {
             glDeleteShader(shader);
@@ -214,23 +219,30 @@ class SignalShaders {
         return program;
     }
 
-    static GLuint compile_render_program(const char* vs_src, const char* fs_src) {
-        GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, 1, &vs_src, NULL);
-        glCompileShader(vs);
-        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, 1, &fs_src, NULL);
-        glCompileShader(fs);
-        if (!check_compile_errors(vs, "VERTEX") || !check_compile_errors(fs, "FRAGMENT")) {
-            glDeleteShader(vs);
-            glDeleteShader(fs);
+    // Named, so a caller can't swap the two sources
+    struct RenderSources {
+        const char* vertex = nullptr;
+        const char* fragment = nullptr;
+    };
+
+    static GLuint compile_render_program(RenderSources sources) {
+        GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertex_shader, 1, &sources.vertex, nullptr);
+        glCompileShader(vertex_shader);
+        GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragment_shader, 1, &sources.fragment, nullptr);
+        glCompileShader(fragment_shader);
+        if (!check_compile_errors(vertex_shader, "VERTEX") ||
+            !check_compile_errors(fragment_shader, "FRAGMENT")) {
+            glDeleteShader(vertex_shader);
+            glDeleteShader(fragment_shader);
             return 0;
         }
         GLuint program = glCreateProgram();
-        glAttachShader(program, vs);
-        glAttachShader(program, fs);
-        glDeleteShader(vs);
-        glDeleteShader(fs);
+        glAttachShader(program, vertex_shader);
+        glAttachShader(program, fragment_shader);
+        glDeleteShader(vertex_shader);
+        glDeleteShader(fragment_shader);
         glLinkProgram(program);
         if (!check_compile_errors(program, "PROGRAM")) {
             glDeleteProgram(program);
@@ -240,7 +252,7 @@ class SignalShaders {
     }
 };
 class SignalRenderer {
-   private:
+private:
     static constexpr size_t MAX_WIDTH = 8192;
 
     struct DrawParams {
@@ -261,13 +273,15 @@ class SignalRenderer {
     DrawParams draw_params_;
     std::atomic<float> voltage_scale_{100.0f};
 
-    static void draw_callback(const ImDrawList*, const ImDrawCmd* cmd) {
+    static void draw_callback(const ImDrawList* /*parent_list*/, const ImDrawCmd* cmd) {
         static_cast<SignalRenderer*>(cmd->UserCallbackData)->draw(cmd->ClipRect);
     }
 
     void draw(const ImVec4& clip) {
-        const DrawParams& p = draw_params_;
-        if (p.channel_count <= 0 || width_ <= 0) return;
+        const DrawParams& params = draw_params_;
+        if (params.channel_count <= 0 || width_ <= 0) {
+            return;
+        }
 
         ImDrawData* draw_data = ImGui::GetDrawData();
         ImVec2 pos = draw_data->DisplayPos;
@@ -277,31 +291,40 @@ class SignalRenderer {
         // Backend keeps the previous command's scissor during callbacks, so set our own
         float fb_height = size.y * scale.y;
         glScissor(static_cast<GLint>((clip.x - pos.x) * scale.x),
-                  static_cast<GLint>(fb_height - (clip.w - pos.y) * scale.y),
+                  static_cast<GLint>(fb_height - ((clip.w - pos.y) * scale.y)),
                   static_cast<GLsizei>((clip.z - clip.x) * scale.x),
                   static_cast<GLsizei>((clip.w - clip.y) * scale.y));
 
         glUseProgram(render_program_);
         glBindVertexArray(empty_vao_);
         glUniform1i(glGetUniformLocation(render_program_, "u_width"), width_);
-        glUniform1i(glGetUniformLocation(render_program_, "u_first_channel"), p.first_channel);
-        glUniform2f(glGetUniformLocation(render_program_, "u_origin"), p.origin.x, p.origin.y);
-        glUniform1f(glGetUniformLocation(render_program_, "u_row_pitch"), p.row_pitch);
+        glUniform1i(glGetUniformLocation(render_program_, "u_first_channel"), params.first_channel);
+        glUniform2f(glGetUniformLocation(render_program_, "u_origin"), params.origin.x,
+                    params.origin.y);
+        glUniform1f(glGetUniformLocation(render_program_, "u_row_pitch"), params.row_pitch);
         glUniform2f(glGetUniformLocation(render_program_, "u_display_pos"), pos.x, pos.y);
         glUniform2f(glGetUniformLocation(render_program_, "u_display_size"), size.x, size.y);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssbo_envelope_);
-        glDrawArraysInstanced(GL_TRIANGLES, 0, 6 * width_, p.channel_count);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6 * width_, params.channel_count);
     }
 
-   public:
+public:
     SignalRenderer() = default;
 
     ~SignalRenderer() {
-        if (ssbo_staging_raw_) glDeleteBuffers(1, &ssbo_staging_raw_);
-        if (ssbo_signal_history_) glDeleteBuffers(1, &ssbo_signal_history_);
-        if (ssbo_envelope_) glDeleteBuffers(1, &ssbo_envelope_);
-        if (empty_vao_) glDeleteVertexArrays(1, &empty_vao_);
+        if (ssbo_staging_raw_ != 0) {
+            glDeleteBuffers(1, &ssbo_staging_raw_);
+        }
+        if (ssbo_signal_history_ != 0) {
+            glDeleteBuffers(1, &ssbo_signal_history_);
+        }
+        if (ssbo_envelope_ != 0) {
+            glDeleteBuffers(1, &ssbo_envelope_);
+        }
+        if (empty_vao_ != 0) {
+            glDeleteVertexArrays(1, &empty_vao_);
+        }
     }
 
     void set_voltage_scale(float scale) { voltage_scale_.store(scale, std::memory_order_relaxed); }
@@ -310,40 +333,51 @@ class SignalRenderer {
     // Queues the waveform draw into ImGui's command stream, so it respects window clipping
     void add_draw_callback(ImDrawList* draw_list, int first_channel, int channel_count,
                            ImVec2 origin, float row_pitch) {
-        draw_params_ = {first_channel, channel_count, origin, row_pitch};
+        draw_params_ = {
+            .first_channel = first_channel,
+            .channel_count = channel_count,
+            .origin = origin,
+            .row_pitch = row_pitch,
+        };
         draw_list->AddCallback(&SignalRenderer::draw_callback, this);
         // ImGui defines this sentinel as an int-to-pointer cast
         // NOLINTNEXTLINE(performance-no-int-to-ptr)
         draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
     }
 
-    size_t get_universal_available_vram_kb() {
-        const size_t fallback_size = 1024 * 512;
+    static size_t get_universal_available_vram_kb() {
+        constexpr size_t fallback_size_kb = size_t{512} * 1024;
         const GLubyte* vendor_ptr = glGetString(GL_VENDOR);
         const GLubyte* renderer_ptr = glGetString(GL_RENDERER);
 
-        if (!vendor_ptr) return fallback_size;
+        if (!vendor_ptr) {
+            return fallback_size_kb;
+        }
 
         std::string vendor(reinterpret_cast<const char*>(vendor_ptr));
         std::string renderer(renderer_ptr ? reinterpret_cast<const char*>(renderer_ptr) : "");
 
-        // Transform to uppercase for comparison consistency
-        std::transform(vendor.begin(), vendor.end(), vendor.begin(), ::toupper);
-        std::transform(renderer.begin(), renderer.end(), renderer.begin(), ::toupper);
+        // Transform to uppercase for comparison consistency. std::toupper takes an unsigned char:
+        // passing a negative char (a non-ASCII byte) would be undefined behaviour.
+        auto to_upper = [](unsigned char letter) {
+            return static_cast<char>(std::toupper(letter));
+        };
+        std::ranges::transform(vendor, vendor.begin(), to_upper);
+        std::ranges::transform(renderer, renderer.begin(), to_upper);
 
         // 1. NVIDIA Dedicated GPU Tracking
-        if (vendor.find("NVIDIA") != std::string::npos) {
+        if (vendor.contains("NVIDIA")) {
             GLint nvidia_available_kb = 0;
-            glGetIntegerv(GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX, &nvidia_available_kb);
+            glGetIntegerv(NVX_CURRENT_AVAILABLE_VIDMEM_KB, &nvidia_available_kb);
             if (nvidia_available_kb > 0) {
                 return static_cast<size_t>(nvidia_available_kb);
             }
         }
 
         // 2. AMD / ATI Dedicated GPU Tracking
-        if (vendor.find("AMD") != std::string::npos || vendor.find("ATI") != std::string::npos) {
-            GLint amd_free_mem_info[4] = {0, 0, 0, 0};
-            glGetIntegerv(GL_VBO_FREE_MEMORY_ATI, amd_free_mem_info);
+        if (vendor.contains("AMD") || vendor.contains("ATI")) {
+            std::array<GLint, 4> amd_free_mem_info{};
+            glGetIntegerv(ATI_VBO_FREE_MEMORY, amd_free_mem_info.data());
             if (amd_free_mem_info[0] > 0) {
                 return static_cast<size_t>(amd_free_mem_info[0]);
             }
@@ -352,24 +386,26 @@ class SignalRenderer {
         // 3. INTEL or Integrated Silicon Fallback
         // Intel integrated GPUs do not have dedicated physical VRAM pools; they dynamically
         // carve space directly out of host system RAM up to an OS-managed maximum limit.
-        if (vendor.find("INTEL") != std::string::npos ||
-            renderer.find("INTEL") != std::string::npos) {
-            return fallback_size;
+        if (vendor.contains("INTEL") || renderer.contains("INTEL")) {
+            return fallback_size_kb;
         }
 
-        return fallback_size;
+        return fallback_size_kb;
     }
     void init_gl_resources(size_t initial_history_size) {
         demux_program_ =
             SignalShaders::compile_shader_program(get_demux_shader_source(), GL_COMPUTE_SHADER);
         downsample_program_ =
             SignalShaders::compile_shader_program(DOWN_COMPUTE_SHADER_SRC, GL_COMPUTE_SHADER);
-        render_program_ = SignalShaders::compile_render_program(WAVEFORM_VERTEX_SHADER_SRC,
-                                                                WAVEFORM_FRAGMENT_SHADER_SRC);
+        render_program_ = SignalShaders::compile_render_program({
+            .vertex = WAVEFORM_VERTEX_SHADER_SRC,
+            .fragment = WAVEFORM_FRAGMENT_SHADER_SRC,
+        });
 
         glGenBuffers(1, &ssbo_staging_raw_);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_staging_raw_);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, 4000 * 12 * 384 * sizeof(int16_t), nullptr,
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     static_cast<GLsizeiptr>(size_t{4000} * 12 * 384 * sizeof(int16_t)), nullptr,
                      GL_DYNAMIC_DRAW);
 
         glGenBuffers(1, &ssbo_signal_history_);
@@ -390,10 +426,10 @@ class SignalRenderer {
                   << "envelope glGetError: 0x" << std::hex << glGetError() << std::dec << "\n";
     }
 
-    void resize_history_buffer(size_t history_size) {
+    void resize_history_buffer(size_t history_size) const {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_signal_history_);
 
-        GLsizeiptr buffer_size = static_cast<GLsizeiptr>(384 * history_size * sizeof(float));
+        auto buffer_size = static_cast<GLsizeiptr>(384 * history_size * sizeof(float));
 
         glBufferData(GL_SHADER_STORAGE_BUFFER, buffer_size, nullptr, GL_DYNAMIC_DRAW);
 
@@ -401,37 +437,46 @@ class SignalRenderer {
         glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32F, GL_RED, GL_FLOAT, &clear_value);
     }
 
-    void execute_demux_and_downsample(const int16_t* raw_packets_ptr, size_t total_elements,
-                                      size_t num_superframes, size_t history_size,
-                                      size_t current_write_idx, size_t total_processed,
-                                      size_t width) {
-        width_ = static_cast<int>(std::min(width, MAX_WIDTH));
+    // Inputs of execute_demux_and_downsample(), named so a caller can't swap two of them
+    struct DemuxParams {
+        const int16_t* raw_packets = nullptr;
+        size_t total_elements = 0;
+        size_t num_superframes = 0;
+        size_t history_size = 0;
+        size_t write_idx = 0;
+        size_t total_processed = 0;
+        size_t width = 0;
+    };
 
-        if (num_superframes > 0) {
+    void execute_demux_and_downsample(const DemuxParams& params) {
+        width_ = static_cast<int>(std::min(params.width, MAX_WIDTH));
+
+        if (params.num_superframes > 0) {
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_staging_raw_);
             glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                            static_cast<long>(total_elements * sizeof(int16_t)), raw_packets_ptr);
+                            static_cast<long>(params.total_elements * sizeof(int16_t)),
+                            params.raw_packets);
 
             glUseProgram(demux_program_);
             glUniform1i(glGetUniformLocation(demux_program_, "u_samples_history"),
-                        static_cast<int>(history_size));
+                        static_cast<int>(params.history_size));
             glUniform1i(glGetUniformLocation(demux_program_, "u_write_idx"),
-                        static_cast<int>(current_write_idx));
+                        static_cast<int>(params.write_idx));
             glUniform1i(glGetUniformLocation(demux_program_, "u_num_superframes"),
-                        static_cast<int>(num_superframes));
+                        static_cast<int>(params.num_superframes));
 
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_staging_raw_);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo_signal_history_);
 
-            glDispatchCompute(static_cast<GLuint>(num_superframes), 384, 1);
+            glDispatchCompute(static_cast<GLuint>(params.num_superframes), 384, 1);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         }
 
         glUseProgram(downsample_program_);
         glUniform1i(glGetUniformLocation(downsample_program_, "u_total_samples"),
-                    static_cast<int>(history_size));
+                    static_cast<int>(params.history_size));
 
-        size_t current_cursor = total_processed % history_size;
+        size_t current_cursor = params.total_processed % params.history_size;
         glUniform1i(glGetUniformLocation(downsample_program_, "u_cursor_idx"),
                     static_cast<int>(current_cursor));
         glUniform1f(glGetUniformLocation(downsample_program_, "u_v_scale"),

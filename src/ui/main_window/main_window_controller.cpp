@@ -1,19 +1,19 @@
 #pragma once
 class MainWindowController {
    private:
-    bool m_showLeftSidebar = true;
-    bool m_showBottomBar = true;
+    bool show_left_sidebar_ = true;
+    bool show_bottom_bar_ = true;
 
    public:
     MainWindowController() = default;
     ~MainWindowController() = default;
 
-    bool isLeftSidebarVisible() const { return m_showLeftSidebar; }
-    bool isBottomBarVisible() const { return m_showBottomBar; }
+    [[nodiscard]] bool is_left_sidebar_visible() const { return show_left_sidebar_; }
+    [[nodiscard]] bool is_bottom_bar_visible() const { return show_bottom_bar_; }
 
-    void toggleLeftSidebar() { m_showLeftSidebar = !m_showLeftSidebar; }
-    void toggleBottomBar() { m_showBottomBar = !m_showBottomBar; }
+    void toggle_left_sidebar() { show_left_sidebar_ = !show_left_sidebar_; }
+    void toggle_bottom_bar() { show_bottom_bar_ = !show_bottom_bar_; }
 
-    void setLeftSidebarVisible(bool visible) { m_showLeftSidebar = visible; }
-    void setBottomBarVisible(bool visible) { m_showBottomBar = visible; }
+    void set_left_sidebar_visible(bool visible) { show_left_sidebar_ = visible; }
+    void set_bottom_bar_visible(bool visible) { show_bottom_bar_ = visible; }
 };

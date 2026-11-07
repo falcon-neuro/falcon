@@ -211,6 +211,20 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
 - **Viewing data without a graph** (UI topic, formerly an open question): maybe the UI runs a small generated engine, e.g. NeuropixelsInput → Viewer.
 - **Buffers the cache view can't see** (formerly an open question). Processors keep their own buffers (e.g. p3's copies while it waits for another input). The cache view (task D.5) can only count them if their size is known before the graph runs.
 
+## Hardening
+Ways to catch bugs that the current build setup (`CMakeLists.txt`, `.clang-tidy`) misses. Deferred: no time during the prototype.
+- **Settings that look like protection but do nothing** (cheap to fix):
+  - `CMakeLists.txt` defines `_GLIBCXX_ASSERTIONS`, which only affects GCC's standard library (libstdc++), and `LIBCXX_ENABLE_HARDENING`, which libc++ doesn't know. Falcon builds with libc++ (`-stdlib=libc++`), whose switch is `_LIBCPP_HARDENING_MODE`. So no build checks `std::array` or `std::vector` indexes.
+  - `.clang-tidy` sets options for `misc-assert-side-effect`, but `misc-*` is not in its `Checks`, so the check never runs.
+  - Compiler warnings are not errors (no `-Werror`), so a new warning scrolls past and stays.
+- **More clang-tidy check families:**
+  - `clang-analyzer-*` (the Clang Static Analyzer) follows code paths and finds null dereferences, use-after-free, leaks and reads of uninitialised values. It finds the most real bugs of all of these, but is slow.
+  - `cppcoreguidelines-*`: uninitialised members, missing copy/move members (rule of five), object slicing, raw `new`/`delete`. Its pointer-arithmetic and `reinterpret_cast` checks flag SIMD intrinsic code on purpose, so they need a rule for where exceptions are allowed.
+  - `misc-*`: const-correctness (`const` wherever possible) and assert side effects.
+  - `concurrency-*`: C library functions that aren't thread-safe, which matters with one thread per core.
+- **Sanitizer builds**, for testing only, never the realtime build: ASan + UBSan (memory errors and undefined behaviour, including misaligned SIMD loads and signed overflow), and TSan (data races between cores, e.g. in rings).
+- **libc++ bounds checks**, once the macro is fixed: `_LIBCPP_HARDENING_MODE_DEBUG` in Debug builds. Open: whether Release keeps any (e.g. `_LIBCPP_HARDENING_MODE_FAST`), since every check costs time in the loop.
+
 ## Tasks
 From the former TODO.md. Its other tasks are now part of spec.md.
 
@@ -247,3 +261,6 @@ From the former TODO.md. Its other tasks are now part of spec.md.
     3. Samples arrive as raw ADC counts. Falcon converts them to µV and orders channels by depth using the config the sender reports as applied (not the one requested). Config changes are only allowed while streaming is stopped.
     4. IMRO editor in the Falcon UI. NP1 has 960 recording sites on the shank but only 384 channels; each channel N can read site N, N+384 or N+768 (bank 0/1/2), so a channel's number doesn't always match its height on the shank. The editor draws the shank, lets the user mark regions to record from, enforces one site per channel, sets gains, and saves/loads `.imro` files (SpikeGLX format) that are sent to the sender.
     5. Rewrite `src/processors/neuropixels_input.cpp` (the current version is a sketch). It runs alone on its own spinning core, checks the socket without sleeping (no `io_uring_wait_cqe`, no `notify_one()` per packet), and writes each packet's 12 samples into the ring to the processing cores.
+
+# Misc
+- Find a way to let other labs to write processors with their own cmake so that if they depend on a lib, it should be compiled into the graph executable

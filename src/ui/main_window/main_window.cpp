@@ -11,9 +11,9 @@
 class MainWindow {
    private:
     MainWindowController& main_window_controller_;
-    LeftPanel m_leftPanel;
-    BottomPanel m_bottomPanel;
-    MainViewport m_mainViewport;
+    LeftPanel left_panel_;
+    BottomPanel bottom_panel_;
+    MainViewport main_viewport_;
     SignalViewer signal_viewer_;
     SignalParser signal_parser_;
     bool is_initialized_ = false;
@@ -21,16 +21,18 @@ class MainWindow {
    public:
     MainWindow(MainWindowController& main_window_controller)
         : main_window_controller_(main_window_controller),
-          m_leftPanel([this]() { main_window_controller_.setLeftSidebarVisible(false); }),
-          m_bottomPanel([this]() { main_window_controller_.setBottomBarVisible(false); }),
-          m_mainViewport([this]() { main_window_controller_.setLeftSidebarVisible(true); },
-                         [this]() { main_window_controller_.setBottomBarVisible(true); }),
+          left_panel_([this] { main_window_controller_.set_left_sidebar_visible(false); }),
+          bottom_panel_([this] { main_window_controller_.set_bottom_bar_visible(false); }),
+          main_viewport_([this] { main_window_controller_.set_left_sidebar_visible(true); },
+                         [this] { main_window_controller_.set_bottom_bar_visible(true); }),
           signal_viewer_(signal_parser_) {}
 
     ~MainWindow() { signal_parser_.stop(); }
 
     void init_opengl_resources() {
-        if (is_initialized_) return;
+        if (is_initialized_) {
+            return;
+        }
 
         signal_parser_.start();
         is_initialized_ = true;
@@ -45,7 +47,8 @@ class MainWindow {
 
         ImGui::BeginGroup();
         {
-            ImGui::BeginChild("MainViewportContainer", ImVec2(space.x, space.y), true);
+            ImGui::BeginChild("MainViewportContainer", ImVec2(space.x, space.y),
+                              ImGuiChildFlags_Borders);
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1.0f));
             signal_viewer_.render();
             ImGui::PopStyleColor();

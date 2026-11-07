@@ -10,11 +10,14 @@ dictionaries:
   - cpp
 words:
   - AABB
+  - alignas
   - ALSA
+  - ASIC
   - backend
   - bugprone
   - buildconstant
   - channelmap
+  - Ciliberti
   - cntfrq
   - cntvct
   - COPYONLY
@@ -29,6 +32,7 @@ words:
   - dummysink
   - elec
   - endmacro
+  - ephys
   - ETERM
   - FETCHCONTENT
   - fklab
@@ -46,9 +50,11 @@ words:
   - headeronly
   - hippocampal
   - imgui
+  - Integerv
   - isautonomous
   - kbhit
   - keypair
+  - Kloosterman
   - latencybenchmark
   - levelcrossingdetector
   - lfence
@@ -56,6 +62,7 @@ words:
   - libpython
   - libzmq
   - LLNL
+  - Lsizei
   - LTWH
   - mainpage
   - mavx
@@ -72,16 +79,19 @@ words:
   - nlxrecord
   - nlxtestbench
   - nocloudlog
+  - NOLINTNEXTLINE
   - noscreenlog
   - npackets
   - nsamples
   - ontime
   - optvallen
   - outoforder
+  - overengineer
   - Oversample
   - Parameteri
   - pgrep
   - pixz
+  - prioritise
   - Programiv
   - RCVTIMEO
   - rdtsc
@@ -90,6 +100,7 @@ words:
   - REGISTERPROCESSOR
   - remixicon
   - Ringbuffer
+  - rmem
   - rootproject
   - Selectability
   - setcap

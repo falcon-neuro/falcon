@@ -4,29 +4,31 @@
 
 class MainViewport {
    private:
-    std::function<void()> m_onShowLeft;
-    std::function<void()> m_onShowBottom;
+    std::function<void()> on_show_left_;
+    std::function<void()> on_show_bottom_;
 
    public:
-    MainViewport(std::function<void()> onShowLeft, std::function<void()> onShowBottom)
-        : m_onShowLeft(std::move(onShowLeft)), m_onShowBottom(std::move(onShowBottom)) {}
+    MainViewport(std::function<void()> on_show_left, std::function<void()> on_show_bottom)
+        : on_show_left_(std::move(on_show_left)), on_show_bottom_(std::move(on_show_bottom)) {}
     ~MainViewport() = default;
 
-    void render(bool leftSidebarVisible, bool bottomBarVisible) {
+    void render(bool left_sidebar_visible, bool bottom_bar_visible) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1.0f));
 
-        bool printedButton = false;
-        if (!leftSidebarVisible && m_onShowLeft) {
+        bool printed_button = false;
+        if (!left_sidebar_visible && on_show_left_) {
             if (ImGui::Button("Reveal Left Panel")) {
-                m_onShowLeft();
+                on_show_left_();
             }
-            printedButton = true;
+            printed_button = true;
         }
 
-        if (!bottomBarVisible && m_onShowBottom) {
-            if (printedButton) ImGui::SameLine();
+        if (!bottom_bar_visible && on_show_bottom_) {
+            if (printed_button) {
+                ImGui::SameLine();
+            }
             if (ImGui::Button("Reveal Status Panel")) {
-                m_onShowBottom();
+                on_show_bottom_();
             }
         }
 

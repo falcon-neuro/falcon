@@ -9,7 +9,9 @@ template <std::derived_from<Event> E, int N>
 struct EventLogger {
     u64 received = 0;   // events received since the start
 
-    void process(In<Events<E, N>> in) {
-        for (const E& _ : in) std::println("EventLogger: event {}", ++received);
+    void process(In<Events<E, N>> incoming_events) {
+        for (const E& _ : incoming_events) {
+            std::println("EventLogger: event {}", ++received);
+        }
     }
 };
