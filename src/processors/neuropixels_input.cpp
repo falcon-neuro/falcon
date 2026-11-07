@@ -35,9 +35,9 @@ struct electrodePacket {
 // methods, inheritance is just a concept, not meant for actual OOP inheritance)
 class NeuropixelsInput {
 private:
-    static constexpr size_t BUFFER_SIZE = 1024;
+    static constexpr size_t buffer_size = 1024;
     // user_data of a receive into drop_packet_, used when the ring is full
-    static constexpr uint64_t DROP_SLOT = std::numeric_limits<uint64_t>::max();
+    static constexpr uint64_t drop_slot = std::numeric_limits<uint64_t>::max();
 
     alignas(64) std::vector<electrodePacket> ring_buffer_;
 
@@ -75,7 +75,7 @@ private:
 
             size_t head = head_.load(std::memory_order_relaxed);
             size_t tail = tail_.load(std::memory_order_relaxed);
-            size_t fill = (head >= tail) ? (head - tail) : (BUFFER_SIZE - (tail - head));
+            size_t fill = (head >= tail) ? (head - tail) : (buffer_size - (tail - head));
 
             double mib_received = static_cast<double>(total_bytes_received_) / (1024.0 * 1024.0);
             double packet_rate =
@@ -84,8 +84,8 @@ private:
 
             std::cout << "\033[2J\033[H" << std::flush;
             std::cout << "================ NEUROPIXELS INPUT DIAGNOSTICS ================\n";
-            std::cout << "Ringbuffer Fill Level : " << fill << " / " << BUFFER_SIZE << "\n";
-            std::cout << "Ringbuffer Max Fill   : " << max_ring_fill_ << " / " << BUFFER_SIZE
+            std::cout << "Ringbuffer Fill Level : " << fill << " / " << buffer_size << "\n";
+            std::cout << "Ringbuffer Max Fill   : " << max_ring_fill_ << " / " << buffer_size
                       << "\n";
             std::cout << "Total Packets Recv    : " << total_packets_received_ << "\n";
             std::cout << "Total Packets Dropped : " << total_packets_dropped_ << "\n";
@@ -119,7 +119,7 @@ private:
         size_t buf_len = sizeof(electrodePacket);
 
         io_uring_prep_recv(sqe, socket_fd_, buf_addr, buf_len, 0);
-        sqe->user_data = drop ? DROP_SLOT : static_cast<uint64_t>(slot_idx);
+        sqe->user_data = drop ? drop_slot : static_cast<uint64_t>(slot_idx);
 
         io_uring_submit(&uring_);
     }
@@ -128,7 +128,7 @@ private:
         size_t current_head = head_.load(std::memory_order_relaxed);
         size_t current_tail = tail_.load(std::memory_order_acquire);
 
-        bool dropping = ((current_head + 1) % BUFFER_SIZE == current_tail);
+        bool dropping = ((current_head + 1) % buffer_size == current_tail);
         submit_recv_request(current_head, dropping);
 
         io_uring_cqe* cqe = nullptr;
@@ -154,9 +154,9 @@ private:
                 total_bytes_received_ += static_cast<uint64_t>(res);
 
                 if (res == sizeof(electrodePacket)) {
-                    if (user_data != DROP_SLOT) {
+                    if (user_data != drop_slot) {
                         total_packets_received_++;
-                        head_.store((user_data + 1) % BUFFER_SIZE, std::memory_order_release);
+                        head_.store((user_data + 1) % buffer_size, std::memory_order_release);
                         publish_seq_.fetch_add(1, std::memory_order_release);
                         publish_seq_.notify_one();
                     } else {
@@ -174,9 +174,9 @@ private:
 
             current_head = head_.load(std::memory_order_relaxed);
             current_tail = tail_.load(std::memory_order_acquire);
-            dropping = ((current_head + 1) % BUFFER_SIZE == current_tail);
+            dropping = ((current_head + 1) % buffer_size == current_tail);
 
-            size_t fill = (current_head + BUFFER_SIZE - current_tail) % BUFFER_SIZE;
+            size_t fill = (current_head + buffer_size - current_tail) % buffer_size;
             max_ring_fill_ = std::max(fill, max_ring_fill_);
 
             submit_recv_request(current_head, dropping);
@@ -186,7 +186,7 @@ private:
 public:
     NeuropixelsInput(std::string ip_address = "0.0.0.0", int port = 6363)
         : ip_(std::move(ip_address)), port_(port) {
-        ring_buffer_.resize(BUFFER_SIZE);
+        ring_buffer_.resize(buffer_size);
 
         if (io_uring_queue_init(512, &uring_, 0) < 0) {
             std::cerr << "Failed to initialize io_uring queue\n";
@@ -283,7 +283,7 @@ public:
     }
 
     void release_packet(size_t expected_tail) {
-        tail_.store((expected_tail + 1) % BUFFER_SIZE, std::memory_order_release);
+        tail_.store((expected_tail + 1) % buffer_size, std::memory_order_release);
     }
 
     // Read publish_seq() before checking the ring, then pass it to wait_for_packet().

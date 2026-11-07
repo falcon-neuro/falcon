@@ -13,11 +13,11 @@
 
 class SignalParser {
    private:
-    static constexpr size_t SAMPLE_RATE = 30000;  // AP band, samples per second
+    static constexpr size_t sample_rate = 30000;  // AP band, samples per second
     // int16 values in one packet's AP data: 12 samples of 384 channels
-    static constexpr size_t AP_VALUES_PER_PACKET =
+    static constexpr size_t ap_values_per_packet =
         size_t{NP1_PROBE_SUPERFRAMESIZE} * NP1_PROBE_CHANNEL_COUNT;
-    static_assert(sizeof(electrodePacket::apData) == AP_VALUES_PER_PACKET * sizeof(int16_t));
+    static_assert(sizeof(electrodePacket::apData) == ap_values_per_packet * sizeof(int16_t));
 
     NeuropixelsInput neuropixels_input_;
     std::thread worker_thread_;
@@ -27,7 +27,7 @@ class SignalParser {
     std::vector<int16_t> cpu_swap_buffer_;
     std::mutex buffer_mutex_;
 
-    size_t samples_history_ = 1 * SAMPLE_RATE;
+    size_t samples_history_ = 1 * sample_rate;
     size_t write_idx_ = 0;
     uint64_t total_samples_processed_ = 0;
 
@@ -37,7 +37,7 @@ class SignalParser {
     std::chrono::steady_clock::time_point last_rate_time_;
     alignas(std::hardware_destructive_interference_size) std::atomic<size_t> samples_per_sec_{0};
 
-    std::atomic<size_t> requested_history_{1 * SAMPLE_RATE};
+    std::atomic<size_t> requested_history_{1 * sample_rate};
     bool resize_pending_ = false;
 
     SignalRenderer gpu_renderer_;
@@ -61,7 +61,7 @@ class SignalParser {
                 {
                     std::scoped_lock lock(buffer_mutex_);
                     size_t current_size = cpu_ingest_buffer_.size();
-                    cpu_ingest_buffer_.resize(current_size + AP_VALUES_PER_PACKET);
+                    cpu_ingest_buffer_.resize(current_size + ap_values_per_packet);
                     std::memcpy(cpu_ingest_buffer_.data() + current_size, packet->apData,
                                 sizeof(packet->apData));
                 }
@@ -151,7 +151,7 @@ class SignalParser {
         }
 
         size_t total_elements = cpu_swap_buffer_.size();
-        size_t num_superframes = total_elements / AP_VALUES_PER_PACKET;
+        size_t num_superframes = total_elements / ap_values_per_packet;
         size_t new_samples_count = num_superframes * NP1_PROBE_SUPERFRAMESIZE;
 
         gpu_renderer_.execute_demux_and_downsample({

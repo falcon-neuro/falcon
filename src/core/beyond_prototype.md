@@ -112,19 +112,19 @@ Decided:
 - **Buffer reuse**: the processors in one core's loop share buffers instead of each owning a separate one, to keep the cache footprint small. Example: a loop of 5 processors does not need 5 separate buffers. Since the engine owns the output buffers (see **graph.cpp** in spec.md), this needs no change to any processor.
 
 Open (formerly open question 9): how buffers are assigned, i.e. which connections may share a buffer.
-- Fan-out: `input_buf` is read by both `ap` and `lfp` (see the sketch under **graph.cpp** in spec.md), so no processor may overwrite that buffer until both have read it in the current pass.
+- Fan-out: `neuropixels_input_to_ap_filter_and_lfp_decimator_sample_buffer` is read by both `ap_filter` and `lfp_decimator` (see the sketch under **graph.cpp** in spec.md), so no processor may overwrite that buffer until both have read it in the current pass.
 - Feedback connections hold the previous pass's output (see **Feedback connections**), so that buffer must survive into the next pass and cannot be shared with other connections.
 - A buffer can point into a ring slot or a socket receive buffer (see **Buffers** in spec.md). A processor that writes its output into such a buffer in place would corrupt data that other readers of the same ring still need.
 - Who decides which connections share a buffer: the generator of `graph.cpp`, which sees the whole graph and the call order on each core, or each processor (e.g. a filter that declares it can work in place)?
 
 ### Event rings between cores
 - Between cores, events go through a small ring of fixed-size records (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
-- In the prototype, `Events<E, N>` holds its records inside itself. Reading from an event ring without a copy needs it to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
+- In the prototype, `EventBuffer<Record, Capacity>` holds its records inside itself. Reading from an event ring without a copy needs it to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
 
 ### Spike records
 The prototype's `Spike` holds only the sample number and the channel (see **Events** in spec.md). Richer records, each made by its own processor from the detector's spikes and the filtered stream, so the path from detector to TTL never waits for them:
 - the peak amplitude, about 0.1–0.3 ms after the crossing;
-- per-group marks for clusterless decoding, e.g. `template <int N> struct GroupSpike : Event { u32 group; float peak[N]; };` (32 B for a tetrode);
+- per-group marks for clusterless decoding, e.g. `template <int ChannelsPerGroup> struct GroupSpike : Event { u32 group; float peak[ChannelsPerGroup]; };` (32 B for a tetrode);
 - the waveform, e.g. 40 samples per channel of a tetrode (656 B), about 20 samples late (shape 14 in graph_shapes.md).
 
 In all of them, `sample` is the sample number of the threshold crossing, so every record of one spike carries the same number and they can be matched.
@@ -176,6 +176,12 @@ The prototype puts each sample's header in its ring slot, in front of the sample
   - Deferred as premature optimisation.
   - Adding it later without touching processors needs per-channel processors written in a per-vector form: a per-sample "do I run?" plus a per-vector `process()` that returns its output instead of writing it.
 
+### Inlining every `process()`
+In the prototype, clang decides which `process()` calls to inline (see **Processors** in spec.md). A call it doesn't inline runs on every pass, even when its input is empty, and since the buffer's address goes into the call, the buffer's count lives on the stack instead of in a register (see **graph.cpp** in spec.md).
+- Measured on the monotonous event pipeline, with a test event logger whose `process()` printed with `std::println`: clang didn't inline it, because `std::println` made it too big, so that core's loop was not one fused unit and the call saved and restored six registers on every pass. A small processor was inlined: with a test processor between the generator and the logger that adds a constant to each event, the buffer between the generator and that processor disappeared from the machine code entirely, with no stack slot and no register.
+- Harmless on that non-realtime core, but any realtime processor too big to inline does the same.
+- Open: should `graph.cpp` force every `process()` call inline (clang's `[[clang::always_inline]]` on the call statement, which processors never see), or keep leaving it to clang and check the disassembly?
+
 
 ### False sharing
 - `alignas(64)` is not enough. Switch `alignas(64)` → `alignas(128)` on data written by different threads (counters, filter state) to stop neighbor-line prefetch interference; verify with perf c2c.
@@ -201,7 +207,8 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
   - A float32 sample is 8 KB (125 cache lines), so every core crossing gets about 5× more expensive.
   - Ring depth competes with cache: 1 ms of ring is 240 KB.
   - Processor state no longer fits L1: one 4-section filter is 64 KB, more than Zen 5's 48 KB.
-  - At one sample per pass (see **One sample per pass** in spec.md), such a filter reloads its state from L2 for every sample (estimate: a few hundred ns per filter). Several samples per call would keep a group of channels' state in registers across those samples, but adds latency and means rewriting every processor.
+  - At one sample per pass (see **One sample per pass** in spec.md), such a filter reloads its state from L2 for every sample (estimate: a few hundred ns per filter).
+  - Decided: no batching, more cores instead. Several samples per call would read each group of channels' state once per batch instead of once per sample, but a device delivers one sample every 33 µs, so collecting 8 samples means waiting about 267 µs for the last one, far more than it saves. Instead, the channels are split across cores (shape 9 in graph_shapes.md), e.g. 4 cores × 500 channels, so each core's filter state (16 KB) fits in L1. The cores run in parallel, so latency doesn't grow; the cost is more busy cores and the ring hops between them.
   - The sample width (float16 vs float32, see **Sample width: float16**) halves or doubles all of these.
 
 ### Engine states

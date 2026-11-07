@@ -24,14 +24,14 @@ layout(std430, binding = 0) readonly buffer RawInputPackets { int16_t raw_ap_dat
 layout(std430, binding = 1) writeonly buffer RawSignal { float samples[]; };
 uniform int u_samples_history; uniform int u_write_idx; uniform int u_num_superframes;
 void main() {
-    int sf_idx = int(gl_WorkGroupID.x); int sample_in_sf = int(gl_LocalInvocationID.x); int c = int(gl_WorkGroupID.y);
-    if (sf_idx >= u_num_superframes || sample_in_sf >= 12 || c >= 384) return;
+    int sf_idx = int(gl_WorkGroupID.x); int sample_in_sf = int(gl_LocalInvocationID.x); int channel = int(gl_WorkGroupID.y);
+    if (sf_idx >= u_num_superframes || sample_in_sf >= 12 || channel >= 384) return;
     int total_sample_offset = sf_idx * 12 + sample_in_sf;
     int target_history_idx = (u_write_idx + total_sample_offset) % u_samples_history;
     int raw_packet_stride = 12 * 384;
-    int raw_idx = (sf_idx * raw_packet_stride) + (sample_in_sf * 384) + c;
+    int raw_idx = (sf_idx * raw_packet_stride) + (sample_in_sf * 384) + channel;
     float val = float(raw_ap_data[raw_idx]);
-    int channel_offset = c * u_samples_history;
+    int channel_offset = channel * u_samples_history;
     samples[channel_offset + target_history_idx] = val;
 }
 )glsl";
@@ -43,19 +43,19 @@ layout(std430, binding = 0) readonly buffer RawInputPackets { int raw_ap_data[];
 layout(std430, binding = 1) writeonly buffer RawSignal { float samples[]; };
 uniform int u_samples_history; uniform int u_write_idx; uniform int u_num_superframes;
 void main() {
-    int sf_idx = int(gl_WorkGroupID.x); int sample_in_sf = int(gl_LocalInvocationID.x); int c = int(gl_WorkGroupID.y);
-    if (sf_idx >= u_num_superframes || sample_in_sf >= 12 || c >= 384) return;
+    int sf_idx = int(gl_WorkGroupID.x); int sample_in_sf = int(gl_LocalInvocationID.x); int channel = int(gl_WorkGroupID.y);
+    if (sf_idx >= u_num_superframes || sample_in_sf >= 12 || channel >= 384) return;
     int total_sample_offset = sf_idx * 12 + sample_in_sf;
     int target_history_idx = (u_write_idx + total_sample_offset) % u_samples_history;
     int raw_packet_stride = 12 * 384;
-    int raw_idx = (sf_idx * raw_packet_stride) + (sample_in_sf * 384) + c;
+    int raw_idx = (sf_idx * raw_packet_stride) + (sample_in_sf * 384) + channel;
     int word_idx = raw_idx / 2;
     int bit_shift = (raw_idx % 2) * 16;
     int packed_val = raw_ap_data[word_idx];
     int raw_val = (packed_val >> bit_shift) & 0xFFFF;
     if ((raw_val & 0x8000) != 0) { raw_val |= 0xFFFF0000; }
     float val = float(raw_val);
-    int channel_offset = c * u_samples_history;
+    int channel_offset = channel * u_samples_history;
     samples[channel_offset + target_history_idx] = val;
 }
 )glsl";
@@ -91,15 +91,15 @@ uniform float u_v_scale;
 uniform float u_row_height;
 
 void main() {
-    int x = int(gl_GlobalInvocationID.x);
-    int c = int(gl_GlobalInvocationID.y);
+    int column = int(gl_GlobalInvocationID.x);
+    int channel = int(gl_GlobalInvocationID.y);
 
-    if (x >= u_width || c >= 384) return;
+    if (column >= u_width || channel >= 384) return;
 
     int history_stride = u_total_samples;
     float samples_per_pixel = float(u_total_samples) / float(u_width);
-    int start_idx = int(float(x) * samples_per_pixel);
-    int end_idx = int(float(x + 1) * samples_per_pixel);
+    int start_idx = int(float(column) * samples_per_pixel);
+    int end_idx = int(float(column + 1) * samples_per_pixel);
     start_idx = clamp(start_idx, 0, u_total_samples - 1);
     end_idx = clamp(end_idx, start_idx + 1, u_total_samples);
 
@@ -107,13 +107,13 @@ void main() {
     float max_val = -1e10;
     bool near_cursor = false;
 
-    int channel_offset = c * history_stride;
+    int channel_offset = channel * history_stride;
 
-    for (int i = start_idx; i < end_idx; ++i) {
-        float v = samples[channel_offset + i];
-        if (v < min_val) min_val = v;
-        if (v > max_val) max_val = v;
-        if (abs(i - u_cursor_idx) < 150) {
+    for (int sample_idx = start_idx; sample_idx < end_idx; ++sample_idx) {
+        float sample_value = samples[channel_offset + sample_idx];
+        if (sample_value < min_val) min_val = sample_value;
+        if (sample_value > max_val) max_val = sample_value;
+        if (abs(sample_idx - u_cursor_idx) < 150) {
             near_cursor = true;
         }
     }
@@ -127,8 +127,8 @@ void main() {
     int cursor_x = int((float(u_cursor_idx) / float(u_total_samples)) * float(u_width));
 
     // (0, -1) collapses the bar to zero height, leaving the sweep cursor gap empty
-    envelope[c * u_width + x] =
-        (near_cursor && abs(x - cursor_x) < 4) ? vec2(0.0, -1.0) : vec2(y_min, y_max);
+    envelope[channel * u_width + column] =
+        (near_cursor && abs(column - cursor_x) < 4) ? vec2(0.0, -1.0) : vec2(y_min, y_max);
 }
 )glsl";
 
@@ -151,13 +151,14 @@ const vec2 corners[6] = vec2[6](vec2(0, 0), vec2(1, 0), vec2(0, 1),
 
 void main() {
     int col = gl_VertexID / 6;
-    vec2 q = corners[gl_VertexID % 6];
-    vec2 e = envelope[(u_first_channel + gl_InstanceID) * u_width + col];
+    vec2 corner = corners[gl_VertexID % 6];
+    vec2 envelope_bar = envelope[(u_first_channel + gl_InstanceID) * u_width + col];
 
-    float x = u_origin.x + float(col) + q.x;
-    float y = u_origin.y + float(gl_InstanceID) * u_row_pitch + mix(e.x, e.y + 1.0, q.y);
+    float pixel_x = u_origin.x + float(col) + corner.x;
+    float pixel_y = u_origin.y + float(gl_InstanceID) * u_row_pitch
+                    + mix(envelope_bar.x, envelope_bar.y + 1.0, corner.y);
 
-    vec2 ndc = (vec2(x, y) - u_display_pos) / u_display_size * 2.0 - 1.0;
+    vec2 ndc = (vec2(pixel_x, pixel_y) - u_display_pos) / u_display_size * 2.0 - 1.0;
     gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0);
 }
 )glsl";
@@ -253,7 +254,7 @@ public:
 };
 class SignalRenderer {
 private:
-    static constexpr size_t MAX_WIDTH = 8192;
+    static constexpr size_t max_width = 8192;
 
     struct DrawParams {
         int first_channel = 0;
@@ -414,7 +415,7 @@ public:
         glGenBuffers(1, &ssbo_envelope_);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_envelope_);
         glBufferData(GL_SHADER_STORAGE_BUFFER,
-                     static_cast<GLsizeiptr>(MAX_WIDTH * 384 * 2 * sizeof(float)), nullptr,
+                     static_cast<GLsizeiptr>(max_width * 384 * 2 * sizeof(float)), nullptr,
                      GL_DYNAMIC_DRAW);
 
         glGenVertexArrays(1, &empty_vao_);
@@ -449,7 +450,7 @@ public:
     };
 
     void execute_demux_and_downsample(const DemuxParams& params) {
-        width_ = static_cast<int>(std::min(params.width, MAX_WIDTH));
+        width_ = static_cast<int>(std::min(params.width, max_width));
 
         if (params.num_superframes > 0) {
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_staging_raw_);

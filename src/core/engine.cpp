@@ -1,4 +1,5 @@
 #pragma once
+#include <immintrin.h>
 #include <pmmintrin.h>
 #include <pthread.h>
 #include <xmmintrin.h>
@@ -6,6 +7,7 @@
 #include <atomic>
 #include <concepts>
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -16,60 +18,176 @@
 #include <print>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
-// Falcon engine (see src/core/spec.md). Only what the monotonous event pipeline needs so far:
-// events, In and Out, and one pinned thread per core with the start barrier.
+// Falcon engine (see src/core/spec.md). So far: streams and sample buffers, events, In and Out,
+// and one pinned thread per core with the start barrier.
 
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
+
+// --- Instruction set (see One processor per stream in spec.md) ---
+
+#ifndef __AVX2__
+#error "Falcon needs AVX2: compile with -mavx2 or -march=native"
+#endif
+
+#ifdef __AVX512F__
+inline constexpr bool AVX512 = true;
+#else
+inline constexpr bool AVX512 = false;
+#endif
+
+inline constexpr int FLOATS_PER_VECTOR = AVX512 ? 16 : 8;
+using FloatVector = std::conditional_t<AVX512, __m512, __m256>;
+
+// --- Streams and samples (see Stream type, Buffers and Sample type in spec.md) ---
+
+template <int ChannelCount, double SampleRate, typename SampleType>
+struct Stream {
+    static_assert(ChannelCount > 0);
+    static_assert(SampleRate > 0);
+    // float16 would need load() and store() to convert (see Sample width: float16 in
+    // beyond_prototype.md).
+    static_assert(std::same_as<SampleType, float>, "only float32 samples are implemented");
+
+    static constexpr int channels = ChannelCount;
+    static constexpr double rate = SampleRate;  // Hz
+    using Value = SampleType;
+    // A multiple of 16, one AVX512 vector of float32, so SIMD loops have no leftover channels.
+    static constexpr int padded_channels = (ChannelCount + 15) / 16 * 16;
+    static constexpr int vectors = padded_channels / FLOATS_PER_VECTOR;
+};
+
+// Set by the input processor, travels with its sample (see Buffers in spec.md).
+struct Header {
+    u64 sample_number = 0;     // counted at the input's rate, derived from the device's clock
+    u64 device_timestamp = 0;  // in the device's own unit; processors never calculate with it
+    u64 arrival_tsc = 0;       // CPU timestamp counter when the sample arrived
+};
+
+// One sample with its header in front, the layout of a ring slot (see Rings in spec.md).
+template <typename StreamType>
+struct SampleSlot {
+    Header header;
+    alignas(64) std::array<typename StreamType::Value, StreamType::padded_channels> values;
+};
+
+// 0 or 1 sample. `slot` points at the buffer's own storage, or at a ring slot, so nothing is
+// copied across rings (see graph.cpp in spec.md).
+template <typename StreamType>
+struct SampleBuffer {
+    SampleSlot<StreamType> storage{};
+    SampleSlot<StreamType>* slot = &storage;
+    int count = 0;
+
+    SampleBuffer() = default;
+    // A copy's slot would still point at the original's storage.
+    SampleBuffer(const SampleBuffer&) = delete;
+    SampleBuffer& operator=(const SampleBuffer&) = delete;
+};
 
 // --- Events (see Events in spec.md) ---
 
 // Base of every event record. Empty: an event from a timer has no sample to point to.
 struct Event {};
 
-// Event buffer: up to N records produced on this pass (see Capacity in spec.md).
+// Up to Capacity records produced on this pass (see Capacity in spec.md).
 // The records sit inside the buffer; pointing at a ring slot instead comes with event rings
 // (beyond_prototype.md).
-template <std::derived_from<Event> E, int N>
-struct Events {
-    std::array<E, N> records;
+template <std::derived_from<Event> Record, int Capacity>
+struct EventBuffer {
+    std::array<Record, Capacity> records;
     int count = 0;
 };
 
 // --- In and Out (see process() signature in spec.md) ---
 // process() takes one struct, Connections, declared inside its processor. Every member of it is an
-// In<T> or an Out<T>, and each exposes only what its direction allows.
+// In<Kind> or an Out<Kind>, and each exposes only what its direction allows.
 
-template <typename T>
+template <typename Kind>
 struct In;
-template <typename T>
+template <typename Kind>
 struct Out;
 
-template <std::derived_from<Event> E, int N>
-struct In<Events<E, N>> {
-    const Events<E, N>& buffer;
+template <typename StreamType>
+struct In<SampleBuffer<StreamType>> {
+    In(const SampleBuffer<StreamType>& samples) : header(samples.slot->header), buffer_(samples) {}
 
-    In(const Events<E, N>& events) : buffer(events) {}
+    const Header& header;
 
-    [[nodiscard]] bool is_empty() const { return buffer.count == 0; }
-    [[nodiscard]] int size() const { return buffer.count; }
-    [[nodiscard]] const E* begin() const { return buffer.records.data(); }
-    [[nodiscard]] const E* end() const { return buffer.records.data() + buffer.count; }
+    [[nodiscard]] bool is_empty() const { return buffer_.count == 0; }
+
+    // Channel vector `vector_index` as float32, in the compiled instruction set's register.
+    [[nodiscard]] FloatVector load(int vector_index) const {
+        const float* address =
+            &buffer_.slot->values[static_cast<std::size_t>(vector_index * FLOATS_PER_VECTOR)];
+        // Not if constexpr: nothing here depends on StreamType, so the discarded branch would
+        // still be type-checked, and an __m512 doesn't convert to the AVX2 build's FloatVector.
+#ifdef __AVX512F__
+        return _mm512_load_ps(address);
+#else
+        return _mm256_load_ps(address);
+#endif
+    }
+
+private:
+    const SampleBuffer<StreamType>& buffer_;
 };
 
-template <std::derived_from<Event> E, int N>
-struct Out<Events<E, N>> {
-    Events<E, N>& buffer;
-
+template <typename StreamType>
+struct Out<SampleBuffer<StreamType>> {
     // Clears the buffer right before its producer runs (see Out clears an output buffer in
     // spec.md).
-    Out(Events<E, N>& events) : buffer(events) { buffer.count = 0; }
+    Out(SampleBuffer<StreamType>& samples) : buffer_(samples) { buffer_.count = 0; }
 
-    void push(const E& record) {
-        buffer.records[static_cast<std::size_t>(buffer.count++)] = record;
-    }  // unchecked: the producer never pushes more than N per pass
+    // Starts this pass's output sample (see The header travels with its sample in spec.md).
+    void set_header(const Header& header) {
+        buffer_.slot->header = header;
+        buffer_.count = 1;
+    }
+
+    void store(int vector_index, FloatVector values) {
+        float* address =
+            &buffer_.slot->values[static_cast<std::size_t>(vector_index * FLOATS_PER_VECTOR)];
+        // Not if constexpr, for the same reason as in load().
+#ifdef __AVX512F__
+        _mm512_store_ps(address, values);
+#else
+        _mm256_store_ps(address, values);
+#endif
+    }
+
+private:
+    SampleBuffer<StreamType>& buffer_;
+};
+
+template <std::derived_from<Event> Record, int Capacity>
+struct In<EventBuffer<Record, Capacity>> {
+    In(const EventBuffer<Record, Capacity>& events) : buffer_(events) {}
+
+    [[nodiscard]] bool is_empty() const { return buffer_.count == 0; }
+    [[nodiscard]] int size() const { return buffer_.count; }
+    [[nodiscard]] const Record* begin() const { return buffer_.records.data(); }
+    [[nodiscard]] const Record* end() const { return buffer_.records.data() + buffer_.count; }
+
+private:
+    const EventBuffer<Record, Capacity>& buffer_;
+};
+
+template <std::derived_from<Event> Record, int Capacity>
+struct Out<EventBuffer<Record, Capacity>> {
+    // Clears the buffer right before its producer runs (see Out clears an output buffer in
+    // spec.md).
+    Out(EventBuffer<Record, Capacity>& events) : buffer_(events) { buffer_.count = 0; }
+
+    void push(const Record& record) {
+        buffer_.records[static_cast<std::size_t>(buffer_.count++)] = record;
+    }  // unchecked: the producer never pushes more than Capacity per pass
+
+private:
+    EventBuffer<Record, Capacity>& buffer_;
 };
 
 // --- Cores (see Per-core loop and Start, stop and config in spec.md) ---

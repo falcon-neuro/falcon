@@ -16,10 +16,10 @@ struct EventGeneratorOptions {
     double rate = 1;   // events per second (Hz)
 };
 
-template <EventGeneratorOptions O>
+template <EventGeneratorOptions options>
 struct EventGenerator {
     struct Connections {
-        Out<Events<ScheduledEvent, 1>> scheduled_events;
+        Out<EventBuffer<ScheduledEvent, 1>> output;
     };
 
     std::chrono::steady_clock::time_point start;   // set on the first pass
@@ -34,7 +34,7 @@ struct EventGenerator {
         std::this_thread::sleep_until(due);
 
         ++emitted;
-        connections.scheduled_events.push(ScheduledEvent {.count = static_cast<u32>(emitted)});
-        due = start + duration_cast<steady_clock::duration>(duration<double>(static_cast<double>(emitted) / O.rate));   // on a fixed schedule, so the events don't drift
+        connections.output.push(ScheduledEvent {.count = static_cast<u32>(emitted)});
+        due = start + duration_cast<steady_clock::duration>(duration<double>(static_cast<double>(emitted) / options.rate));   // on a fixed schedule, so the events don't drift
     }
 };

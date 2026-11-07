@@ -6,19 +6,20 @@
 #include "../processors/event_logger.cpp"
 
 void core1() {
-    EventGenerator<{.rate = 4}> generator;
-    EventLogger<ScheduledEvent, 1> logger;
-    Events<ScheduledEvent, 1> events;
+    // Processors
+    EventGenerator<{.rate = 4}> dummy_generator;
+    EventLogger<ScheduledEvent, 1> example_logger;
 
-    // Start barrier: wait for every core, return if a constructor failed on any of them.
+    // Connections
+    EventBuffer<ScheduledEvent, 1> dummy_generator_to_example_logger_event_buffer;
+
     if (!all_built()) {
         return;
     }
 
     while (running) {
-        // Out clears events, then the generator pushes one when it's due.
-        generator.process({.scheduled_events = events});
-        logger.process({.incoming_events = events});
+        dummy_generator.process({.output = dummy_generator_to_example_logger_event_buffer});
+        example_logger.process({.input = dummy_generator_to_example_logger_event_buffer});
     }
 }
 

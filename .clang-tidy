@@ -31,6 +31,8 @@ CheckOptions:
     value: lower_case
   - key: readability-identifier-naming.GlobalConstantCase
     value: UPPER_CASE
+  - key: readability-identifier-naming.ClassConstantCase
+    value: lower_case   # Stream::vectors, like std::numeric_limits<float>::digits; else GlobalConstantCase applies
   - key: readability-identifier-naming.MemberCase
     value: lower_case
   - key: readability-identifier-naming.PrivateMemberCase
