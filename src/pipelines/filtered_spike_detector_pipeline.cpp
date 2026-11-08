@@ -1,13 +1,13 @@
 // Filtered spike detector pipeline, the prototype's graph with a signal generator in place of the
 // Ripple system and a logger in place of the TTL output: SignalGenerator on core 4 -> ring ->
-// Filter -> SpikeDetector -> EventLogger on core 5. Core 5 prints, so it is a non-realtime core
+// IirFilter -> SpikeDetector -> EventLogger on core 5. Core 5 prints, so it is a non-realtime core
 // (see Logging in src/core/spec.md). The filter is Falcon 1's 4th-order Bessel band-pass, 300-6000
 // Hz at 30 kHz. A 1 Hz square wave has no energy in that band except at its edges: each falling
 // edge comes through as a short negative transient that crosses -70 µV. Expect 4 spikes per second,
 // about 0.16 s apart, as in the sparse pipeline but now after filtering.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
-#include "../processors/filter.cpp"
+#include "../processors/iir_filter.cpp"
 #include "../processors/signal_generator.cpp"
 #include "../processors/spike_detector.cpp"
 
@@ -38,30 +38,30 @@ void core4() {
 void core5() {
     // Processors
     // From Falcon 1's bessel_spike_30000.filter
-    Filter<SparseTestStream,
-           FilterOptions<2>{
-               .design_rate = 30000.0,
-               .gain = 0.175014382674721,
-               .sections =
-                   {
-                       {
-                           {
-                               .b0 = 1.0,
-                               .b1 = 2.0,
-                               .b2 = 1.0,
-                               .a1 = -0.4116456379943422,
-                               .a2 = 0.1208387236075018,
-                           },
-                           {
-                               .b0 = 1.0,
-                               .b1 = -2.0,
-                               .b2 = 1.0,
-                               .a1 = -1.888701220483925,
-                               .a2 = 0.8929613419279413,
-                           },
-                       },
-                   },
-           }>
+    IirFilter<SparseTestStream,
+              IirFilterOptions<2>{
+                  .design_rate = 30000.0,
+                  .gain = 0.175014382674721,
+                  .sections =
+                      {
+                          {
+                              {
+                                  .b0 = 1.0,
+                                  .b1 = 2.0,
+                                  .b2 = 1.0,
+                                  .a1 = -0.4116456379943422,
+                                  .a2 = 0.1208387236075018,
+                              },
+                              {
+                                  .b0 = 1.0,
+                                  .b1 = -2.0,
+                                  .b2 = 1.0,
+                                  .a1 = -1.888701220483925,
+                                  .a2 = 0.8929613419279413,
+                              },
+                          },
+                      },
+              }>
         ap_filter;
     SpikeDetector<SparseTestStream, {.threshold = -70}> spike_detector;
     EventLogger<Spike, SparseTestStream::channels> example_logger;

@@ -1,0 +1,9 @@
+[project]
+name = "falcon-scripts"
+version = "0.0.0"
+description = "Python checks for Falcon, e.g. processors against SciPy"
+requires-python = ">=3.12"
+dependencies = ["numpy", "scipy"]
+
+[tool.uv]
+package = false

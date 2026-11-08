@@ -15,9 +15,13 @@ words:
   - ASIC
   - backend
   - biquad
+  - btype
   - bugprone
   - buildconstant
+  - castpd
+  - castps
   - channelmap
+  - cheby
   - Ciliberti
   - cntfrq
   - cntvct
@@ -25,6 +29,8 @@ words:
   - cppdbg
   - cppzmq
   - curdir
+  - cvtpd
+  - cvtps
   - datatypebuffer
   - DCMAKE
   - Debouncer
@@ -32,9 +38,11 @@ words:
   - Doxyfile
   - dummysink
   - elec
+  - ellip
   - endmacro
   - ephys
   - ETERM
+  - extractf
   - FETCHCONTENT
   - fklab
   - flatbuffer
@@ -42,8 +50,10 @@ words:
   - flatc
   - flathash
   - fnmadd
+  - freqz
   - frontend
   - ftrivial
+  - ftype
   - GLFW
   - glGetShaderiv
   - GLsizeiptr
@@ -51,7 +61,9 @@ words:
   - GRAPHERROR
   - headeronly
   - hippocampal
+  - iirfilter
   - imgui
+  - insertf
   - Integerv
   - isautonomous
   - kbhit
@@ -70,6 +82,7 @@ words:
   - mavx
   - Maxs
   - mfma
+  - microvolts
   - multichannelfilter
   - nchannels
   - ncipollo
@@ -109,6 +122,7 @@ words:
   - Selectability
   - setcap
   - SNDMORE
+  - sosfilt
   - ssbo
   - stdev
   - stim
@@ -126,6 +140,7 @@ words:
   - WHOLELIBS
   - Wnon
   - Wnull
+  - worN
   - Woverloaded
   - Wpedantic
   - Wshadow
@@ -134,4 +149,5 @@ words:
   - xipplib
   - YAMLCPP
   - ZMQF
+  - zpk
   - zscore

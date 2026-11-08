@@ -2,8 +2,8 @@
 // prototype's filter and one without, so the filter's effect shows in the console side by side.
 // Core 5 prints, so it is a non-realtime core (see Logging in src/core/spec.md).
 //
-//   SignalGenerator (core 4) -> ring -+-> Filter -> SpikeDetector -> EventLogger "filtered"
-//                                     +----------> SpikeDetector -> EventLogger "unfiltered"
+//   SignalGenerator (core 4) -> ring -+-> IirFilter -> SpikeDetector -> EventLogger "filtered"
+//                                     +--------------> SpikeDetector -> EventLogger "unfiltered"
 //
 // Each of the 2 channels carries 3 spikes per second (troughs of 200 µV) on top of an 8 Hz, 500 µV
 // LFP wave, and each logger prints its count once a second. Expect "filtered" to count 6 per
@@ -12,14 +12,15 @@
 // channel, and a spike shows only where the LFP happens to be near zero.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
-#include "../processors/filter.cpp"
+#include "../processors/iir_filter.cpp"
 #include "../processors/signal_generator.cpp"
 #include "../processors/spike_detector.cpp"
 
 using ComparisonTestStream = StreamInfo<2, 30000.0, float>;
 
 // Connections between cores
-SampleRing<ComparisonTestStream, 64>
+// Core 5 isn't realtime, so it can stall for milliseconds; 1024 slots ride out 34 ms.
+SampleRing<ComparisonTestStream, 4>
     signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring{
         "signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring"};
 
@@ -50,30 +51,30 @@ void core4() {
 void core5() {
     // Processors
     // From Falcon 1's bessel_spike_30000.filter
-    Filter<ComparisonTestStream,
-           FilterOptions<2>{
-               .design_rate = 30000.0,
-               .gain = 0.175014382674721,
-               .sections =
-                   {
-                       {
-                           {
-                               .b0 = 1.0,
-                               .b1 = 2.0,
-                               .b2 = 1.0,
-                               .a1 = -0.4116456379943422,
-                               .a2 = 0.1208387236075018,
-                           },
-                           {
-                               .b0 = 1.0,
-                               .b1 = -2.0,
-                               .b2 = 1.0,
-                               .a1 = -1.888701220483925,
-                               .a2 = 0.8929613419279413,
-                           },
-                       },
-                   },
-           }>
+    IirFilter<ComparisonTestStream,
+              IirFilterOptions<2>{
+                  .design_rate = 30000.0,
+                  .gain = 0.175014382674721,
+                  .sections =
+                      {
+                          {
+                              {
+                                  .b0 = 1.0,
+                                  .b1 = 2.0,
+                                  .b2 = 1.0,
+                                  .a1 = -0.4116456379943422,
+                                  .a2 = 0.1208387236075018,
+                              },
+                              {
+                                  .b0 = 1.0,
+                                  .b1 = -2.0,
+                                  .b2 = 1.0,
+                                  .a1 = -1.888701220483925,
+                                  .a2 = 0.8929613419279413,
+                              },
+                          },
+                      },
+              }>
         ap_filter;
     SpikeDetector<ComparisonTestStream, {.threshold = -70}> filtered_spike_detector;
     EventLogger<Spike, ComparisonTestStream::channels,
@@ -120,7 +121,7 @@ void core5() {
 
 int main() {
     return run_on_cores({
-        {.core_number = 4, .entry_point = core4},
+        {.core_number = 2, .entry_point = core4},
         {.core_number = 5, .entry_point = core5},
     });
 }

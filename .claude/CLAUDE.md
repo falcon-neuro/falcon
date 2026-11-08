@@ -11,13 +11,15 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - We want flexibility, user friendliness, scalability for massive electrode arrays.
 - Code safety matters much more than brevity: when they conflict, choose safety (descriptive names, never `i` or `in`; bools start with `is_` or `has_`; braces everywhere; strict clang-tidy, see `.clang-tidy`). We write the processors, rarely, and users only build graphs in the UI, so more code to write is never a reason to skip a check: a mistake found only after a clinical session can't be undone.
 - Only .cpp files, for minimalism.
-- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does. Code outlives our discussions: comments never carry decision history, rejected options, plans or progress ("so far"), and never quote doc headings as if they explained the code; that context lives in the src/core docs.
-- Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, Filter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
+- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does. Code outlives our discussions: comments never carry decision history, rejected options, plans or progress ("so far", "for now"), and never quote doc headings as if they explained the code; that context lives in the src/core docs.
+- Write each comment for someone reading the code in ten years, not as a chat reply: no comparisons with Falcon 1 or with earlier versions ("as Falcon 1's", "unlike before"), and nothing the md docs already say. When in doubt, leave the comment out.
+- Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, IirFilter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress
 - Prototype spec: [src/core/spec.md](../src/core/spec.md).
 - After the prototype: [src/core/beyond_prototype.md](../src/core/beyond_prototype.md).
 - Graph shapes atlas: [src/core/graph_shapes.md](../src/core/graph_shapes.md).
+- Differences from Falcon 1: [src/core/falcon1_differences.md](../src/core/falcon1_differences.md).
 
 ## Guidelines
 - Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.
@@ -34,7 +36,7 @@ Engine planning works only from the docs under **In progress** and this file.
 - Don't read or cite source files (the old `falcon/` engine, the `src/` sketches) unless I ask or we start writing code. They are what is being replaced; reading them anchors the spec on it.
 - beyond_prototype.md is parked: leave its topics out of the discussion until the prototype engine works.
 - **Simplest first.** For what only the engine sees (cheap to change, see **How to prioritise** in spec.md), recommend the simplest version and offer to park the better one, and any optimisation or safety net, in beyond_prototype.md. For what processor code sees (expensive to change), push to get it right now. Outside the hot loop (setup, teardown, failure handling), any simple solution is fine: propose it briefly and don't overengineer it or debate it at length.
-- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
+- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md, falcon1_differences.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
 
 ## Memory
 - Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the src/core docs. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.

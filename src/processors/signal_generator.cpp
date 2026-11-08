@@ -83,6 +83,7 @@ struct SignalGenerator {
             .sample_number = sample_number_,
             .device_timestamp = sample_number_,
             .arrival_tsc = __rdtsc(),
+            .lost_sample_count = 0,
         });
 
         // Kept within one period, so the phase doesn't lose precision as sample_number_ grows.

@@ -93,6 +93,10 @@ struct SampleHeader {
     u64 sample_number = 0;     // counted at the input's rate, derived from the device's clock
     u64 device_timestamp = 0;  // in the device's own unit; processors never calculate with it
     u64 arrival_tsc = 0;       // CPU timestamp counter when the sample arrived
+    // Samples lost upstream since the start: the input adds those the device skipped, each ring
+    // those it dropped. It only grows, so any later header carries every earlier loss; a processor
+    // sees one when the count differs from its previous sample's.
+    u64 lost_sample_count = 0;
 };
 
 template <typename StreamInfoType>
@@ -360,6 +364,9 @@ struct SampleRing {
             drop_counter_.dropped_samples.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        // Only this core writes the drop count, so the relaxed load reads its own latest value.
+        writer_buffer_.sample_->header.lost_sample_count +=
+            drop_counter_.dropped_samples.load(std::memory_order_relaxed);
         const u64 write_position = write_position_.load(std::memory_order_relaxed);
         write_position_.store(write_position + 1, std::memory_order_release);
     }
