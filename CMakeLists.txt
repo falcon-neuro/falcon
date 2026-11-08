@@ -73,7 +73,7 @@ target_link_libraries(imgui PUBLIC
 # )
 
 add_executable(falcon
-    src/pipelines/filter_comparison_pipeline.cpp
+    src/processors/custom/ripple_neuromed_input/pipelines/latency_test_pipeline.cpp
 )
 
 target_compile_options(falcon PRIVATE
@@ -118,6 +118,13 @@ target_link_libraries(falcon PRIVATE
     rt
     uring
 )
+
+# Each extension may bring a CMakeLists.txt that adds its own include directories and libraries.
+file(GLOB FALCON_EXTENSION_CMAKE_FILES ${CMAKE_SOURCE_DIR}/src/processors/custom/*/CMakeLists.txt)
+foreach(FALCON_EXTENSION_CMAKE_FILE ${FALCON_EXTENSION_CMAKE_FILES})
+    cmake_path(GET FALCON_EXTENSION_CMAKE_FILE PARENT_PATH FALCON_EXTENSION_DIRECTORY)
+    add_subdirectory(${FALCON_EXTENSION_DIRECTORY})
+endforeach()
 
 # Profile builds also write the disassembly of falcon's own code to <build dir>/output/falcon.S.
 # GNU objdump, not llvm-objdump: Disassembly Explorer can't read llvm-objdump's "; file:line" markers.

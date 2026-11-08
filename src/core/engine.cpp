@@ -438,17 +438,26 @@ std::atomic<bool> is_pipeline_running = true;
 std::atomic<bool> has_startup_failed = false;
 std::latch* start_barrier = nullptr;  // created by run_on_cores()
 thread_local bool has_arrived_at_start_barrier = false;
+thread_local int core_number_of_this_thread = -1;  // set by run_on_cores()
 
 // Every core calls this once its processors are built. Returns false if startup failed on any
-// core, so the core returns without running its loop.
+// core, so the core returns without running its loop. The thread pins itself to its core only
+// now: a thread that a library starts in a constructor (e.g. to receive packets) inherits its
+// creator's CPUs, and on the realtime core it would compete with a loop that never yields.
 bool wait_at_start_barrier() {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(core_number_of_this_thread, &set);
+    if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
+        throw std::runtime_error(std::format("can't pin to CPU {}", core_number_of_this_thread));
+    }
     has_arrived_at_start_barrier = true;
     start_barrier->arrive_and_wait();
     return !has_startup_failed;
 }
 
 struct CoreThread {
-    int core_number;        // CPU core the thread is pinned to
+    int core_number;        // CPU core the thread pins itself to in wait_at_start_barrier()
     void (*entry_point)();  // declares the core's processors and buffers, calls
                             // wait_at_start_barrier(), then runs its loop
 };
@@ -502,13 +511,7 @@ int run_on_cores(std::initializer_list<CoreThread> core_threads) {
         for (CoreThread core_thread : core_threads) {
             threads.emplace_back([core_thread] {
                 try {
-                    cpu_set_t set;
-                    CPU_ZERO(&set);
-                    CPU_SET(core_thread.core_number, &set);
-                    if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
-                        throw std::runtime_error(
-                            std::format("can't pin to CPU {}", core_thread.core_number));
-                    }
+                    core_number_of_this_thread = core_thread.core_number;
                     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);  // see Flush-to-zero in spec.md
                     _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
                     core_thread.entry_point();

@@ -45,15 +45,6 @@ Open (formerly open question 6):
 - Can a part's core run other processors too? It works, but the original part waits for the slowest part, so other work on those cores delays the processor.
 - A final name for `delegate(i)` (`help` was rejected).
 
-### Extensions
-Decided:
-- **Only extensions are installed machine-wide** (e.g. a lab's private processors).
-- **Extensions live in `src/processors/custom/<extension name>/`**, one folder per extension. The folder name is the extension's C++ namespace, so processors from different extensions can share a name without clashing.
-  - Falcon ships only the processors directly in `src/processors/`.
-  - `custom/` is git-ignored except `custom/template/`: a template extension with a dummy processor that labs copy to start their own.
-  - The template is written once the processor interface is settled (see **Processors** in spec.md).
-- **Extension versioning is the lab's responsibility.** Falcon doesn't track extension versions, since an extension folder may not be a git repo. A missing extension still shows up as a compile error naming its namespace when `graph.cpp` is built.
-
 ### Processor type alternatives
 A processor is a struct with an `Options` template parameter (see **Processors** in spec.md). Option for later:
 - A concept that checks at compile time what every processor must provide, so lab authors get a clear error. Since each processor's inputs differ, it can only check the parts they all share (e.g. that options are primitives or file paths).
@@ -320,5 +311,3 @@ From the former TODO.md. Its other tasks are now part of spec.md.
     4. IMRO editor in the Falcon UI. NP1 has 960 recording sites on the shank but only 384 channels; each channel N can read site N, N+384 or N+768 (bank 0/1/2), so a channel's number doesn't always match its height on the shank. The editor draws the shank, lets the user mark regions to record from, enforces one site per channel, sets gains, and saves/loads `.imro` files (SpikeGLX format) that are sent to the sender.
     5. Rewrite `src/processors/neuropixels_input.cpp` (the current version is a sketch). It runs alone on its own spinning core, checks the socket without sleeping (no `io_uring_wait_cqe`, no `notify_one()` per packet), and writes each packet's 12 samples into the ring to the processing cores.
 
-# Misc
-- Find a way to let other labs to write processors with their own cmake so that if they depend on a lib, it should be compiled into the graph executable

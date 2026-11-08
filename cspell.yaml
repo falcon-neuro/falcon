@@ -74,9 +74,12 @@ words:
   - lfence
   - LIBCXX
   - libpython
+  - LIBSTDCXX
+  - libxipplib
   - libzmq
   - LLNL
   - Lsizei
+  - lstdc
   - LTWH
   - mainpage
   - mavx

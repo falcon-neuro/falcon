@@ -47,6 +47,10 @@ build-*/
 # Python environments (uv)
 .venv/
 
+# Extensions: each is its own (often private) git repository; only the template is tracked
+src/processors/custom/*
+!src/processors/custom/template/
+
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
