@@ -6,8 +6,7 @@
 #include "../core/engine.cpp"
 
 // SpikeDetector: emits a Spike on the sample where a channel crosses the threshold, without waiting
-// for the peak (see The prototype's SpikeDetector in spec.md). Unlike Falcon 1's, the threshold's
-// sign gives the direction, so there is no option to invert the signal.
+// for the peak. The threshold's sign gives the direction.
 
 struct Spike : StreamEventRecord {
     u32 channel = 0;
@@ -60,7 +59,7 @@ private:
     std::array<unsigned, InputStreamInfo::simd_vectors> was_beyond_masks_{};
 
     // `auto`, so the AVX512 branch's intrinsics depend on the call and aren't checked in an AVX2
-    // build (see One processor per stream in spec.md). Ordered comparisons, so a NaN never crosses.
+    // build. Ordered comparisons, so a NaN never crosses.
     [[nodiscard]] static unsigned beyond_threshold_mask(auto values) {
         constexpr auto threshold = static_cast<float>(options.threshold);
         constexpr int predicate = options.threshold < 0 ? _CMP_LT_OQ : _CMP_GT_OQ;

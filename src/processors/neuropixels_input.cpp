@@ -268,8 +268,6 @@ public:
         }
     }
 
-    // TODO: dont expose AoS, expose SoA
-    // ...or offer both AoS and SoA
     bool peek_packet(electrodePacket*& packet_ptr, size_t& tail_idx_out) {
         size_t current_tail = tail_.load(std::memory_order_relaxed);
         size_t current_head = head_.load(std::memory_order_acquire);

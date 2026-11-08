@@ -12,16 +12,14 @@
 #include <thread>
 #include "../core/engine.cpp"
 
-// SignalGenerator: stands in for acquisition hardware when testing, like Falcon 1's
-// SignalGenerator without its file playback. It outputs a sine wave, a square wave or a train of
-// spike-shaped pulses in µV on every channel at the output stream's rate, optionally on top of a
-// slow LFP sine, so a filter's effect can be seen. As an input it runs alone on its core, so it may
-// block that
-// core's thread: it sleeps until shortly before each sample is due, then busy-spins to the exact
-// time. Sleeping alone wakes too late for a 33 µs period, and spinning alone keeps the core at
-// 100%. The spin adapts: it lasts the minimum plus the worst recent wake-up delay, so after a late
-// wake-up the generator sleeps less for a while, and stops sleeping if wake-ups take a whole
-// period.
+// SignalGenerator: stands in for acquisition hardware when testing. It outputs a sine wave, a
+// square wave or a train of spike-shaped pulses in µV on every channel at the output stream's rate,
+// optionally on top of a slow LFP sine, so a filter's effect can be seen. As an input it runs alone
+// on its core, so it may block that core's thread: it sleeps until shortly before each sample is
+// due, then busy-spins to the exact time. Sleeping alone wakes too late for a 33 µs period, and
+// spinning alone keeps the core at 100%. The spin adapts: it lasts the minimum plus the worst
+// recent wake-up delay, so after a late wake-up the generator sleeps less for a while, and stops
+// sleeping if wake-ups take a whole period.
 
 enum class Waveform : std::uint8_t { Sine, Square, SpikeTrain };
 

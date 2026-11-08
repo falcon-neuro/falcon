@@ -1,7 +1,6 @@
-// Spike detector pipeline, a test without the Ripple system or a filter: SignalGenerator on core 1
-// -> ring -> SpikeDetector -> EventLogger on core 2. Core 2 prints, so it is a non-realtime core
-// (see Logging in src/core/spec.md). Expect 5 spikes per second on each of the 32 channels: the
-// square wave's falling edge crosses -50 µV once per period.
+// Spike detector pipeline: SignalGenerator -> ring -> SpikeDetector -> EventLogger, with no filter.
+// Expect 5 spikes per second on each of the 32 channels: the square wave's falling edge crosses
+// -50 µV once per period.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
 #include "../processors/signal_generator.cpp"

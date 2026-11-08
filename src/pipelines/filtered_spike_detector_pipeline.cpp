@@ -1,10 +1,8 @@
-// Filtered spike detector pipeline, the prototype's graph with a signal generator in place of the
-// Ripple system and a logger in place of the TTL output: SignalGenerator on core 4 -> ring ->
-// IirFilter -> SpikeDetector -> EventLogger on core 5. Core 5 prints, so it is a non-realtime core
-// (see Logging in src/core/spec.md). The filter is Falcon 1's 4th-order Bessel band-pass, 300-6000
-// Hz at 30 kHz. A 1 Hz square wave has no energy in that band except at its edges: each falling
-// edge comes through as a short negative transient that crosses -70 µV. Expect 4 spikes per second,
-// about 0.16 s apart, as in the sparse pipeline but now after filtering.
+// Filtered spike detector pipeline: SignalGenerator -> ring -> IirFilter -> SpikeDetector ->
+// EventLogger. The filter is a 4th-order Bessel band-pass, 300-6000 Hz at 30 kHz. A 1 Hz square
+// wave has no energy in that band except at its edges: each falling edge comes through as a short
+// negative transient that crosses -70 µV. Expect 4 spikes per second, about 0.16 s apart, as in the
+// sparse spike detector pipeline, which has no filter.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
 #include "../processors/iir_filter.cpp"

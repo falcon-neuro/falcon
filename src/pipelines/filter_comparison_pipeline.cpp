@@ -1,9 +1,8 @@
-// Filter comparison pipeline: the same signal goes through two branches on core 5, one with the
-// prototype's filter and one without, so the filter's effect shows in the console side by side.
-// Core 5 prints, so it is a non-realtime core (see Logging in src/core/spec.md).
+// Filter comparison pipeline: the same signal goes through two branches, one with IirFilter and one
+// without, so the filter's effect shows in the console side by side.
 //
-//   SignalGenerator (core 4) -> ring -+-> IirFilter -> SpikeDetector -> EventLogger "filtered"
-//                                     +--------------> SpikeDetector -> EventLogger "unfiltered"
+//   SignalGenerator -> ring -+-> IirFilter -> SpikeDetector -> EventLogger "filtered"
+//                            +--------------> SpikeDetector -> EventLogger "unfiltered"
 //
 // Each of the 2 channels carries 3 spikes per second (troughs of 200 µV) on top of an 8 Hz, 500 µV
 // LFP wave, and each logger prints its count once a second. Expect "filtered" to count 6 per
@@ -19,7 +18,6 @@
 using ComparisonTestStream = StreamInfo<2, 30000.0, float>;
 
 // Connections between cores
-// Core 5 isn't realtime, so it can stall for milliseconds; 1024 slots ride out 34 ms.
 SampleRing<ComparisonTestStream, 4>
     signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring{
         "signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring"};

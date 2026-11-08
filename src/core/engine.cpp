@@ -23,12 +23,12 @@
 #include <type_traits>
 #include <vector>
 
-// Falcon engine (see src/core/spec.md).
+// Falcon engine. Its design is described in src/core/spec.md.
 
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 
-// --- Instruction set (see One processor per stream in spec.md) ---
+// --- Instruction set ---
 
 #ifndef __AVX2__
 #error "Falcon needs AVX2: compile with -mavx2 or -march=native"
@@ -47,7 +47,7 @@ inline constexpr bool HAS_AVX512 = false;
 inline constexpr int FLOATS_PER_SIMD_VECTOR = HAS_AVX512 ? 16 : 8;
 using SimdVector = std::conditional_t<HAS_AVX512, __m512, __m256>;
 
-// --- String options (see String options use Str in spec.md) ---
+// --- String options ---
 
 // A string a template argument can hold: std::string and pointers to string literals can't be one.
 struct Str {
@@ -71,7 +71,7 @@ struct Str {
     [[nodiscard]] constexpr const char* c_str() const { return characters.data(); }
 };
 
-// --- Streams and samples (see Stream type, Buffers and Sample type in spec.md) ---
+// --- Streams and samples ---
 
 template <int ChannelCount, double SampleRate, typename SampleType>
 struct StreamInfo {
@@ -87,8 +87,7 @@ struct StreamInfo {
     static constexpr int simd_vectors = padded_channels / FLOATS_PER_SIMD_VECTOR;
 };
 
-// Set by the input processor. Other processors pass it on and never make one up (see Buffers in
-// spec.md).
+// Set by the input processor. Other processors pass it on and never make one up.
 struct SampleHeader {
     u64 sample_number = 0;     // counted at the input's rate, derived from the device's clock
     u64 device_timestamp = 0;  // in the device's own unit; processors never calculate with it
@@ -107,8 +106,8 @@ struct SampleWithHeader {
 };
 
 // 0 or 1 sample. `sample_` points at the buffer's own storage, or at a ring slot, so nothing is
-// copied across rings (see graph.cpp in spec.md). Only In, Out and rings reach inside, so a
-// processor that holds a buffer directly instead of through In or Out can't use it.
+// copied across rings. Only In, Out and rings reach inside, so a processor that holds a buffer
+// directly instead of through In or Out can't use it.
 template <typename StreamInfoType>
 struct SampleBuffer {
     SampleBuffer() = default;
@@ -129,7 +128,7 @@ private:
     int count_ = 0;
 };
 
-// --- Events (see Events in spec.md) ---
+// --- Events ---
 
 // Base of every event record. Empty: an event from a timer has no sample to point to.
 struct EventRecord {};
@@ -139,10 +138,9 @@ struct StreamEventRecord : EventRecord {
     SampleHeader header;
 };
 
-// Up to Capacity records produced on this pass (see Capacity in spec.md).
-// The records sit inside the buffer; pointing at a ring slot instead comes with event rings
-// (beyond_prototype.md). Only In and Out reach inside, and it can't be copied, so a processor that
-// holds a buffer directly instead of through In or Out can't use it or push into a copy.
+// Up to Capacity records produced on this pass, held inside the buffer. Only In and Out reach
+// inside, and it can't be copied, so a processor that holds a buffer directly instead of through In
+// or Out can't use it or push into a copy.
 template <std::derived_from<EventRecord> Record, int Capacity>
 struct EventBuffer {
     EventBuffer() = default;
@@ -159,7 +157,7 @@ private:
     int count_ = 0;
 };
 
-// --- State values (see State values under Buffers in spec.md) ---
+// --- State values ---
 
 // A number, bool or enum, so a state value fits in one register.
 template <typename StateType>
@@ -171,7 +169,7 @@ struct StateValue {
     StateType value = initial_value;
 };
 
-// --- In and Out (see process() signature in spec.md) ---
+// --- In and Out ---
 // process() takes one struct, Connections, declared inside its processor. Every member of it is an
 // In<Kind> or an Out<Kind>, and each exposes only what its direction allows.
 
@@ -208,8 +206,7 @@ private:
 
 template <typename StreamInfoType>
 struct Out<SampleBuffer<StreamInfoType>> {
-    // Clears the buffer right before its producer runs (see Out clears an output buffer in
-    // spec.md).
+    // Clears the buffer right before its producer runs.
     Out(SampleBuffer<StreamInfoType>& samples) : buffer_(samples) { buffer_.count_ = 0; }
 
     void set_header(const SampleHeader& header) {
@@ -247,8 +244,7 @@ private:
 
 template <std::derived_from<EventRecord> Record, int Capacity>
 struct Out<EventBuffer<Record, Capacity>> {
-    // Clears the buffer right before its producer runs (see Out clears an output buffer in
-    // spec.md).
+    // Clears the buffer right before its producer runs.
     Out(EventBuffer<Record, Capacity>& events) : buffer_(events) { buffer_.count_ = 0; }
 
     // Neither push checks Capacity: a producer never pushes more than Capacity per pass.
@@ -311,7 +307,7 @@ using StateInput = In<StateType>;
 template <StateValueType StateType, StateType initial_value>
 using StateOutput = Out<StateValue<StateType, initial_value>>;
 
-// --- Rings (see Rings in spec.md) ---
+// --- Rings ---
 
 // Realtime cores never print, so a ring only counts its dropped samples and the main thread warns.
 struct RingDropCounter {
@@ -429,7 +425,7 @@ void warn_about_dropped_samples() noexcept {
     }
 }
 
-// --- Cores (see Per-core loop and Start, stop and config in spec.md) ---
+// --- Cores ---
 
 // Every core's loop runs while it is set. Cleared by run_on_cores() on a stop signal, or by a core
 // whose constructor failed.
@@ -462,7 +458,7 @@ struct CoreThread {
                             // wait_at_start_barrier(), then runs its loop
 };
 
-// The stop signals: SIGINT (Ctrl+C) and SIGTERM (see Start, stop and config in spec.md).
+// The stop signals: SIGINT (Ctrl+C) and SIGTERM.
 sigset_t stop_signals() {
     sigset_t signals;
     sigemptyset(&signals);
@@ -478,8 +474,7 @@ void wait_for_stop_signal(const sigset_t& signals) {
         const timespec timeout{.tv_sec = 0, .tv_nsec = 100'000'000};  // 100 ms
         const int signal_number = sigtimedwait(&signals, nullptr, &timeout);
         if (signal_number > 0) {
-            // Temporary: printed directly until the logger exists (see Logging in spec.md). fputs,
-            // unlike println, can't throw, so no exception leaves run_on_cores().
+            // fputs, unlike println, can't throw, so no exception leaves run_on_cores().
 
             std::fputs(signal_number == SIGINT ? "\nCtrl+C received, stopping\n"
                                                : "\nSIGTERM received, stopping\n",
@@ -512,11 +507,12 @@ int run_on_cores(std::initializer_list<CoreThread> core_threads) {
             threads.emplace_back([core_thread] {
                 try {
                     core_number_of_this_thread = core_thread.core_number;
-                    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);  // see Flush-to-zero in spec.md
+                    // Denormals, e.g. a filter's state on a flat channel, are far slower.
+                    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
                     _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
                     core_thread.entry_point();
                 } catch (const std::exception& error) {
-                    // A constructor failed (see Exceptions only outside the loop in spec.md).
+                    // A constructor failed.
                     std::println(stderr, "core {}: {}", core_thread.core_number, error.what());
                     has_startup_failed = true;
                     is_pipeline_running = false;

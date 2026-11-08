@@ -1,8 +1,6 @@
-// Sparse spike detector pipeline, a test without the Ripple system or a filter: SignalGenerator on
-// core 4 -> ring -> SpikeDetector -> EventLogger on core 5. Core 5 prints, so it is a non-realtime
-// core (see Logging in src/core/spec.md). Expect 4 spikes per second, about 0.16 s apart: a 1 Hz
-// square wave on 4 channels crosses -70 µV once per period on each, and the generator shifts each
-// channel's wave by one radian.
+// Sparse spike detector pipeline: SignalGenerator -> ring -> SpikeDetector -> EventLogger, with no
+// filter. Expect 4 spikes per second, about 0.16 s apart: a 1 Hz square wave on 4 channels crosses
+// -70 µV once per period on each, and the generator shifts each channel's wave by one radian.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
 #include "../processors/signal_generator.cpp"

@@ -1,6 +1,5 @@
 // Monotonous event pipeline: EventGenerator emits a ScheduledEvent 4 times a second, EventLogger
-// prints each one to the console. Its core prints, so it is a non-realtime core (see Logging in
-// src/core/spec.md).
+// prints each one to the console.
 #include "../core/engine.cpp"
 #include "../processors/event_generator.cpp"
 #include "../processors/event_logger.cpp"

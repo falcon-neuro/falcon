@@ -7,9 +7,8 @@
 #include <string>
 #include "../core/engine.cpp"
 
-// EventLogger: prints the events it receives to the console, like Falcon 1's EventLogger: each one,
-// or how many arrived in each second. Printing is a system call, so it runs on a non-realtime core
-// (see Logging in src/core/spec.md).
+// EventLogger: prints the events it receives to the console: each one, or how many arrived in each
+// second. Printing is a system call, so it runs on a non-realtime core.
 
 enum class LoggingStyle : std::uint8_t { EveryEvent, CountPerSecond };
 
@@ -64,9 +63,8 @@ private:
         for (const Record& event : connections.input) {
             ++received;
             std::string line = std::format("{}: event {}", options.label.c_str(), received);
-            // Until C++26 reflection reads every field of any record (see Events in
-            // src/core/spec.md), only a stream event's sample number and fields named `channel`
-            // and `count` are printed.
+            // Only a stream event's sample number and fields named `channel` and `count` are
+            // printed.
             if constexpr (std::derived_from<Record, StreamEventRecord>) {
                 line += std::format(", sample {}", event.header.sample_number);
             }
