@@ -286,7 +286,9 @@ public:
 
     // Read publish_seq() before checking the ring, then pass it to wait_for_packet().
     // Anything published (or wake_consumer()) after that read makes the wait return.
-    uint32_t publish_seq() const { return publish_seq_.load(std::memory_order_acquire); }
+    [[nodiscard]] uint32_t publish_seq() const {
+        return publish_seq_.load(std::memory_order_acquire);
+    }
 
     void wait_for_packet(uint32_t seq) { publish_seq_.wait(seq, std::memory_order_acquire); }
 

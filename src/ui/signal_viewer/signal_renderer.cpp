@@ -329,7 +329,9 @@ public:
     }
 
     void set_voltage_scale(float scale) { voltage_scale_.store(scale, std::memory_order_relaxed); }
-    float get_voltage_scale() const { return voltage_scale_.load(std::memory_order_relaxed); }
+    [[nodiscard]] float get_voltage_scale() const {
+        return voltage_scale_.load(std::memory_order_relaxed);
+    }
 
     // Queues the waveform draw into ImGui's command stream, so it respects window clipping
     void add_draw_callback(ImDrawList* draw_list, int first_channel, int channel_count,

@@ -116,7 +116,7 @@ public:
 
     ~FalconUI() { shutdown(); }
 
-    GLFWwindow* get_window() const { return window_; }
+    [[nodiscard]] GLFWwindow* get_window() const { return window_; }
 
     bool setup() {
         if (!init_window_context()) {

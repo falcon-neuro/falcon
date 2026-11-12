@@ -109,6 +109,7 @@ words:
   - overengineer
   - Oversample
   - Parameteri
+  - parport
   - pgrep
   - pixz
   - prioritise
@@ -131,8 +132,10 @@ words:
   - stim
   - streamheader
   - SUBDIRLIST
+  - SUNIX
   - superframes
   - SUPERFRAMESIZE
+  - sysfs
   - taskset
   - unoptimized
   - upslope

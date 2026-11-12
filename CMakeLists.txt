@@ -73,7 +73,7 @@ target_link_libraries(imgui PUBLIC
 # )
 
 add_executable(falcon
-    src/processors/custom/template_processor/pipelines/gain_pipeline.cpp
+    src/processors/custom/ripple-neuromed-reader/pipelines/latency_test_pipeline.cpp
 )
 
 target_compile_options(falcon PRIVATE
