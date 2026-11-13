@@ -108,8 +108,7 @@ private:
     [[nodiscard]] static unsigned short find_card_data_register() {
         const std::filesystem::path pci_devices_directory = "/sys/bus/pci/devices";
         std::error_code listing_error;
-        const std::filesystem::directory_iterator pci_devices(pci_devices_directory,
-                                                              listing_error);
+        const std::filesystem::directory_iterator pci_devices(pci_devices_directory, listing_error);
         if (listing_error) {
             throw std::runtime_error(std::format("PCIeParallelOutput: can't list {}: {}",
                                                  pci_devices_directory.string(),
@@ -121,8 +120,7 @@ private:
             const std::filesystem::path& device_directory = pci_device.path();
             if (read_hex_file(device_directory / "vendor") == card_vendor_id &&
                 read_hex_file(device_directory / "device") == card_device_id &&
-                read_hex_file(device_directory / "subsystem_device") ==
-                    card_subsystem_device_id) {
+                read_hex_file(device_directory / "subsystem_device") == card_subsystem_device_id) {
                 card_directories.push_back(device_directory);
             }
         }

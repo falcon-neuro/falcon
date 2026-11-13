@@ -1,19 +1,20 @@
 #pragma once
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
 #include "../core/engine.cpp"
 
-// LevelCrossingDetector: emits a LevelCrossing for each channel that crosses the level, then ignores
-// that channel for its next post_detection_block samples. Blocks are per channel, so channels that
-// cross a sample apart are all detected. The direction is its own option, since a signal may cross
-// a positive level downward.
+// LevelCrossingDetector: on each sample where channels cross the level, emits one LevelCrossings
+// event with those channels, then ignores each of them for its next post_detection_block samples.
+// Blocks are per channel, so channels that cross a sample apart are all detected. The direction is
+// its own option, since a signal may cross a positive level downward.
 
-struct LevelCrossing : StreamEvent {
-    u32 channel = 0;
+// One event per sample: the mask of the channels that crossed the level on it.
+template <typename StreamInfoType>
+struct LevelCrossings : StreamEvent {
+    ChannelMask<StreamInfoType> channels;
 };
 
 enum class CrossingDirection : std::uint8_t { Upward, Downward };
@@ -30,14 +31,14 @@ struct LevelCrossingDetector {
 
     struct Connections {
         SampleInputBuffer<InputStreamInfo> input;
-        // Room for every channel crossing in the same sample, e.g. at a test square wave's edge.
-        EventOutputBuffer<LevelCrossing, InputStreamInfo::channels> output;
+        EventOutputBuffer<LevelCrossings<InputStreamInfo>, 1> output;
     };
 
     void process(Connections connections) {
         if (connections.input.is_empty()) {
             return;
         }
+        ChannelMask<InputStreamInfo> crossings;
         for (int simd_vector_index = 0; simd_vector_index < InputStreamInfo::simd_vectors;
              ++simd_vector_index) {
             const auto vector_slot = static_cast<std::size_t>(simd_vector_index);
@@ -55,15 +56,13 @@ struct LevelCrossingDetector {
             if constexpr (options.post_detection_block > 0) {
                 crossing_mask = apply_blocks(blocked_samples_left_[vector_slot], transition_mask);
             }
-            while (crossing_mask != 0U) {
-                const int lane_index = std::countr_zero(crossing_mask);
-                crossing_mask &= crossing_mask - 1U;
-                const int channel = (simd_vector_index * FLOATS_PER_SIMD_VECTOR) + lane_index;
-                connections.output.push(connections.input.header,
-                                        LevelCrossing{.channel = static_cast<u32>(channel)});
-            }
+            crossings.set_vector(simd_vector_index, {.bits = crossing_mask});
         }
         has_seen_sample_ = true;
+        if (!crossings.is_empty()) {
+            connections.output.push(connections.input.header,
+                                    LevelCrossings<InputStreamInfo>{.channels = crossings});
+        }
     }
 
 private:

@@ -177,13 +177,11 @@ private:
                 const __m512d previous_z1 = _mm512_load_pd(state_z1);
                 const __m512d previous_z2 = _mm512_load_pd(state_z2);
                 const __m512d filtered = _mm512_fmadd_pd(coefficient_b0, values, previous_z1);
-                _mm512_store_pd(
-                    state_z1,
-                    _mm512_fmadd_pd(coefficient_b1, values,
-                                    _mm512_fnmadd_pd(coefficient_a1, filtered, previous_z2)));
-                _mm512_store_pd(state_z2,
-                                _mm512_fnmadd_pd(coefficient_a2, filtered,
-                                                 _mm512_mul_pd(coefficient_b2, values)));
+                _mm512_store_pd(state_z1, _mm512_fmadd_pd(coefficient_b1, values,
+                                                          _mm512_fnmadd_pd(coefficient_a1, filtered,
+                                                                           previous_z2)));
+                _mm512_store_pd(state_z2, _mm512_fnmadd_pd(coefficient_a2, filtered,
+                                                           _mm512_mul_pd(coefficient_b2, values)));
                 values = filtered;
             } else {
                 static_assert(std::is_same_v<DoubleVector, __m256d>);
@@ -204,13 +202,11 @@ private:
                 const __m256d previous_z1 = _mm256_load_pd(state_z1);
                 const __m256d previous_z2 = _mm256_load_pd(state_z2);
                 const __m256d filtered = _mm256_fmadd_pd(coefficient_b0, values, previous_z1);
-                _mm256_store_pd(
-                    state_z1,
-                    _mm256_fmadd_pd(coefficient_b1, values,
-                                    _mm256_fnmadd_pd(coefficient_a1, filtered, previous_z2)));
-                _mm256_store_pd(state_z2,
-                                _mm256_fnmadd_pd(coefficient_a2, filtered,
-                                                 _mm256_mul_pd(coefficient_b2, values)));
+                _mm256_store_pd(state_z1, _mm256_fmadd_pd(coefficient_b1, values,
+                                                          _mm256_fnmadd_pd(coefficient_a1, filtered,
+                                                                           previous_z2)));
+                _mm256_store_pd(state_z2, _mm256_fnmadd_pd(coefficient_a2, filtered,
+                                                           _mm256_mul_pd(coefficient_b2, values)));
                 values = filtered;
             }
         }

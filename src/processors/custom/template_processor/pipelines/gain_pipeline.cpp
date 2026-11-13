@@ -35,14 +35,13 @@ void core5() {
     // Processors
     template_processor::Gain<TemplateStream, {.factor = 3.000001}> gain;
     SpikeDetector<TemplateStream, {.threshold = -150}> spike_detector;
-    EventLogger<Spike, TemplateStream::channels,
-                {.label = "gain", .style = LoggingStyle::CountPerSecond}>
+    EventLogger<Spikes<TemplateStream>, 1, {.label = "gain", .style = LoggingStyle::CountPerSecond}>
         event_logger;
 
     // Connections
     SampleBuffer<TemplateStream> signal_generator_to_gain_sample_buffer;
     SampleBuffer<TemplateStream> gain_to_spike_detector_sample_buffer;
-    EventBuffer<Spike, TemplateStream::channels> spike_detector_to_event_logger_event_buffer;
+    EventBuffer<Spikes<TemplateStream>, 1> spike_detector_to_event_logger_event_buffer;
 
     if (!wait_at_start_barrier()) {
         return;

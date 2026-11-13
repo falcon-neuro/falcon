@@ -33,11 +33,11 @@ void core4() {
 void core5() {
     // Processors
     SpikeDetector<SparseTestStream, {.threshold = -70}> spike_detector;
-    EventLogger<Spike, SparseTestStream::channels> example_logger;
+    EventLogger<Spikes<SparseTestStream>, 1> example_logger;
 
     // Connections
     SampleBuffer<SparseTestStream> signal_generator_to_spike_detector_sample_buffer;
-    EventBuffer<Spike, SparseTestStream::channels> spike_detector_to_example_logger_event_buffer;
+    EventBuffer<Spikes<SparseTestStream>, 1> spike_detector_to_example_logger_event_buffer;
 
     if (!wait_at_start_barrier()) {
         return;

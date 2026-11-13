@@ -31,7 +31,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("butterworth_lowpass_300",
-        R"json({"family": "butter", "band_type": "lowpass", "prototype_order": 4, "cutoffs": [300.0], "passband_ripple": null, "stopband_attenuation": null})json");
+       R"json({"family": "butter", "band_type": "lowpass", "prototype_order": 4, "cutoffs": [300.0], "passband_ripple": null, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<1>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -48,7 +48,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("butterworth_lowpass_100_first_order",
-        R"json({"family": "butter", "band_type": "lowpass", "prototype_order": 1, "cutoffs": [100.0], "passband_ripple": null, "stopband_attenuation": null})json");
+       R"json({"family": "butter", "band_type": "lowpass", "prototype_order": 1, "cutoffs": [100.0], "passband_ripple": null, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<1>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -65,7 +65,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("butterworth_highpass_1",
-        R"json({"family": "butter", "band_type": "highpass", "prototype_order": 2, "cutoffs": [1.0], "passband_ripple": null, "stopband_attenuation": null})json");
+       R"json({"family": "butter", "band_type": "highpass", "prototype_order": 2, "cutoffs": [1.0], "passband_ripple": null, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<2>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -89,7 +89,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("butterworth_bandpass_theta",
-        R"json({"family": "butter", "band_type": "bandpass", "prototype_order": 2, "cutoffs": [4.0, 12.0], "passband_ripple": null, "stopband_attenuation": null})json");
+       R"json({"family": "butter", "band_type": "bandpass", "prototype_order": 2, "cutoffs": [4.0, 12.0], "passband_ripple": null, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<2>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -113,7 +113,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("butterworth_bandstop_50",
-        R"json({"family": "butter", "band_type": "bandstop", "prototype_order": 2, "cutoffs": [45.0, 55.0], "passband_ripple": null, "stopband_attenuation": null})json");
+       R"json({"family": "butter", "band_type": "bandstop", "prototype_order": 2, "cutoffs": [45.0, 55.0], "passband_ripple": null, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<12>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -207,7 +207,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("butterworth_bandpass_spike_12_sections",
-        R"json({"family": "butter", "band_type": "bandpass", "prototype_order": 12, "cutoffs": [300.0, 6000.0], "passband_ripple": null, "stopband_attenuation": null})json");
+       R"json({"family": "butter", "band_type": "bandpass", "prototype_order": 12, "cutoffs": [300.0, 6000.0], "passband_ripple": null, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<3>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -238,7 +238,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("chebyshev1_lowpass_6000",
-        R"json({"family": "cheby1", "band_type": "lowpass", "prototype_order": 6, "cutoffs": [6000.0], "passband_ripple": 1.0, "stopband_attenuation": null})json");
+       R"json({"family": "cheby1", "band_type": "lowpass", "prototype_order": 6, "cutoffs": [6000.0], "passband_ripple": 1.0, "stopband_attenuation": null})json");
     visitor.template operator()<IirFilterOptions<4>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -276,7 +276,7 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("chebyshev2_bandpass_ripple",
-        R"json({"family": "cheby2", "band_type": "bandpass", "prototype_order": 4, "cutoffs": [150.0, 250.0], "passband_ripple": null, "stopband_attenuation": 40.0})json");
+       R"json({"family": "cheby2", "band_type": "bandpass", "prototype_order": 4, "cutoffs": [150.0, 250.0], "passband_ripple": null, "stopband_attenuation": 40.0})json");
     visitor.template operator()<IirFilterOptions<4>{
         .design_rate = 30000.0,
         .gain = 1.0,
@@ -314,5 +314,5 @@ void for_each_generated_design(DesignVisitor&& visitor) {
                 },
             },
     }>("elliptic_bandpass_ripple",
-        R"json({"family": "ellip", "band_type": "bandpass", "prototype_order": 4, "cutoffs": [150.0, 250.0], "passband_ripple": 0.5, "stopband_attenuation": 40.0})json");
+       R"json({"family": "ellip", "band_type": "bandpass", "prototype_order": 4, "cutoffs": [150.0, 250.0], "passband_ripple": 0.5, "stopband_attenuation": 40.0})json");
 }

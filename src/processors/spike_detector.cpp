@@ -1,15 +1,16 @@
 #pragma once
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include "../core/engine.cpp"
 
-// SpikeDetector: emits a Spike on the sample where a channel crosses the threshold, without waiting
-// for the peak. The threshold's sign gives the direction.
+// SpikeDetector: on each sample where channels cross the threshold, emits one Spikes event with
+// those channels, without waiting for the peak. The threshold's sign gives the direction.
 
-struct Spike : StreamEvent {
-    u32 channel = 0;
+// One event per sample: the mask of the channels that crossed the threshold on it.
+template <typename StreamInfoType>
+struct Spikes : StreamEvent {
+    ChannelMask<StreamInfoType> channels;
 };
 
 struct SpikeDetectorOptions {
@@ -23,14 +24,14 @@ struct SpikeDetector {
 
     struct Connections {
         SampleInputBuffer<InputStreamInfo> input;
-        // Room for every channel crossing in the same sample, e.g. during a stimulation artifact.
-        EventOutputBuffer<Spike, InputStreamInfo::channels> output;
+        EventOutputBuffer<Spikes<InputStreamInfo>, 1> output;
     };
 
     void process(Connections connections) {
         if (connections.input.is_empty()) {
             return;
         }
+        ChannelMask<InputStreamInfo> crossings;
         for (int simd_vector_index = 0; simd_vector_index < InputStreamInfo::simd_vectors;
              ++simd_vector_index) {
             const unsigned beyond_mask =
@@ -39,18 +40,15 @@ struct SpikeDetector {
             unsigned& was_beyond_mask =
                 was_beyond_masks_[static_cast<std::size_t>(simd_vector_index)];
             // The first sample has no previous one to cross from, so it only records the state.
-            unsigned crossing_mask = has_seen_sample_ ? (beyond_mask & ~was_beyond_mask) : 0U;
+            const unsigned crossing_mask = has_seen_sample_ ? (beyond_mask & ~was_beyond_mask) : 0U;
             was_beyond_mask = beyond_mask;
-
-            while (crossing_mask != 0U) {
-                const int lane_index = std::countr_zero(crossing_mask);
-                crossing_mask &= crossing_mask - 1U;
-                const int channel = (simd_vector_index * FLOATS_PER_SIMD_VECTOR) + lane_index;
-                connections.output.push(connections.input.header,
-                                        Spike{.channel = static_cast<u32>(channel)});
-            }
+            crossings.set_vector(simd_vector_index, {.bits = crossing_mask});
         }
         has_seen_sample_ = true;
+        if (!crossings.is_empty()) {
+            connections.output.push(connections.input.header,
+                                    Spikes<InputStreamInfo>{.channels = crossings});
+        }
     }
 
 private:

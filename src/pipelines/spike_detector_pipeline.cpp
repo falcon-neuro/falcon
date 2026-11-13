@@ -31,11 +31,11 @@ void core1() {
 void core2() {
     // Processors
     SpikeDetector<TestStream, {.threshold = -70}> spike_detector;
-    EventLogger<Spike, TestStream::channels> example_logger;
+    EventLogger<Spikes<TestStream>, 1> example_logger;
 
     // Connections
     SampleBuffer<TestStream> signal_generator_to_spike_detector_sample_buffer;
-    EventBuffer<Spike, TestStream::channels> spike_detector_to_example_logger_event_buffer;
+    EventBuffer<Spikes<TestStream>, 1> spike_detector_to_example_logger_event_buffer;
 
     if (!wait_at_start_barrier()) {
         return;

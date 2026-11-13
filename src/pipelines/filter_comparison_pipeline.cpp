@@ -75,11 +75,11 @@ void core5() {
               }>
         ap_filter;
     SpikeDetector<ComparisonTestStream, {.threshold = -70}> filtered_spike_detector;
-    EventLogger<Spike, ComparisonTestStream::channels,
+    EventLogger<Spikes<ComparisonTestStream>, 1,
                 {.label = "filtered", .style = LoggingStyle::CountPerSecond}>
         filtered_logger;
     SpikeDetector<ComparisonTestStream, {.threshold = -70}> unfiltered_spike_detector;
-    EventLogger<Spike, ComparisonTestStream::channels,
+    EventLogger<Spikes<ComparisonTestStream>, 1,
                 {.label = "unfiltered", .style = LoggingStyle::CountPerSecond}>
         unfiltered_logger;
 
@@ -87,9 +87,9 @@ void core5() {
     SampleBuffer<ComparisonTestStream>
         signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_buffer;
     SampleBuffer<ComparisonTestStream> ap_filter_to_filtered_spike_detector_sample_buffer;
-    EventBuffer<Spike, ComparisonTestStream::channels>
+    EventBuffer<Spikes<ComparisonTestStream>, 1>
         filtered_spike_detector_to_filtered_logger_event_buffer;
-    EventBuffer<Spike, ComparisonTestStream::channels>
+    EventBuffer<Spikes<ComparisonTestStream>, 1>
         unfiltered_spike_detector_to_unfiltered_logger_event_buffer;
 
     if (!wait_at_start_barrier()) {

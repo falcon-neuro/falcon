@@ -2,6 +2,7 @@
 // output, its coefficients and the filter they claim to be, for
 // scripts/python/compare_iir_filter.py. The files go to the repository's build/iir_filter_test/,
 // or to the directory given as the first argument.
+#include "../processors/iir_filter.cpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -20,7 +21,6 @@
 #include <string_view>
 #include <vector>
 #include "../core/engine.cpp"
-#include "../processors/iir_filter.cpp"
 #include "iir_filter_test_designs.cpp"
 
 // 37 channels, padded to 48: on either instruction set every lane of every vector half carries a
@@ -215,8 +215,8 @@ void run_design(TestRun& test_run, std::string_view name, std::string_view desig
 std::string describe_test(const TestRun& test_run) {
     std::string restart_samples;
     for (std::size_t restart_index = 0; restart_index < RESTART_SAMPLES.size(); ++restart_index) {
-        restart_samples += std::format("{}{}", restart_index == 0 ? "" : ", ",
-                                       RESTART_SAMPLES[restart_index]);
+        restart_samples +=
+            std::format("{}{}", restart_index == 0 ? "" : ", ", RESTART_SAMPLES[restart_index]);
     }
     std::string designs;
     for (std::size_t design_index = 0; design_index < test_run.design_descriptions.size();
@@ -260,9 +260,9 @@ int main(int argument_count, char** arguments) {
         // so the default doesn't depend on the folder the program is started from.
         const std::filesystem::path repository_root =
             std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
-        const std::filesystem::path directory =
-            argument_count > 1 ? std::filesystem::path{arguments[1]}
-                               : repository_root / "build" / "iir_filter_test";
+        const std::filesystem::path directory = argument_count > 1
+                                                    ? std::filesystem::path{arguments[1]}
+                                                    : repository_root / "build" / "iir_filter_test";
         run_test(directory);
         return 0;
     } catch (const std::exception& error) {

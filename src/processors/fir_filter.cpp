@@ -74,8 +74,8 @@ struct FirFilter {
                 const __m512d first_half = _mm512_cvtps_pd(_mm512_castps512_ps256(values));
                 const __m512d second_half = _mm512_cvtps_pd(
                     _mm256_castpd_ps(_mm512_extractf64x4_pd(_mm512_castps_pd(values), 1)));
-                const __m256 filtered_first_half = _mm512_cvtpd_ps(
-                    run_taps(first_half, first_channel, is_restarting, tap_slots));
+                const __m256 filtered_first_half =
+                    _mm512_cvtpd_ps(run_taps(first_half, first_channel, is_restarting, tap_slots));
                 const __m256 filtered_second_half = _mm512_cvtpd_ps(
                     run_taps(second_half, second_half_first_channel, is_restarting, tap_slots));
                 const __m512d filtered_halves = _mm512_insertf64x4(
@@ -85,8 +85,8 @@ struct FirFilter {
             } else {
                 const __m256d first_half = _mm256_cvtps_pd(_mm256_castps256_ps128(values));
                 const __m256d second_half = _mm256_cvtps_pd(_mm256_extractf128_ps(values, 1));
-                const __m128 filtered_first_half = _mm256_cvtpd_ps(
-                    run_taps(first_half, first_channel, is_restarting, tap_slots));
+                const __m128 filtered_first_half =
+                    _mm256_cvtpd_ps(run_taps(first_half, first_channel, is_restarting, tap_slots));
                 const __m128 filtered_second_half = _mm256_cvtpd_ps(
                     run_taps(second_half, second_half_first_channel, is_restarting, tap_slots));
                 connections.output.store(

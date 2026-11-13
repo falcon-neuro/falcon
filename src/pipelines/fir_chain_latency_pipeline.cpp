@@ -5,7 +5,6 @@
 //
 //   SignalGenerator -> ring -> 7 pass-through FirFilters in series -> LevelCrossingDetector
 //   -> Trigger -> LatencyBenchmark
-#include <numbers>
 #include "../core/engine.cpp"
 #include "../processors/fir_filter.cpp"
 #include "../processors/latency_benchmark.cpp"
@@ -20,34 +19,21 @@ using PassThroughFilter =
     FirFilter<LatencyStream,
               FirFilterOptions<1>{.design_rate = LatencyStream::rate, .taps = {1.0}}>;
 
-// Diagnostic: the channels' rising edges are spread evenly over this many samples, so the trigger
-// sample, where the last channel crosses, carries about channels / CROSSING_SPREAD_SAMPLES events.
-// At 1, every channel crosses on the same sample.
-constexpr double CROSSING_SPREAD_SAMPLES = 1;
-constexpr double WAVE_FREQUENCY = 47;  // Hz
-static_assert(CROSSING_SPREAD_SAMPLES >= 1 &&
-                  CROSSING_SPREAD_SAMPLES < LatencyStream::rate / WAVE_FREQUENCY,
-              "the spread must stay within one period of the wave");
-constexpr double WAVE_PHASE_PER_SAMPLE =
-    2.0 * std::numbers::pi * WAVE_FREQUENCY / LatencyStream::rate;  // radians
-
-using LatencySignalGenerator =
-    SignalGenerator<LatencyStream,
-                    {
-                        .waveform = Waveform::Square,
-                        .frequency = WAVE_FREQUENCY,
-                        .amplitude = 900,
-                        .phase_step_per_channel = (CROSSING_SPREAD_SAMPLES - 1) *
-                                                  WAVE_PHASE_PER_SAMPLE / LatencyStream::channels,
-                    }>;
-
 // Connections between cores
-SampleRing<LatencyStream, 8> signal_generator_to_pass_through_filter_1_sample_ring{
+SampleRing<LatencyStream, 512> signal_generator_to_pass_through_filter_1_sample_ring{
     "signal_generator_to_pass_through_filter_1_sample_ring"};
 
 void core1() {
     // Processors
-    LatencySignalGenerator signal_generator;
+    // A phase step of 0 puts the same wave on every channel, so all channels cross on one sample.
+    SignalGenerator<LatencyStream,
+                    {
+                        .waveform = Waveform::Square,
+                        .frequency = 47,
+                        .amplitude = 900,
+                        .phase_step_per_channel = 0,
+                    }>
+        signal_generator;
 
     if (!wait_at_start_barrier()) {
         return;
@@ -63,16 +49,13 @@ void core1() {
 
 void core2() {
     // Processors
-    // Diagnostic: the generator runs in this core's loop instead of core 1's, so no ring hop is
-    // measured.
-    LatencySignalGenerator signal_generator;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_1;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_2;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_3;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_4;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_5;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_6;
-    [[maybe_unused]] PassThroughFilter pass_through_filter_7;
+    PassThroughFilter pass_through_filter_1;
+    PassThroughFilter pass_through_filter_2;
+    PassThroughFilter pass_through_filter_3;
+    PassThroughFilter pass_through_filter_4;
+    PassThroughFilter pass_through_filter_5;
+    PassThroughFilter pass_through_filter_6;
+    PassThroughFilter pass_through_filter_7;
     LevelCrossingDetector<LatencyStream,
                           {
                               .threshold = 100,
@@ -80,7 +63,7 @@ void core2() {
                               .post_detection_block = 2,
                           }>
         level_crossing_detector;
-    Trigger<LatencyStream, LevelCrossing> trigger;
+    Trigger<LatencyStream, LevelCrossings<LatencyStream>> trigger;
     LatencyBenchmark<TriggerEvent, 1, {.file_prefix = "fir_chain_latency_benchmark"}>
         latency_benchmark;
 
@@ -93,8 +76,7 @@ void core2() {
     SampleBuffer<LatencyStream> pass_through_filter_5_to_pass_through_filter_6_sample_buffer;
     SampleBuffer<LatencyStream> pass_through_filter_6_to_pass_through_filter_7_sample_buffer;
     SampleBuffer<LatencyStream> pass_through_filter_7_to_level_crossing_detector_sample_buffer;
-    EventBuffer<LevelCrossing, LatencyStream::channels>
-        level_crossing_detector_to_trigger_event_buffer;
+    EventBuffer<LevelCrossings<LatencyStream>, 1> level_crossing_detector_to_trigger_event_buffer;
     EventBuffer<TriggerEvent, 1> trigger_to_latency_benchmark_event_buffer;
 
     if (!wait_at_start_barrier()) {
@@ -102,43 +84,38 @@ void core2() {
     }
 
     while (is_pipeline_running) {
-        // signal_generator_to_pass_through_filter_1_sample_ring.read(
-        //     signal_generator_to_pass_through_filter_1_sample_buffer);
-        signal_generator.process(
-            {.output = signal_generator_to_pass_through_filter_1_sample_buffer});
-        // Diagnostic: the 7 FirFilters are bypassed, so the ring's sample goes straight to the
-        // detector.
-        // pass_through_filter_1.process({
-        //     .input = signal_generator_to_pass_through_filter_1_sample_buffer,
-        //     .output = pass_through_filter_1_to_pass_through_filter_2_sample_buffer,
-        // });
-        // pass_through_filter_2.process({
-        //     .input = pass_through_filter_1_to_pass_through_filter_2_sample_buffer,
-        //     .output = pass_through_filter_2_to_pass_through_filter_3_sample_buffer,
-        // });
-        // pass_through_filter_3.process({
-        //     .input = pass_through_filter_2_to_pass_through_filter_3_sample_buffer,
-        //     .output = pass_through_filter_3_to_pass_through_filter_4_sample_buffer,
-        // });
-        // pass_through_filter_4.process({
-        //     .input = pass_through_filter_3_to_pass_through_filter_4_sample_buffer,
-        //     .output = pass_through_filter_4_to_pass_through_filter_5_sample_buffer,
-        // });
-        // pass_through_filter_5.process({
-        //     .input = pass_through_filter_4_to_pass_through_filter_5_sample_buffer,
-        //     .output = pass_through_filter_5_to_pass_through_filter_6_sample_buffer,
-        // });
-        // pass_through_filter_6.process({
-        //     .input = pass_through_filter_5_to_pass_through_filter_6_sample_buffer,
-        //     .output = pass_through_filter_6_to_pass_through_filter_7_sample_buffer,
-        // });
-        // pass_through_filter_7.process({
-        //     .input = pass_through_filter_6_to_pass_through_filter_7_sample_buffer,
-        //     .output = pass_through_filter_7_to_level_crossing_detector_sample_buffer,
-        // });
-        level_crossing_detector.process({
-            // .input = pass_through_filter_7_to_level_crossing_detector_sample_buffer,
+        signal_generator_to_pass_through_filter_1_sample_ring.read(
+            signal_generator_to_pass_through_filter_1_sample_buffer);
+        pass_through_filter_1.process({
             .input = signal_generator_to_pass_through_filter_1_sample_buffer,
+            .output = pass_through_filter_1_to_pass_through_filter_2_sample_buffer,
+        });
+        pass_through_filter_2.process({
+            .input = pass_through_filter_1_to_pass_through_filter_2_sample_buffer,
+            .output = pass_through_filter_2_to_pass_through_filter_3_sample_buffer,
+        });
+        pass_through_filter_3.process({
+            .input = pass_through_filter_2_to_pass_through_filter_3_sample_buffer,
+            .output = pass_through_filter_3_to_pass_through_filter_4_sample_buffer,
+        });
+        pass_through_filter_4.process({
+            .input = pass_through_filter_3_to_pass_through_filter_4_sample_buffer,
+            .output = pass_through_filter_4_to_pass_through_filter_5_sample_buffer,
+        });
+        pass_through_filter_5.process({
+            .input = pass_through_filter_4_to_pass_through_filter_5_sample_buffer,
+            .output = pass_through_filter_5_to_pass_through_filter_6_sample_buffer,
+        });
+        pass_through_filter_6.process({
+            .input = pass_through_filter_5_to_pass_through_filter_6_sample_buffer,
+            .output = pass_through_filter_6_to_pass_through_filter_7_sample_buffer,
+        });
+        pass_through_filter_7.process({
+            .input = pass_through_filter_6_to_pass_through_filter_7_sample_buffer,
+            .output = pass_through_filter_7_to_level_crossing_detector_sample_buffer,
+        });
+        level_crossing_detector.process({
+            .input = pass_through_filter_7_to_level_crossing_detector_sample_buffer,
             .output = level_crossing_detector_to_trigger_event_buffer,
         });
         trigger.process({
@@ -151,7 +128,7 @@ void core2() {
 
 int main() {
     return run_on_cores({
-        // {.core_number = 1, .entry_point = core1},
+        {.core_number = 1, .entry_point = core1},
         {.core_number = 2, .entry_point = core2},
     });
 }
