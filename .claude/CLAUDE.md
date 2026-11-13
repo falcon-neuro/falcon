@@ -20,6 +20,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - After the prototype: [src/core/beyond_prototype.md](../src/core/beyond_prototype.md).
 - Graph shapes atlas: [src/core/graph_shapes.md](../src/core/graph_shapes.md).
 - Differences from Falcon 1: [src/core/falcon1_differences.md](../src/core/falcon1_differences.md).
+- Glossary: [src/core/glossary.md](../src/core/glossary.md).
 
 ## Guidelines
 - Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.
@@ -37,7 +38,8 @@ Engine planning works only from the docs under **In progress** and this file.
 - Don't read or cite source files (the old `falcon/` engine, the `src/` sketches) unless I ask or we start writing code. They are what is being replaced; reading them anchors the spec on it.
 - beyond_prototype.md is parked: leave its topics out of the discussion until the prototype engine works.
 - **Simplest first.** For what only the engine sees (cheap to change, see **How to prioritise** in spec.md), recommend the simplest version and offer to park the better one, and any optimisation or safety net, in beyond_prototype.md. For what processor code sees (expensive to change), push to get it right now. Outside the hot loop (setup, teardown, failure handling), any simple solution is fine: propose it briefly and don't overengineer it or debate it at length.
-- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md, falcon1_differences.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
+- **Terms**: use each word as glossary.md defines it, in the docs and in chat. glossary.md holds only fundamental words, one plain meaning each, never facts or decisions the other docs hold.
+- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md, falcon1_differences.md, glossary.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
 
 ## Memory
 - Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the src/core docs. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.

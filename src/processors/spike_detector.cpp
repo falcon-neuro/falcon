@@ -8,7 +8,7 @@
 // SpikeDetector: emits a Spike on the sample where a channel crosses the threshold, without waiting
 // for the peak. The threshold's sign gives the direction.
 
-struct Spike : StreamEventRecord {
+struct Spike : StreamEvent {
     u32 channel = 0;
 };
 

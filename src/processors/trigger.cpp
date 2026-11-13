@@ -8,25 +8,25 @@
 // never reads a clock, so a replay gives the same triggers.
 
 // Its header is that of the sample whose event completed the set.
-struct TriggerEvent : StreamEventRecord {};
+struct TriggerEvent : StreamEvent {};
 
 // An event on one channel of a stream, such as a Spike or a LevelCrossing. The channel must be a
 // u32: a negative int would cast to an index far past Trigger's set of channels.
-template <typename Record>
-concept ChannelEventRecord =
-    std::derived_from<Record, StreamEventRecord> && requires(const Record& record) {
-        { record.channel } -> std::same_as<const u32&>;
+template <typename EventType>
+concept ChannelEvent =
+    std::derived_from<EventType, StreamEvent> && requires(const EventType& event) {
+        { event.channel } -> std::same_as<const u32&>;
     };
 
-template <typename InputStreamInfo, ChannelEventRecord Record>
+template <typename InputStreamInfo, ChannelEvent EventType>
 struct Trigger {
     struct Connections {
-        EventInputBuffer<Record, InputStreamInfo::channels> input;
+        EventInputBuffer<EventType, InputStreamInfo::channels> input;
         EventOutputBuffer<TriggerEvent, 1> output;
     };
 
     void process(Connections connections) {
-        for (const Record& event : connections.input) {
+        for (const EventType& event : connections.input) {
             const auto channel = static_cast<std::size_t>(event.channel);
             if (has_channel_fired_[channel]) {
                 continue;

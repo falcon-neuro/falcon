@@ -7,7 +7,7 @@ The prototype runs shape 1 (see **Prototype plan** in [spec.md](spec.md)). The p
 How to read the drawings:
 - A box is a processor.
 - `--->` carries a continuous stream. A label on the arrow gives its rate.
-- `...>` and `:` carry events: sparse records such as spikes.
+- `...>` and `:` carry events, such as spikes.
 - The drawings show the logical graph only. Any processor can be placed on any core; the engine inserts a ring wherever a connection crosses cores.
 
 ## 1. Chain

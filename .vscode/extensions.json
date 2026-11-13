@@ -6,5 +6,6 @@
         "streetsidesoftware.code-spell-checker",
         "ms-vscode.hexeditor",
         "slevesque.shader",
+        "dseight.disasexpl",
     ]
 }

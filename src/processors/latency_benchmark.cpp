@@ -30,11 +30,11 @@ struct LatencyBenchmarkOptions {
     Str file_prefix = "latency_benchmark";  // the log is <file_prefix>_<start time>.csv
 };
 
-template <std::derived_from<StreamEventRecord> Record, int Capacity,
+template <std::derived_from<StreamEvent> EventType, int Capacity,
           LatencyBenchmarkOptions options = LatencyBenchmarkOptions{}>
 struct LatencyBenchmark {
     struct Connections {
-        EventInputBuffer<Record, Capacity> input;
+        EventInputBuffer<EventType, Capacity> input;
     };
 
     // Value-initialising the rows writes every page now, so the loop never takes a page fault on
@@ -71,7 +71,7 @@ struct LatencyBenchmark {
         // call is counted.
         unsigned processor_id = 0;
         const u64 decision_tsc = __rdtscp(&processor_id);
-        for (const Record& event : connections.input) {
+        for (const EventType& event : connections.input) {
             if (recorded_count_ == row_capacity) {
                 ++unrecorded_count_;
                 continue;

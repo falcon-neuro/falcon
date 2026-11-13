@@ -27,14 +27,14 @@ struct PCIeParallelOutputOptions {
     double pulse_width_microseconds = 1000;
 };
 
-template <std::derived_from<EventRecord> Record, int Capacity, PCIeParallelOutputOptions options>
+template <std::derived_from<Event> EventType, int Capacity, PCIeParallelOutputOptions options>
 struct PCIeParallelOutput {
     static_assert(options.pin >= 2 && options.pin <= 9,
                   "a parallel port's data lines are pins 2 to 9");
     static_assert(options.pulse_width_microseconds > 0);
 
     struct Connections {
-        EventInputBuffer<Record, Capacity> input;
+        EventInputBuffer<EventType, Capacity> input;
     };
 
     PCIeParallelOutput()

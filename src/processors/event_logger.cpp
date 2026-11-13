@@ -17,11 +17,11 @@ struct EventLoggerOptions {
     LoggingStyle style = LoggingStyle::EveryEvent;
 };
 
-template <std::derived_from<EventRecord> Record, int Capacity,
+template <std::derived_from<Event> EventType, int Capacity,
           EventLoggerOptions options = EventLoggerOptions{}>
 struct EventLogger {
     struct Connections {
-        EventInputBuffer<Record, Capacity> input;
+        EventInputBuffer<EventType, Capacity> input;
     };
 
     u64 received = 0;  // events received since the start
@@ -60,12 +60,12 @@ private:
     }
 
     void print_every_event(Connections connections) {
-        for (const Record& event : connections.input) {
+        for (const EventType& event : connections.input) {
             ++received;
             std::string line = std::format("{}: event {}", options.label.c_str(), received);
             // Only a stream event's sample number and fields named `channel` and `count` are
             // printed.
-            if constexpr (std::derived_from<Record, StreamEventRecord>) {
+            if constexpr (std::derived_from<EventType, StreamEvent>) {
                 line += std::format(", sample {}", event.header.sample_number);
             }
             if constexpr (requires { event.channel; }) {

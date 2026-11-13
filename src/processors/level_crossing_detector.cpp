@@ -12,7 +12,7 @@
 // cross a sample apart are all detected. The direction is its own option, since a signal may cross
 // a positive level downward.
 
-struct LevelCrossing : StreamEventRecord {
+struct LevelCrossing : StreamEvent {
     u32 channel = 0;
 };
 

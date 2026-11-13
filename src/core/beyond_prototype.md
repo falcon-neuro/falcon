@@ -69,7 +69,9 @@ A processor author must copy what they need to keep and never keep a pointer int
 - The tests also matter for linting: clang-tidy analyzes a processor's code only where something instantiates its template, so a processor that no pipeline and no test instantiates is never checked.
 
 ### FIR filter
-The prototype's only filter is IirFilter (see **IirFilter** in spec.md). Falcon 1 also had FIR filter files (32 taps for Neuralynx's spike filter, 101 for a low-pass example). An FIR filter would be its own processor: its state is the last N input samples of every channel, not two doubles per section (101 taps at 384 channels is 155 KB, beyond L1), and its delay is half its length. The generator would write its taps into `graph.cpp` like the biquad coefficients. Expected to compute in float32 (to confirm when it is designed): an FIR filter has no feedback, so rounding is never amplified and can't make it unstable.
+FirFilter is in the prototype (see **FirFilter** in spec.md). Still to come:
+- Falcon 1's FIR filter files (32 taps for Neuralynx's spike filter, 101 for a low-pass example): the generator writes their taps into `graph.cpp` like the biquad coefficients.
+- Float32 filters: FirFilter computes in double for now. An FIR filter has no feedback, so its rounding is never amplified and can't make it unstable; float32 would halve its state (101 taps at 384 channels: 155 KB instead of 310 KB) and its vector operations.
 - Decided: each filter kind is its own processor and its own UI node: `IirFilter` (the prototype's), `FirFilter` and `SlopeFilter` (see **Filter kinds** in [falcon1_differences.md](falcon1_differences.md)). The kinds differ in options (sections, taps, or a window size and two orders), in state and in delay, and a node of its own makes choosing a long-delay FIR visible in the graph.
 - The names say IIR and FIR, the terms SciPy, MATLAB and papers use, because those name the trade-off a user picks between: a delay of a few samples, or a longer delay that is the same at every frequency. A coefficients file's `type` header names its processor (`iir`, `fir` or `slope`), and each node's file picker refuses a file of another kind.
 - A slope filter (a Savitzky–Golay derivative) takes the window size, the polynomial order and the derivative order as its options and computes its taps from them at compile time, reusing the FIR code, so the graph keeps the values the user set rather than the taps.
@@ -153,16 +155,19 @@ Open (formerly open question 9): how buffers are assigned, i.e. which connection
 - Who decides which connections share a buffer: the generator of `graph.cpp`, which sees the whole graph and the call order on each core, or each processor (e.g. a filter that declares it can work in place)?
 
 ### Event rings between cores
-- Between cores, events go through a small ring of fixed-size records (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
-- In the prototype, `EventBuffer<Record, Capacity>` holds its records inside itself. Reading from an event ring without a copy needs it to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
+- Between cores, events go through a small ring of fixed-size events (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
+- In the prototype, `EventBuffer<EventType, Capacity>` holds its events inside itself. Reading from an event ring without a copy needs it to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
+- Writing an event in place: the event buffer hands the producer an event to fill and the producer commits it, so `push` copies nothing, e.g. a channel mask of 1.25 KB at 10,000 channels (see **Detection events are channel masks** in spec.md). It adds an API and two silent mistakes: a forgotten commit drops the event, and an empty mask is pushed with no channel.
 
-### Spike records
-The prototype's `Spike` holds only the sample number and the channel (see **Events** in spec.md). Richer records, each made by its own processor from the detector's spikes and the filtered stream, so the path from detector to TTL never waits for them:
+### Richer spike events
+SpikeDetector's events say only which channels crossed on which sample (see **Detection events are channel masks** in spec.md). Richer events, each made by its own processor (or an optional output of SpikeDetector, to decide when it is built) from the detector's crossings and the filtered stream, so the path from detector to TTL never waits for them:
 - the peak amplitude, about 0.1–0.3 ms after the crossing;
-- per-group marks for clusterless decoding, e.g. `template <int ChannelsPerGroup> struct GroupSpike : EventRecord { u32 group; float peak[ChannelsPerGroup]; };` (32 B for a tetrode);
+- per-group marks for clusterless decoding, e.g. `template <int ChannelsPerGroup> struct GroupSpike : Event { u32 group; float peak[ChannelsPerGroup]; };` (32 B for a tetrode);
 - the waveform, e.g. 40 samples per channel of a tetrode (656 B), about 20 samples late (shape 14 in graph_shapes.md).
 
-In all of them, `sample` is the sample number of the threshold crossing, so every record of one spike carries the same number and they can be matched.
+In all of them, `sample` is the sample number of the threshold crossing, so every event about one spike carries the same number and they can be matched. Open: whether such an event then carries the crossing sample's header, with the peak's position as a field, or the peak sample's header.
+- **Peaks**: a SpikePeakDetector fed by SpikeDetector's crossings and the filtered stream can't disagree with SpikeDetector's threshold, and shows its late output as a node of its own; an optional peak output on SpikeDetector keeps one node, whose outputs then come on two timings. Either works; neither changes the masks.
+- **When SpikeDetector fires**: an option choosing the moment, e.g. the threshold crossing (the earliest), the peak, or the crossing back. The peak gives a spike time that depends less on amplitude (a larger spike crosses the threshold earlier) and comes with the amplitude, but is known only once the signal turns, a sample or more later, so its event comes late and carries the peak sample's header. The crossing back gives how long the spike stayed beyond the threshold. Every choice is still one mask per sample, so the event type doesn't change.
 
 ### Slow readers
 - **Slow readers** (viewer, recorder, audio) subscribe to what the hot loop publishes and never slow down the hot cores. The viewer is just another processor in the graph.
@@ -178,7 +183,7 @@ In all of them, `sample` is the sample number of the threshold crossing, so ever
 - Stream metadata the prototype doesn't need yet: channel labels and positions. To be designed with cache in mind. Open: whether they are compile-time constants like the channel count and the rate (see **Rates** in spec.md), or runtime data that reaches processors in one of these ways:
   - a. passed once at graph start, read-only during streaming
   - b. stored next to the ring, so readers get it when they attach
-  - c. sent as a special first record in the stream
+  - c. sent in the stream, ahead of its first sample
 
 ### Channel selection
 - What happens when the user only wants some channels, e.g. channels 16 to 24, and discards the rest? It touches the stream type (channel count), the padding of channels to a multiple of 16, and where the other channels are dropped (in the input, or in a processor).
@@ -215,6 +220,7 @@ The prototype puts each sample's header in its ring slot, in front of the sample
 In the prototype, clang decides which `process()` calls to inline (see **Processors** in spec.md). A call it doesn't inline runs on every pass, even when its input is empty, and since the buffer's address goes into the call, the buffer's count lives on the stack instead of in a register (see **graph.cpp** in spec.md).
 - Measured on the monotonous event pipeline, with a test event logger whose `process()` printed with `std::println`: clang didn't inline it, because `std::println` made it too big, so that core's loop was not one fused unit and the call saved and restored six registers on every pass. A small processor was inlined: with a test processor between the generator and the logger that adds a constant to each event, the buffer between the generator and that processor disappeared from the machine code entirely, with no stack slot and no register.
 - Harmless on that non-realtime core, but any realtime processor too big to inline does the same.
+- Measured on a realtime core too: in the FIR chain latency pipeline (128 channels), clang called each of the 7 FirFilters' `process()` out of line, with its `Connections` struct on the stack, and inside it reloaded both buffers' sample pointers for every channel vector, since it couldn't rule out that its own stores change them.
 - Open: should `graph.cpp` force every `process()` call inline (clang's `[[clang::always_inline]]` on the call statement, which processors never see), or keep leaving it to clang and check the disassembly?
 
 
@@ -238,6 +244,19 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
   - Realtime cores never print, so the timestamps would go through a ring to a non-realtime core, like log messages (see **Logging** in spec.md): the engine runs a collector thread there that reads them and feeds the UI, which also runs on a non-realtime core (see the advised cores under **Machine setup** in spec.md).
   - TSC values from different cores are only comparable if the TSC is invariant and synchronised across cores; to be checked on the target CPUs.
   - Related: the arrival time in each sample's header (see **Buffers** in spec.md) and task A.2 (benchmark each processor on the target machine before the graph runs).
+
+### Latency tests for the paper
+For the Falcon 2 paper. The prototype's latency test graph (**How we judge that it works** under **Agreed** in spec.md) checks the engine but measures too little for a paper.
+- **The 2017 paper's test** (Ciliberti & Kloosterman, J. Neural Eng. 14 045004): a square wave into 128 channels (32 tetrodes) at 32 kHz; m parallel chains (1 to 32), one per tetrode, each of n serial stages (1 to 8): n − 1 all-pass FIR stages, then a threshold detector; an EventSync that fired once every chain had an event. Round trip measured on the acquisition system's clock, internal from packet arrival to just before the TTL, external as their difference; medians, 99% intervals and worst cases over 7 min and 1 h. Internal latency of its 32 × 8 graph: median 0.26 ms, 99% interval 0.15–0.45 ms, worst 2.64 ms.
+- **Its work repeated in Falcon 2**, in the FIR chain latency pipeline: SignalGenerator alone on one core, with a phase step of 0 so every channel crosses on the same sample; on a second core, one chain on the whole stream: 7 FirFilters with one tap of 1, so each passes the signal unchanged (see **FirFilter** in spec.md), a LevelCrossingDetector, a Trigger, and LatencyBenchmark. More cores only if one can't finish each pass within the sample period.
+  - One chain, not 32: Falcon 1 needed a chain per tetrode to run them in parallel (a thread each); Falcon 2 runs the tetrodes in the SIMD lanes of each processor, and per-tetrode logic belongs there too (see **One processor per stream** in spec.md). Trigger waits for every channel where EventSync waited for every tetrode; with the square wave on every channel, both fire on the same sample.
+  - Rejected: splitting the stream into 32 tetrode streams. Each would be padded to 16 channels, so the stages would compute 512 lanes for 128 channels, and a split on the input's core would need 32 rings.
+- **Measured**, from arrival to decision:
+  - 128 channels at 32 kHz, 521 triggers (about 11 s): median 0.32 µs, 99th percentile 0.35 µs, maximum 0.63 µs. In the machine code the stages still do their work: clang turned each FirFilter's multiplication by the tap of 1 into an addition of +0.0 (which keeps a −0.0 input's sign right), so each stage still widens, stores its history, adds, narrows and stores every channel vector. FirFilter's `process()` was not inlined (see **Inlining every `process()`**); LevelCrossingDetector's, Trigger's and LatencyBenchmark's were.
+  - 10,000 channels at 40 kHz (a 25 µs sample period), 1120 triggers (about 24 s): median 15.74 µs, 99th percentile 16.17 µs, maximum 18.13 µs, leaving out the first trigger, at 26.68 µs, the only one with cold caches. Every trigger sample stayed within the sample period, every rising edge triggered, no ring dropped a sample, and SignalGenerator, with one `std::sin` per channel, kept the rate.
+  - Where that time goes, measured at 10,000 channels by leaving parts out: without the 7 FirFilters, median 8.34 µs, so the 7 stages take about 7.4 µs (about 1 µs each). With the generator moved into the processing core's loop as well, so no sample crosses a ring, median 8.74 µs at 40 kHz: the ring hop is below the run-to-run spread. The remaining 8.5 µs is mostly LevelCrossingDetector pushing 10,000 events (400 KB) and Trigger looping over them (see **Detection events are channel masks** in spec.md), shown by spreading the channels' rising edges over S samples, so the trigger sample carries about 10,000 / S events, everything else unchanged: median 8.72 µs at S = 1 (10,000 events), 1.43 µs at S = 10 (about 1000), 0.92 µs at S = 100 (about 100) and 0.90 µs at S = 800 (about 12). So about 0.9 µs is the rest of the pass, and each event costs about 0.8 ns at 10,000 events and 0.5 ns at 1000, whose 40 KB still fits in L1.
+  - The same core-2-only graph at 100 Hz, where the core sleeps inside the generator nearly all the time between samples: median 16.07 µs instead of 8.74 µs. The clock dropping while idle, or deep idle emptying L1 and L2, or both (see **Machine setup** under **Agreed** in spec.md, and **Waiting for data** in spec.md); not told apart, which needs the core's clock during the run.
+- **Still to do**: runs as long as the paper's (7 min and 1 h), with the realtime cores' clock checked during the run (see **Machine setup** under **Agreed** in spec.md); the round trip on the Ripple system; what the paper claims, hence what the tests vary, and whether Falcon 1 runs the same tests on the same machine.
 
 ### Scaling to +2000 channels
 - Ignored while designing for 64 channels. Notes for the future:
@@ -275,6 +294,9 @@ Ways to catch bugs that the current build setup (`CMakeLists.txt`, `.clang-tidy`
   - `concurrency-*`: C library functions that aren't thread-safe, which matters with one thread per core.
 - **Sanitizer builds**, for testing only, never the realtime build: ASan + UBSan (memory errors and undefined behaviour, including misaligned SIMD loads and signed overflow), and TSan (data races between cores, e.g. in rings).
 - **libc++ bounds checks**, once the macro is fixed: `_LIBCPP_HARDENING_MODE_DEBUG` in Debug builds. Open: whether Release keeps any (e.g. `_LIBCPP_HARDENING_MODE_FAST`), since every check costs time in the loop.
+
+## Documentation
+Once Falcon is a usable product. The website is generated by Doxygen from two sources only, both kept minimal: doc comments in the code, and Markdown pages, such as tutorials on using Falcon. Doc comments then also describe for users what each processor, option and connection does, a kind of comment beside the ones for what the code can't say.
 
 ## Tasks
 From the former TODO.md. Its other tasks are now part of spec.md.

@@ -130,18 +130,18 @@ private:
 
 // --- Events ---
 
-// Base of every event record. Empty: an event from a timer has no sample to point to.
-struct EventRecord {};
+// Base of every event. Empty: an event from a timer has no sample to point to.
+struct Event {};
 
-// Base of every event record that comes from a sample; `header` is that sample's header.
-struct StreamEventRecord : EventRecord {
+// Base of every event that comes from a sample; `header` is that sample's header.
+struct StreamEvent : Event {
     SampleHeader header;
 };
 
-// Up to Capacity records produced on this pass, held inside the buffer. Only In and Out reach
+// Up to Capacity events produced on this pass, held inside the buffer. Only In and Out reach
 // inside, and it can't be copied, so a processor that holds a buffer directly instead of through In
 // or Out can't use it or push into a copy.
-template <std::derived_from<EventRecord> Record, int Capacity>
+template <std::derived_from<Event> EventType, int Capacity>
 struct EventBuffer {
     EventBuffer() = default;
     EventBuffer(const EventBuffer&) = delete;
@@ -153,7 +153,7 @@ private:
     template <typename Kind>
     friend struct Out;
 
-    std::array<Record, Capacity> records_{};
+    std::array<EventType, Capacity> events_{};
     int count_ = 0;
 };
 
@@ -229,43 +229,43 @@ private:
     SampleBuffer<StreamInfoType>& buffer_;
 };
 
-template <std::derived_from<EventRecord> Record, int Capacity>
-struct In<EventBuffer<Record, Capacity>> {
-    In(const EventBuffer<Record, Capacity>& events) : buffer_(events) {}
+template <std::derived_from<Event> EventType, int Capacity>
+struct In<EventBuffer<EventType, Capacity>> {
+    In(const EventBuffer<EventType, Capacity>& events) : buffer_(events) {}
 
     [[nodiscard]] bool is_empty() const { return buffer_.count_ == 0; }
     [[nodiscard]] int size() const { return buffer_.count_; }
-    [[nodiscard]] const Record* begin() const { return buffer_.records_.data(); }
-    [[nodiscard]] const Record* end() const { return buffer_.records_.data() + buffer_.count_; }
+    [[nodiscard]] const EventType* begin() const { return buffer_.events_.data(); }
+    [[nodiscard]] const EventType* end() const { return buffer_.events_.data() + buffer_.count_; }
 
 private:
-    const EventBuffer<Record, Capacity>& buffer_;
+    const EventBuffer<EventType, Capacity>& buffer_;
 };
 
-template <std::derived_from<EventRecord> Record, int Capacity>
-struct Out<EventBuffer<Record, Capacity>> {
+template <std::derived_from<Event> EventType, int Capacity>
+struct Out<EventBuffer<EventType, Capacity>> {
     // Clears the buffer right before its producer runs.
-    Out(EventBuffer<Record, Capacity>& events) : buffer_(events) { buffer_.count_ = 0; }
+    Out(EventBuffer<EventType, Capacity>& events) : buffer_(events) { buffer_.count_ = 0; }
 
     // Neither push checks Capacity: a producer never pushes more than Capacity per pass.
     // A stream event can only be pushed with its sample's header, never without one.
-    void push(const Record& record)
-        requires(!std::derived_from<Record, StreamEventRecord>)
+    void push(const EventType& event)
+        requires(!std::derived_from<EventType, StreamEvent>)
     {
-        buffer_.records_[static_cast<std::size_t>(buffer_.count_++)] = record;
+        buffer_.events_[static_cast<std::size_t>(buffer_.count_++)] = event;
     }
 
     // The header is a parameter because designated initializers can't name a base's members.
-    void push(const SampleHeader& header, const Record& record)
-        requires std::derived_from<Record, StreamEventRecord>
+    void push(const SampleHeader& header, const EventType& event)
+        requires std::derived_from<EventType, StreamEvent>
     {
-        Record& stored = buffer_.records_[static_cast<std::size_t>(buffer_.count_++)];
-        stored = record;
+        EventType& stored = buffer_.events_[static_cast<std::size_t>(buffer_.count_++)];
+        stored = event;
         stored.header = header;
     }
 
 private:
-    EventBuffer<Record, Capacity>& buffer_;
+    EventBuffer<EventType, Capacity>& buffer_;
 };
 
 // Takes a state value with any initial value: only its producer picks one.
@@ -298,10 +298,10 @@ template <typename StreamInfoType>
 using SampleInputBuffer = In<SampleBuffer<StreamInfoType>>;
 template <typename StreamInfoType>
 using SampleOutputBuffer = Out<SampleBuffer<StreamInfoType>>;
-template <std::derived_from<EventRecord> Record, int Capacity>
-using EventInputBuffer = In<EventBuffer<Record, Capacity>>;
-template <std::derived_from<EventRecord> Record, int Capacity>
-using EventOutputBuffer = Out<EventBuffer<Record, Capacity>>;
+template <std::derived_from<Event> EventType, int Capacity>
+using EventInputBuffer = In<EventBuffer<EventType, Capacity>>;
+template <std::derived_from<Event> EventType, int Capacity>
+using EventOutputBuffer = Out<EventBuffer<EventType, Capacity>>;
 template <StateValueType StateType>
 using StateInput = In<StateType>;
 template <StateValueType StateType, StateType initial_value>

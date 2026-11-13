@@ -77,13 +77,6 @@ struct SignalGenerator {
         }
         worst_wake_up_delay_nanoseconds_ *= wake_up_delay_decay_per_sample_;
 
-        connections.output.set_header({
-            .sample_number = sample_number_,
-            .device_timestamp = sample_number_,
-            .arrival_tsc = __rdtsc(),
-            .lost_sample_count = 0,
-        });
-
         // Kept within one period, so the phase doesn't lose precision as sample_number_ grows.
         const double time = static_cast<double>(sample_number_) / OutputStreamInfo::rate;
         const double cycle_fraction = std::fmod(options.frequency * time, 1.0);
@@ -107,6 +100,15 @@ struct SignalGenerator {
                 connections.output.store(simd_vector_index, _mm256_load_ps(channel_values.data()));
             }
         }
+
+        // Stamped only once every channel is computed, as a hardware sample arrives only once its
+        // packet is complete, so the latency log counts none of the generation.
+        connections.output.set_header({
+            .sample_number = sample_number_,
+            .device_timestamp = sample_number_,
+            .arrival_tsc = __rdtsc(),
+            .lost_sample_count = 0,
+        });
 
         ++sample_number_;
     }
