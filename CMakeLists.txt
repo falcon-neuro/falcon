@@ -73,7 +73,7 @@ target_link_libraries(imgui PUBLIC
 # )
 
 add_executable(falcon
-    src/pipelines/fir_chain_latency_pipeline.cpp
+    src/processors/custom/ripple_neuromed_reader/pipelines/round_trip_latency_pipeline.cpp
 )
 
 target_compile_options(falcon PRIVATE

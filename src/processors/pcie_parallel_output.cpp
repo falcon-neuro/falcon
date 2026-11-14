@@ -40,7 +40,8 @@ struct PCIeParallelOutput {
     PCIeParallelOutput()
         : data_register_(find_card_data_register()),
           control_register_(static_cast<unsigned short>(data_register_ + control_register_offset)) {
-        std::println("PCIeParallelOutput: found the card at I/O address {:#x}", data_register_);
+        std::println("PCIeParallelOutput: found the {} at I/O address {:#x}", card_name,
+                     data_register_);
         if (ioperm(data_register_, register_count, 1) != 0) {
             throw std::runtime_error(std::format(
                 "PCIeParallelOutput: no access to I/O port {:#x}; it needs root or CAP_SYS_RAWIO",
@@ -75,7 +76,8 @@ struct PCIeParallelOutput {
     }
 
 private:
-    // The DeLock card's SUNIX chip, as sysfs lists it.
+    static constexpr std::string_view card_name = "Delock 89445 PCI Express Card to 1 x Parallel";
+    // The Delock 89445's SUNIX chip, as sysfs lists it.
     static constexpr u64 card_vendor_id = 0x1fd4;
     static constexpr u64 card_device_id = 0x1999;
     static constexpr u64 card_subsystem_device_id = 0x0100;
@@ -126,8 +128,9 @@ private:
         }
         if (card_directories.empty()) {
             throw std::runtime_error(
-                "PCIeParallelOutput: found no PCIe parallel port card (a SUNIX chip with vendor "
-                "1fd4, device 1999 and subsystem 0100; see lspci -nn)");
+                std::format("PCIeParallelOutput: found no {} (a SUNIX chip with vendor 1fd4, "
+                            "device 1999 and subsystem 0100; see lspci -nn)",
+                            card_name));
         }
         if (card_directories.size() > 1) {
             std::string pci_addresses;
