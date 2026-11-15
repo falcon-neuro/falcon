@@ -38,7 +38,7 @@ class DuplicateClass : public std::runtime_error {
 };
 
 template <typename AbstractObject, typename... Args>
-using ObjectCreator = AbstractObject* (*) (Args && ...);
+using ObjectCreator = AbstractObject* (*)(Args&&...);
 
 template <typename AbstractObject, typename IdentifierType, typename... Args>
 class ObjectFactory {

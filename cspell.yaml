@@ -10,47 +10,88 @@ dictionaries:
   - cpp
 words:
   - AABB
+  - Advantech
+  - alignas
   - ALSA
+  - Arduino
+  - ASIC
   - backend
+  - biquad
+  - btype
   - bugprone
   - buildconstant
+  - castpd
+  - castps
   - channelmap
+  - cheby
+  - Ciliberti
   - cntfrq
   - cntvct
   - COPYONLY
   - cppdbg
   - cppzmq
   - curdir
+  - cvtpd
+  - cvtps
   - datatypebuffer
   - DCMAKE
   - Debouncer
+  - Delock
   - Digilynx
   - Doxyfile
   - dummysink
   - elec
+  - ellip
   - endmacro
+  - ephys
   - ETERM
+  - extractf
   - FETCHCONTENT
+  - fklab
   - flatbuffer
   - FLATBUFFERS
   - flatc
   - flathash
+  - fnmadd
+  - freqz
   - frontend
+  - ftrivial
+  - ftype
+  - GLFW
+  - glGetShaderiv
+  - GLsizeiptr
+  - glTexParameteri
+  - gmmcompression
   - GRAPHERROR
   - headeronly
+  - Hilbert
+  - hippocampal
+  - iirfilter
+  - imgui
+  - insertf
+  - Integerv
   - isautonomous
   - kbhit
   - keypair
+  - Kloosterman
   - latencybenchmark
   - levelcrossingdetector
   - lfence
   - LIBCXX
   - libpython
+  - LIBSTDCXX
+  - libxipplib
   - libzmq
   - LLNL
+  - Lsizei
+  - lstdc
   - LTWH
   - mainpage
+  - mavx
   - Maxs
+  - mfma
+  - Michon
+  - microvolts
   - multichannelfilter
   - nchannels
   - ncipollo
@@ -58,39 +99,67 @@ words:
   - neuralynx
   - Neuro
   - neuromed
+  - Neuropixels
   - nlxreader
   - nlxrecord
   - nlxtestbench
   - nocloudlog
+  - NOLINTNEXTLINE
   - noscreenlog
   - npackets
   - nsamples
+  - objdump
   - ontime
   - optvallen
   - outoforder
+  - overengineer
+  - Oversample
+  - Parameteri
+  - parport
   - pgrep
   - pixz
+  - prioritise
+  - Programiv
   - RCVTIMEO
   - rdtsc
   - rdtscp
   - recvlen
   - REGISTERPROCESSOR
   - remixicon
+  - Ringbuffer
+  - rmem
   - rootproject
   - Selectability
   - setcap
   - SNDMORE
+  - sosfilt
+  - ssbo
   - stdev
   - stim
   - streamheader
   - SUBDIRLIST
+  - SUNIX
+  - superframes
+  - SUPERFRAMESIZE
+  - sysfs
   - taskset
   - unoptimized
   - upslope
+  - Wconversion
+  - Wdouble
+  - Werror
   - Wextra
   - WHOLELIBS
+  - Wnon
+  - Wnull
+  - worN
+  - Woverloaded
+  - Wpedantic
+  - Wshadow
+  - Wsign
   - Wunused
   - xipplib
   - YAMLCPP
   - ZMQF
+  - zpk
   - zscore
