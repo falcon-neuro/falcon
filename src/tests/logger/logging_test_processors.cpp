@@ -211,8 +211,7 @@ struct SampleSource {
     };
 
     explicit SampleSource(ProcessorName processor_name)
-        : name(processor_name),
-          ticks_per_sample_(tsc_ticks_per_second / OutputStreamInfo::rate) {}
+        : name(processor_name), ticks_per_sample_(tsc_ticks_per_second / OutputStreamInfo::rate) {}
 
     ~SampleSource() { log(name, "output {} samples", output_count_); }
 
@@ -255,8 +254,7 @@ struct SampleSource {
     }
 
 private:
-    static constexpr u64 sample_count =
-        static_cast<u64>(OutputStreamInfo::rate * options.seconds);
+    static constexpr u64 sample_count = static_cast<u64>(OutputStreamInfo::rate * options.seconds);
 
     double ticks_per_sample_;
     u64 first_pass_tsc_ = 0;
@@ -281,8 +279,8 @@ struct SlowSampleCounter {
 
     explicit SlowSampleCounter(ProcessorName processor_name)
         : name(processor_name),
-          busy_ticks_per_sample_(static_cast<u64>(options.milliseconds_per_sample /
-                                                  milliseconds_per_second * tsc_ticks_per_second)) {}
+          busy_ticks_per_sample_(static_cast<u64>(
+              options.milliseconds_per_sample / milliseconds_per_second * tsc_ticks_per_second)) {}
 
     ~SlowSampleCounter() {
         log(name, "received {} samples; the last one's header counts {} lost before it",

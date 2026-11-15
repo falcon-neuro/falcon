@@ -2,6 +2,8 @@
 
 Everything that is not part of the prototype engine: features, ideas and tasks for after the prototype works. The prototype spec is in [spec.md](spec.md). We leave all of this out of the engine spec discussion until the prototype engine works. Each item keeps the status it had before it moved here (decided, open or deferred).
 
+Order of work from here: first Falcon 1's processors, ported to the new engine with SIMD (see **Not yet compared** in falcon1_differences.md); then the drag-and-drop pipeline designer (see **Generator**); then the tests (see **Tests as whole runs** in spec.md).
+
 Moved here on Claude's judgment and not yet confirmed: **Heavy processors**, **Several chains on one core**, **Feedback connections**, **Buffer reuse**, **Event rings between cores**, **Slow readers**, **Experiment files**, **Channel labels and positions** and **Rings with many readers**. Whatever belongs in the prototype moves back to spec.md.
 
 ## Engine
@@ -291,6 +293,7 @@ For the Falcon 2 paper. The prototype's round-trip graph (**How we judge that it
 
 ## UI
 - **Ring fill levels**: the UI shows each ring's peak fill while the graph runs, so the user sees that the pipeline is healthy before a ring overflows (the prototype only warns once samples are dropped, see **Rings** in spec.md). Cheap to track: the ring's writer already reads both positions for every sample, so it can keep the highest fill level since the last report, read by a non-realtime thread like the drop count. Related: task A.3.
+- **Log view**: the UI collects a run's log lines and shows them with colours, filtering and search. Headless, the console styles them itself (see **A line** under **Logging** in spec.md).
 - **Live viewer**: the viewer is a processor in the engine and the UI is a separate program, so the viewer's data has to cross from the engine process to the UI process. Not designed yet, and not part of the prototype.
 - The UI shows a cache view with per-core L1/L2/L3 usage, so the user sees when the graph is about to spill out of cache (see **Principles** in spec.md, and task D.5).
 - **Viewing data without a graph** (UI topic, formerly an open question): maybe the UI runs a small generated engine, e.g. NeuropixelsInput → Viewer.

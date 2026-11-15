@@ -1,4 +1,5 @@
 #pragma once
+#include <unistd.h>
 #include <x86intrin.h>
 #include <algorithm>
 #include <array>
@@ -6,18 +7,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <exception>
 #include <filesystem>
 #include <format>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 #include "base.cpp"
 
 // The logger, and how a processor's warn(), log() and fail() reach it.
@@ -42,6 +46,74 @@ enum class MessageType : std::uint8_t { Log, Warning, Error };
     return "message";
 }
 
+// Marks around each argument in a line's text, so that a terminal can show the arguments in bold.
+// The logger takes them out of what it writes anywhere else.
+inline constexpr char ARGUMENT_START = '\x01';
+inline constexpr char ARGUMENT_END = '\x02';
+
+// `format` with a mark before and after each replacement field ("{}", "{:.2f}"), so that the
+// formatted text carries them around each argument. "{{" and "}}" stand for braces to print.
+[[nodiscard]] std::string mark_arguments(std::string_view format) {
+    std::string marked;
+    marked.reserve(format.size());
+    std::size_t position = 0;
+    while (position < format.size()) {
+        const char character = format[position];
+        const bool is_brace = character == '{' || character == '}';
+        const bool is_doubled = position + 1 < format.size() && format[position + 1] == character;
+        if (is_brace && is_doubled) {
+            marked.append(2, character);
+            position += 2;
+        } else if (character == '{') {
+            // A field ends at its matching brace: its specification can hold fields of its own,
+            // e.g. "{:{}}".
+            int depth = 0;
+            std::size_t field_end = position;
+            while (field_end < format.size()) {
+                if (format[field_end] == '{') {
+                    ++depth;
+                } else if (format[field_end] == '}') {
+                    --depth;
+                    if (depth == 0) {
+                        break;
+                    }
+                }
+                ++field_end;
+            }
+            marked += ARGUMENT_START;
+            marked += format.substr(position, field_end - position + 1);
+            marked += ARGUMENT_END;
+            position = field_end + 1;
+        } else {
+            marked += character;
+            ++position;
+        }
+    }
+    return marked;
+}
+
+// What the two marks around an argument become: nothing for plain text, a style and its end for a
+// terminal.
+struct ArgumentStyle {
+    std::string_view start;
+    std::string_view end;
+};
+
+[[nodiscard]] std::string replace_argument_marks(std::string_view text, ArgumentStyle style) {
+    std::string replaced;
+    replaced.reserve(text.size());
+    for (const char character : text) {
+        if (character == ARGUMENT_START) {
+            replaced += style.start;
+        } else if (character == ARGUMENT_END) {
+            replaced += style.end;
+        } else {
+            replaced += character;
+        }
+    }
+    return replaced;
+}
+
 // Every line of a run, from any thread, goes through here, so each reaches the console and the log
 // file whole and in one format.
 class Logger {
@@ -54,30 +126,25 @@ public:
         }
     }
 
-    // `count` is how often it happened since its previous line: the throttle shows the rest only
-    // as that count.
+    // A line that its caller dates: one from a core's ring, which the main thread dates back to
+    // when it was raised. `count` is how often it happened since its previous line: the throttle
+    // shows the rest only as that count.
     void write(MessageType type, const char* source_name, std::string_view text, u64 count,
                const timespec& wall_clock) noexcept {
         try {
-            std::tm local_time{};
-            const std::time_t seconds = wall_clock.tv_sec;
-            localtime_r(&seconds, &local_time);
-            constexpr int tm_first_year = 1900;
-            constexpr long nanoseconds_per_microsecond = 1000;
-            std::string line = std::format(
-                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06} {} {}: {}",
-                local_time.tm_year + tm_first_year, local_time.tm_mon + 1, local_time.tm_mday,
-                local_time.tm_hour, local_time.tm_min, local_time.tm_sec,
-                wall_clock.tv_nsec / nanoseconds_per_microsecond, word_of(type), source_name, text);
-            if (count > 1) {
-                line += std::format(" (×{})", count);
-            }
-            line += '\n';
             const std::scoped_lock lock(mutex_);
-            std::fwrite(line.data(), 1, line.size(), stderr);
-            if (file_ != nullptr) {
-                std::fwrite(line.data(), 1, line.size(), file_);
-            }
+            write_locked(type, source_name, text, count, wall_clock);
+        } catch (...) {
+            std::fputs("falcon: a line couldn't be logged\n", stderr);
+        }
+    }
+
+    // A line dated as it is written. The time is read under the lock, so lines that several
+    // threads write at once come out in the order of their times.
+    void write_now(MessageType type, const char* source_name, std::string_view text) noexcept {
+        try {
+            const std::scoped_lock lock(mutex_);
+            write_locked(type, source_name, text, 1, read_clock(CLOCK_REALTIME));
         } catch (...) {
             std::fputs("falcon: a line couldn't be logged\n", stderr);
         }
@@ -107,22 +174,90 @@ public:
     }
 
 private:
+    // ANSI escape codes, which a terminal turns into styles.
+    static constexpr std::string_view plain_style = "\033[0m";
+    static constexpr std::string_view dim_style = "\033[2m";
+    static constexpr std::string_view bold_style = "\033[1m";
+
     std::mutex mutex_;
     std::FILE* file_ = nullptr;
+
+    // Styles help on a terminal and are noise anywhere else, e.g. in a file the console is
+    // redirected to. Setting NO_COLOR is the usual way to turn them off.
+    [[nodiscard]] static bool is_console_styled() {
+        static const bool is_styled =
+            isatty(STDERR_FILENO) != 0 && std::getenv("NO_COLOR") == nullptr;
+        return is_styled;
+    }
+
+    [[nodiscard]] static constexpr std::string_view style_of(MessageType type) {
+        switch (type) {
+            case MessageType::Log:
+                return "\033[36m";  // cyan
+            case MessageType::Warning:
+                return "\033[1;33m";  // bold yellow
+            case MessageType::Error:
+                return "\033[1;31m";  // bold red
+        }
+        return plain_style;
+    }
+
+    // The log file always gets the plain line.
+    void write_locked(MessageType type, const char* source_name, std::string_view text, u64 count,
+                      const timespec& wall_clock) {
+        std::tm local_time{};
+        const std::time_t seconds = wall_clock.tv_sec;
+        localtime_r(&seconds, &local_time);
+        constexpr int tm_first_year = 1900;
+        constexpr long nanoseconds_per_microsecond = 1000;
+        const std::string time_text = std::format(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}", local_time.tm_year + tm_first_year,
+            local_time.tm_mon + 1, local_time.tm_mday, local_time.tm_hour, local_time.tm_min,
+            local_time.tm_sec, wall_clock.tv_nsec / nanoseconds_per_microsecond);
+        const std::string count_text = count > 1 ? std::format(" (×{})", count) : std::string();
+        const std::string line =
+            std::format("{} {} {}: {}{}\n", time_text, word_of(type), source_name,
+                        replace_argument_marks(text, {}), count_text);
+        if (is_console_styled()) {
+            const std::string styled_count =
+                count_text.empty() ? std::string()
+                                   : std::format("{}{}{}", dim_style, count_text, plain_style);
+            const std::string styled_line =
+                std::format("{}{}{} {}{}{} {}: {}{}\n", dim_style, time_text, plain_style,
+                            style_of(type), word_of(type), plain_style, source_name,
+                            replace_argument_marks(text, {.start = bold_style, .end = plain_style}),
+                            styled_count);
+            std::fwrite(styled_line.data(), 1, styled_line.size(), stderr);
+        } else {
+            std::fwrite(line.data(), 1, line.size(), stderr);
+        }
+        if (file_ != nullptr) {
+            std::fwrite(line.data(), 1, line.size(), file_);
+        }
+    }
 };
 
 inline Logger logger;
 
-// A line of the engine's own, written at once.
+// A line written at once, from outside any loop, under the name of what it is about: a ring, or
+// the engine itself.
 template <typename... Arguments>
-void log_engine(MessageType type, std::format_string<Arguments...> format,
-                Arguments&&... arguments) noexcept {
+void log_as(MessageType type, const char* source_name, std::format_string<Arguments...> format,
+            Arguments&&... arguments) noexcept {
     try {
-        logger.write(type, "engine", std::format(format, std::forward<Arguments>(arguments)...), 1,
-                     read_clock(CLOCK_REALTIME));
+        logger.write_now(
+            type, source_name,
+            std::vformat(mark_arguments(format.get()), std::make_format_args(arguments...)));
     } catch (...) {
         std::fputs("falcon: a line couldn't be logged\n", stderr);
     }
+}
+
+// A line of the engine's own.
+template <typename... Arguments>
+void log_engine(MessageType type, std::format_string<Arguments...> format,
+                Arguments&&... arguments) noexcept {
+    log_as(type, "engine", format, std::forward<Arguments>(arguments)...);
 }
 
 // --- Messages ---
@@ -183,9 +318,10 @@ template <typename Value>
 template <typename... Values>
 [[nodiscard]] std::string format_values(std::string_view format, const Values&... values) {
     auto formatted_values = std::make_tuple(formatted_value(values)...);
+    const std::string marked_format = mark_arguments(format);
     return std::apply(
-        [format](auto&... formatted_values_of_tuple) {
-            return std::vformat(format, std::make_format_args(formatted_values_of_tuple...));
+        [&marked_format](auto&... formatted_values_of_tuple) {
+            return std::vformat(marked_format, std::make_format_args(formatted_values_of_tuple...));
         },
         formatted_values);
 }
@@ -223,8 +359,8 @@ void store_message_argument(MessageArgumentBytes& bytes, MessageArgumentCursor& 
         }
         constexpr std::string_view cut_mark = "...";
         if (kept_size < text.size() && kept_size >= cut_mark.size()) {
-            std::memcpy(bytes.data() + cursor.offset + kept_size - cut_mark.size(),
-                        cut_mark.data(), cut_mark.size());
+            std::memcpy(bytes.data() + cursor.offset + kept_size - cut_mark.size(), cut_mark.data(),
+                        cut_mark.size());
         }
         cursor.offset += kept_size;
         cursor.text_room -= kept_size;
@@ -396,8 +532,7 @@ void send_message(MessageType type, ProcessorName name, std::string_view format,
     }
     // Outside a loop (setup, teardown, or a thread that runs none), waiting is allowed.
     try {
-        logger.write(type, name.c_str(), format_values(format, arguments...), 1,
-                     read_clock(CLOCK_REALTIME));
+        logger.write_now(type, name.c_str(), format_values(format, arguments...));
     } catch (...) {
         std::fputs("falcon: a line couldn't be logged\n", stderr);
     }
@@ -434,8 +569,8 @@ template <MessageArgument... Arguments>
     ProcessorName name, std::format_string<FormattedAs<Arguments>...> format,
     Arguments... arguments) {
     const std::string text = format_values(format.get(), arguments...);
-    logger.write(MessageType::Error, name.c_str(), text, 1, read_clock(CLOCK_REALTIME));
-    throw ProcessorFailure(std::format("{}: {}", name.c_str(), text));
+    logger.write_now(MessageType::Error, name.c_str(), text);
+    throw ProcessorFailure(std::format("{}: {}", name.c_str(), replace_argument_marks(text, {})));
 }
 
 // The main thread's side of a core's message channel: what it has reported so far.
@@ -477,8 +612,7 @@ void read_message_records(MessageChannelReader& reader) {
     const u64 write_position = channel.write_position.load(std::memory_order_acquire);
     for (u64 read_position = channel.read_position.load(std::memory_order_relaxed);
          read_position != write_position; ++read_position) {
-        const MessageRecord& record =
-            channel.records[read_position % MessageChannel::record_count];
+        const MessageRecord& record = channel.records[read_position % MessageChannel::record_count];
         const auto kind_index = static_cast<std::size_t>(record.kind - channel.kinds.data());
         ReportedKind& reported_kind = reader.kinds[kind_index];
         if (!reported_kind.has_unreported_record) {
@@ -494,8 +628,18 @@ void read_message_records(MessageChannelReader& reader) {
     }
 }
 
-void report_message_counts(MessageChannelReader& reader, const PolledCounts& counts,
-                           const ClockReading& now) {
+// A line of one poll, kept until every core's are collected, so that they can be written in time
+// order.
+struct PolledLine {
+    timespec wall_clock{};
+    MessageType type = MessageType::Log;
+    const char* source_name = "";
+    std::string_view text;  // its kind's, which stays as it is until the next poll
+    u64 count = 0;
+};
+
+void collect_message_lines(MessageChannelReader& reader, const PolledCounts& counts,
+                           const ClockReading& now, std::vector<PolledLine>& polled_lines) {
     const MessageChannel& channel = *reader.channel;
     for (std::size_t kind_index = 0; kind_index < counts.kind_count; ++kind_index) {
         const MessageKind& kind = channel.kinds[kind_index];
@@ -511,8 +655,13 @@ void report_message_counts(MessageChannelReader& reader, const PolledCounts& cou
             reported_kind.text.empty()
                 ? std::string_view("(its text was lost: the core's message ring was full)")
                 : std::string_view(reported_kind.text);
-        logger.write(kind.type, kind.processor_name, text,
-                     occurrence_count - reported_kind.reported_count, wall_clock);
+        polled_lines.push_back({
+            .wall_clock = wall_clock,
+            .type = kind.type,
+            .source_name = kind.processor_name,
+            .text = text,
+            .count = occurrence_count - reported_kind.reported_count,
+        });
         reported_kind.reported_count = occurrence_count;
         reported_kind.has_unreported_record = false;
     }
@@ -538,18 +687,33 @@ void report_message_drops(MessageChannelReader& reader) {
     }
 }
 
-// Main thread only: at every poll, and once more after the loops end.
-void report_messages(MessageChannelReader& reader) noexcept {
+// Main thread only: at every poll, and once more after the loops end. Every core's lines are
+// collected before any is written, since they are written in time order and each core's come kind
+// by kind.
+void report_messages(std::span<MessageChannelReader> readers) noexcept {
     try {
-        // The counts before the records: a core counts an occurrence only once its record is in
-        // the ring, so the record of every occurrence counted here is read below.
-        const PolledCounts counts = read_message_counts(*reader.channel);
-        read_message_records(reader);
-        // Read after the records, so no record is newer than it.
-        const ClockReading now = read_clocks();
-        report_message_counts(reader, counts, now);
-        report_message_drops(reader);
+        std::vector<PolledLine> polled_lines;
+        for (MessageChannelReader& reader : readers) {
+            // The counts before the records: a core counts an occurrence only once its record is
+            // in the ring, so the record of every occurrence counted here is read below.
+            const PolledCounts counts = read_message_counts(*reader.channel);
+            read_message_records(reader);
+            // Read after the records, so no record is newer than it.
+            const ClockReading now = read_clocks();
+            collect_message_lines(reader, counts, now, polled_lines);
+        }
+        std::ranges::stable_sort(
+            polled_lines, [](const PolledLine& first, const PolledLine& second) {
+                return std::tie(first.wall_clock.tv_sec, first.wall_clock.tv_nsec) <
+                       std::tie(second.wall_clock.tv_sec, second.wall_clock.tv_nsec);
+            });
+        for (const PolledLine& line : polled_lines) {
+            logger.write(line.type, line.source_name, line.text, line.count, line.wall_clock);
+        }
+        for (MessageChannelReader& reader : readers) {
+            report_message_drops(reader);
+        }
     } catch (...) {
-        std::fputs("falcon: a core's messages couldn't be reported\n", stderr);
+        std::fputs("falcon: the cores' messages couldn't be reported\n", stderr);
     }
 }

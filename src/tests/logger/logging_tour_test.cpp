@@ -37,7 +37,8 @@ void core1() {
         lifetime_reporter.process({});
         first_warner.process({});
         second_warner.process({});
-        SampleBuffer<TestStream>& slot = sample_source_to_slow_sample_counter_sample_ring.next_slot();
+        SampleBuffer<TestStream>& slot =
+            sample_source_to_slow_sample_counter_sample_ring.next_slot();
         sample_source.process({.output = slot});
         sample_source_to_slow_sample_counter_sample_ring.publish();
     }
@@ -65,7 +66,7 @@ void core2() {
 
 int main() {
     return run_on_cores("logging_tour_test", {
-        {.core_number = 1, .entry_point = core1},
-        {.core_number = 2, .entry_point = core2},
-    });
+                                                 {.core_number = 1, .entry_point = core1},
+                                                 {.core_number = 2, .entry_point = core2},
+                                             });
 }

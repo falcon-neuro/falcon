@@ -119,7 +119,7 @@ void core5() {
 
 int main() {
     return run_on_cores("filter_comparison", {
-        {.core_number = 2, .entry_point = core4},
-        {.core_number = 5, .entry_point = core5},
-    });
+                                                 {.core_number = 2, .entry_point = core4},
+                                                 {.core_number = 5, .entry_point = core5},
+                                             });
 }

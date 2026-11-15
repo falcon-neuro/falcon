@@ -54,7 +54,7 @@ void core2() {
 
 int main() {
     return run_on_cores("spike_detector", {
-        {.core_number = 4, .entry_point = core1},
-        {.core_number = 5, .entry_point = core2},
-    });
+                                              {.core_number = 4, .entry_point = core1},
+                                              {.core_number = 5, .entry_point = core2},
+                                          });
 }

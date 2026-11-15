@@ -314,8 +314,7 @@ inline constexpr bool IS_CHANNEL_MASK<ChannelMask<StreamInfoType>> = true;
 // Lists a mask's channels, e.g. "3, 17, 40".
 template <typename StreamInfoType>
 struct std::formatter<ChannelMask<StreamInfoType>> {
-    static constexpr std::format_parse_context::iterator parse(
-        std::format_parse_context& context) {
+    static constexpr std::format_parse_context::iterator parse(std::format_parse_context& context) {
         return context.begin();
     }
 
@@ -638,7 +637,8 @@ public:
         }
         for (std::size_t index = 0; text[index] != '\0'; ++index) {
             if (!is_letter_or_digit(text[index]) && text[index] != '_' && text[index] != '-') {
-                throw std::invalid_argument("a pipeline's name holds only letters, digits, _ and -");
+                throw std::invalid_argument(
+                    "a pipeline's name holds only letters, digits, _ and -");
             }
         }
     }
@@ -669,14 +669,15 @@ struct RunOwner {
         is_sudo ? getpwnam_r(sudo_user, &entry, entry_text.data(), entry_text.size(), &found_entry)
                 : getpwuid_r(getuid(), &entry, entry_text.data(), entry_text.size(), &found_entry);
     if (error_number != 0 || found_entry == nullptr) {
-        throw std::runtime_error(is_sudo
-                                     ? std::format("can't find the user {}, who ran sudo", sudo_user)
-                                     : std::string("can't find the current user"));
+        throw std::runtime_error(
+            is_sudo ? std::format("can't find the user {}, who ran sudo", sudo_user)
+                    : std::string("can't find the current user"));
     }
-    return {.home = entry.pw_dir,
-            .user_id = entry.pw_uid,
-            .group_id = entry.pw_gid,
-            .is_sudo = is_sudo,
+    return {
+        .home = entry.pw_dir,
+        .user_id = entry.pw_uid,
+        .group_id = entry.pw_gid,
+        .is_sudo = is_sudo,
     };
 }
 
@@ -772,24 +773,16 @@ void report_ring_drops() noexcept {
          drop_counter = drop_counter->next_ring) {
         const u64 dropped_samples = drop_counter->dropped_samples.load(std::memory_order_relaxed);
         if (dropped_samples > drop_counter->reported_samples) {
-            try {
-                logger.write(MessageType::Warning, drop_counter->ring_name,
-                             std::format("the ring is full: dropped {} samples ({} in total)",
-                                         dropped_samples - drop_counter->reported_samples,
-                                         dropped_samples),
-                             1, read_clock(CLOCK_REALTIME));
-            } catch (...) {
-                std::fputs("falcon: a line couldn't be logged\n", stderr);
-            }
+            log_as(MessageType::Warning, drop_counter->ring_name,
+                   "the ring is full: dropped {} samples ({} in total)",
+                   dropped_samples - drop_counter->reported_samples, dropped_samples);
             drop_counter->reported_samples = dropped_samples;
         }
     }
 }
 
 void report_everything(std::span<MessageChannelReader> readers) noexcept {
-    for (MessageChannelReader& reader : readers) {
-        report_messages(reader);
-    }
+    report_messages(readers);
     report_ring_drops();
     logger.flush();
 }
@@ -846,8 +839,7 @@ void wait_for_stop_signal(const sigset_t& signals, std::span<MessageChannelReade
 
 // Makes the run's directory, opens its log file, and makes one message channel per core.
 // Returns false if the run can't start.
-[[nodiscard]] bool start_run(PipelineName pipeline_name, std::size_t core_count,
-                             RunOwner& owner,
+[[nodiscard]] bool start_run(PipelineName pipeline_name, std::size_t core_count, RunOwner& owner,
                              std::vector<std::unique_ptr<MessageChannel>>& channels) noexcept {
     try {
         start_run_clock();

@@ -36,13 +36,15 @@ public:
             throw std::invalid_argument("a processor's name can't be empty");
         }
         if (text[0] >= '0' && text[0] <= '9') {
-            throw std::invalid_argument("a processor's name, like its variable's, can't start with "
-                                        "a digit");
+            throw std::invalid_argument(
+                "a processor's name, like its variable's, can't start with "
+                "a digit");
         }
         for (std::size_t index = 0; text[index] != '\0'; ++index) {
             if (!is_letter_or_digit(text[index]) && text[index] != '_') {
-                throw std::invalid_argument("a processor's name holds only letters, digits and _, "
-                                            "like its variable's");
+                throw std::invalid_argument(
+                    "a processor's name holds only letters, digits and _, "
+                    "like its variable's");
             }
         }
     }
@@ -82,9 +84,10 @@ struct ClockReading {
 };
 
 [[nodiscard]] ClockReading read_clocks() noexcept {
-    return {.tsc = __rdtsc(),
-            .monotonic_seconds = seconds_of(read_clock(CLOCK_MONOTONIC_RAW)),
-            .wall_clock = read_clock(CLOCK_REALTIME),
+    return {
+        .tsc = __rdtsc(),
+        .monotonic_seconds = seconds_of(read_clock(CLOCK_MONOTONIC_RAW)),
+        .wall_clock = read_clock(CLOCK_REALTIME),
     };
 }
 
@@ -111,7 +114,8 @@ void start_run_clock() {
         (static_cast<std::int64_t>(now.wall_clock.tv_sec) * nanoseconds_per_second) +
         now.wall_clock.tv_nsec -
         static_cast<std::int64_t>(seconds_before * nanoseconds_per_second_as_double);
-    return {.tv_sec = static_cast<std::time_t>(nanoseconds / nanoseconds_per_second),
-            .tv_nsec = static_cast<long>(nanoseconds % nanoseconds_per_second),
+    return {
+        .tv_sec = static_cast<std::time_t>(nanoseconds / nanoseconds_per_second),
+        .tv_nsec = static_cast<long>(nanoseconds % nanoseconds_per_second),
     };
 }

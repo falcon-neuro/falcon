@@ -37,8 +37,9 @@ void core2() {
 }
 
 int main() {
-    return run_on_cores("logging_fail_in_constructor_test", {
-        {.core_number = 1, .entry_point = core1},
-        {.core_number = 2, .entry_point = core2},
-    });
+    return run_on_cores("logging_fail_in_constructor_test",
+                        {
+                            {.core_number = 1, .entry_point = core1},
+                            {.core_number = 2, .entry_point = core2},
+                        });
 }

@@ -128,7 +128,7 @@ void core2() {
 
 int main() {
     return run_on_cores("fir_chain_latency", {
-        {.core_number = 1, .entry_point = core1},
-        {.core_number = 2, .entry_point = core2},
-    });
+                                                 {.core_number = 1, .entry_point = core1},
+                                                 {.core_number = 2, .entry_point = core2},
+                                             });
 }
