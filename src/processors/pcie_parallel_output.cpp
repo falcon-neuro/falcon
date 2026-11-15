@@ -5,12 +5,9 @@
 #include <concepts>
 #include <cstddef>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <optional>
-#include <print>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -37,15 +34,14 @@ struct PCIeParallelOutput {
         EventInputBuffer<EventType, Capacity> input;
     };
 
-    PCIeParallelOutput()
-        : data_register_(find_card_data_register()),
+    explicit PCIeParallelOutput(ProcessorName processor_name)
+        : name(processor_name),
+          data_register_(find_card_data_register(processor_name)),
           control_register_(static_cast<unsigned short>(data_register_ + control_register_offset)) {
-        std::println("PCIeParallelOutput: found the {} at I/O address {:#x}", card_name,
-                     data_register_);
+        log(name, "found the {} at I/O address {:#x}", card_name, data_register_);
         if (ioperm(data_register_, register_count, 1) != 0) {
-            throw std::runtime_error(std::format(
-                "PCIeParallelOutput: no access to I/O port {:#x}; it needs root or CAP_SYS_RAWIO",
-                data_register_));
+            fail(name, "no access to I/O port {:#x}; it needs root or CAP_SYS_RAWIO",
+                 data_register_);
         }
         // Bit 5 of the control register sets the data lines' direction: 0 makes them outputs.
         outb(0, control_register_);
@@ -62,6 +58,8 @@ struct PCIeParallelOutput {
     PCIeParallelOutput& operator=(const PCIeParallelOutput&) = delete;
     PCIeParallelOutput(PCIeParallelOutput&&) = delete;
     PCIeParallelOutput& operator=(PCIeParallelOutput&&) = delete;
+
+    RegisteredName name;
 
     void process(Connections connections) {
         if (is_pin_high_ && std::chrono::steady_clock::now() >= pulse_end_) {
@@ -107,14 +105,13 @@ private:
 
     // Throws unless exactly one card is installed and its parallel port's I/O range holds the
     // three registers: a write to a port with no card behind it can upset other hardware.
-    [[nodiscard]] static unsigned short find_card_data_register() {
+    [[nodiscard]] static unsigned short find_card_data_register(ProcessorName processor_name) {
         const std::filesystem::path pci_devices_directory = "/sys/bus/pci/devices";
         std::error_code listing_error;
         const std::filesystem::directory_iterator pci_devices(pci_devices_directory, listing_error);
         if (listing_error) {
-            throw std::runtime_error(std::format("PCIeParallelOutput: can't list {}: {}",
-                                                 pci_devices_directory.string(),
-                                                 listing_error.message()));
+            fail(processor_name, "can't list {}: {}", pci_devices_directory.c_str(),
+                 listing_error.message().c_str());
         }
 
         std::vector<std::filesystem::path> card_directories;
@@ -127,10 +124,10 @@ private:
             }
         }
         if (card_directories.empty()) {
-            throw std::runtime_error(
-                std::format("PCIeParallelOutput: found no {} (a SUNIX chip with vendor 1fd4, "
-                            "device 1999 and subsystem 0100; see lspci -nn)",
-                            card_name));
+            fail(processor_name,
+                 "found no {} (a SUNIX chip with vendor 1fd4, device 1999 and subsystem 0100; see "
+                 "lspci -nn)",
+                 card_name);
         }
         if (card_directories.size() > 1) {
             std::string pci_addresses;
@@ -140,26 +137,24 @@ private:
                 }
                 pci_addresses += listed_card_directory.filename().string();
             }
-            throw std::runtime_error(
-                std::format("PCIeParallelOutput: found {} PCIe parallel port cards ({}) and "
-                            "can't tell which one drives the output",
-                            card_directories.size(), pci_addresses));
+            fail(processor_name,
+                 "found {} PCIe parallel port cards ({}) and can't tell which one drives the "
+                 "output",
+                 card_directories.size(), pci_addresses.c_str());
         }
 
         const std::filesystem::path& card_directory = card_directories.front();
         const std::optional<IoRange> io_range =
             read_io_range(card_directory / "resource", parallel_port_bar_index);
         if (!io_range.has_value()) {
-            throw std::runtime_error(std::format(
-                "PCIeParallelOutput: the card at PCI address {} has no I/O range in BAR{}",
-                card_directory.filename().string(), parallel_port_bar_index));
+            fail(processor_name, "the card at PCI address {} has no I/O range in BAR{}",
+                 card_directory.filename().c_str(), parallel_port_bar_index);
         }
         if (io_range->last_port > highest_io_port ||
             io_range->last_port < io_range->first_port + register_count - 1) {
-            throw std::runtime_error(
-                std::format("PCIeParallelOutput: the card's I/O range {:#x}-{:#x} can't hold the "
-                            "parallel port's {} registers",
-                            io_range->first_port, io_range->last_port, register_count));
+            fail(processor_name,
+                 "the card's I/O range {:#x}-{:#x} can't hold the parallel port's {} registers",
+                 io_range->first_port, io_range->last_port, register_count);
         }
         return static_cast<unsigned short>(io_range->first_port);
     }

@@ -22,6 +22,9 @@ struct EventGenerator {
         EventOutputBuffer<ScheduledEvent, 1> output;
     };
 
+    explicit EventGenerator(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
     std::chrono::steady_clock::time_point start;  // set on the first pass
     std::chrono::steady_clock::time_point due;    // when the next event is due
     u64 emitted = 0;                              // events emitted so far

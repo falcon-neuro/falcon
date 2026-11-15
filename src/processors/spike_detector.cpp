@@ -27,6 +27,10 @@ struct SpikeDetector {
         EventOutputBuffer<Spikes<InputStreamInfo>, 1> output;
     };
 
+    explicit SpikeDetector(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
+
     void process(Connections connections) {
         if (connections.input.is_empty()) {
             return;

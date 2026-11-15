@@ -13,43 +13,12 @@
 #include <cstdio>
 #include <iterator>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include "engine.cpp"
 
 // Checks of the machine's setup that processors run when they are built.
-
-// Built whole and written in one call, so the line reaches the terminal in one piece: processors
-// are built on their cores at the same time, and their output would interleave. A line too long
-// for the buffer is cut, but keeps its newline.
-class LogLine {
-public:
-    void append(std::string_view text) noexcept {
-        const std::size_t room = characters_.size() - 1 - length_;  // 1 byte for the newline
-        const std::size_t count = std::min(text.size(), room);
-        std::copy_n(text.begin(), count, characters_.data() + length_);
-        length_ += count;
-    }
-
-    void append_number(u64 number) noexcept {
-        std::array<char, 20> digits{};  // u64 has at most 20 digits
-        const std::to_chars_result result =
-            std::to_chars(digits.data(), digits.data() + digits.size(), number);
-        if (result.ec != std::errc{}) {
-            return;
-        }
-        append(std::string_view(digits.data(), result.ptr));
-    }
-
-    void print() noexcept {
-        characters_[length_] = '\n';
-        std::fwrite(characters_.data(), 1, length_ + 1, stderr);
-    }
-
-private:
-    std::array<char, 1024> characters_{};
-    std::size_t length_ = 0;  // without the newline print() adds
-};
 
 inline constexpr std::size_t TEXT_LINE_CAPACITY = 512;  // bytes, the terminating zero included
 using TextLine = std::array<char, TEXT_LINE_CAPACITY>;
@@ -189,58 +158,49 @@ NetworkCardModel look_up_network_card_model(const PciId& pci_id) noexcept {
     return model;
 }
 
-// Appends " (Vendor Device)" after an interface name, or nothing for a card pci.ids doesn't know.
-void append_network_card_model(LogLine& log_line, std::string_view interface_name) noexcept {
+// " (Vendor Device)" to follow an interface name, or nothing for a card pci.ids doesn't know.
+[[nodiscard]] std::string network_card_model_text(std::string_view interface_name) {
     PciId pci_id;
     if (!read_pci_id(interface_name, pci_id)) {
-        return;
+        return {};
     }
     const NetworkCardModel model = look_up_network_card_model(pci_id);
     if (model.vendor.front() == '\0') {
-        return;
+        return {};
     }
-    log_line.append(" (");
-    log_line.append(model.vendor.data());
+    std::string text = " (";
+    text += model.vendor.data();
     if (model.device.front() != '\0') {
-        log_line.append(" ");
-        log_line.append(model.device.data());
+        text += ' ';
+        text += model.device.data();
     }
-    log_line.append(")");
-}
-
-void append_receive_batching_settings(LogLine& log_line,
-                                      const ethtool_coalesce& coalescing) noexcept {
-    log_line.append("rx-usecs ");
-    log_line.append_number(coalescing.rx_coalesce_usecs);
-    log_line.append(", rx-frames ");
-    log_line.append_number(coalescing.rx_max_coalesced_frames);
-    log_line.append(coalescing.use_adaptive_rx_coalesce != 0 ? ", adaptive-rx on"
-                                                             : ", adaptive-rx off");
+    text += ')';
+    return text;
 }
 
 // A network card that batches its receive interrupts holds packets back for up to its batching
 // time, so samples reach Falcon late by a varying amount. Every card is checked, since which one
 // receives the acquisition data isn't known here.
-void warn_about_interrupt_batching() noexcept {
+void warn_about_interrupt_batching(ProcessorName name) {
     const int socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_descriptor < 0) {
-        std::fputs("warning: can't check the network cards for interrupt batching\n", stderr);
+        warn(name, "can't check the network cards for interrupt batching");
         return;
     }
     auto* const network_interfaces = if_nameindex();
     if (network_interfaces == nullptr) {
-        std::fputs("warning: can't check the network cards for interrupt batching\n", stderr);
+        warn(name, "can't check the network cards for interrupt batching");
         close(socket_descriptor);
         return;
     }
     for (const auto* network_interface = network_interfaces; network_interface->if_index != 0;
          ++network_interface) {
-        const std::string_view name = network_interface->if_name;
+        const std::string_view interface_name = network_interface->if_name;
         ifreq request{};
-        if (name.size() >= std::size(request.ifr_name)) {
+        if (interface_name.size() >= std::size(request.ifr_name)) {
             continue;
         }
-        std::ranges::copy(name, std::begin(request.ifr_name));
+        std::ranges::copy(interface_name, std::begin(request.ifr_name));
         ethtool_coalesce coalescing{};
         coalescing.cmd = ETHTOOL_GCOALESCE;
         request.ifr_data = reinterpret_cast<char*>(&coalescing);
@@ -252,26 +212,22 @@ void warn_about_interrupt_batching() noexcept {
         const bool is_batching = coalescing.rx_coalesce_usecs > 0 ||
                                  coalescing.rx_max_coalesced_frames > 1 ||
                                  coalescing.use_adaptive_rx_coalesce != 0;
-        LogLine log_line;
+        const std::string model = network_card_model_text(interface_name);
+        const char* const adaptive_state = coalescing.use_adaptive_rx_coalesce != 0 ? "on" : "off";
         if (is_batching) {
-            log_line.append("warning: network card ");
-            log_line.append(name);
-            append_network_card_model(log_line, name);
-            log_line.append(" waits to collect several packets before passing them to the CPU, "
-                            "so data reaches Falcon late by a varying amount (receive interrupt "
-                            "batching on: ");
-            append_receive_batching_settings(log_line, coalescing);
-            log_line.append("; turn it off with ethtool -C)");
+            warn(name,
+                 "network card {}{} waits to collect several packets before passing them to the "
+                 "CPU, so data reaches Falcon late by a varying amount (receive interrupt batching "
+                 "on: rx-usecs {}, rx-frames {}, adaptive-rx {}; turn it off with ethtool -C)",
+                 interface_name, model.c_str(), coalescing.rx_coalesce_usecs,
+                 coalescing.rx_max_coalesced_frames, adaptive_state);
         } else {
-            log_line.append("network card ");
-            log_line.append(name);
-            append_network_card_model(log_line, name);
-            log_line.append(" passes each packet to the CPU immediately, without waiting (receive "
-                            "interrupt batching off: ");
-            append_receive_batching_settings(log_line, coalescing);
-            log_line.append(")");
+            log(name,
+                "network card {}{} passes each packet to the CPU immediately, without waiting "
+                "(receive interrupt batching off: rx-usecs {}, rx-frames {}, adaptive-rx {})",
+                interface_name, model.c_str(), coalescing.rx_coalesce_usecs,
+                coalescing.rx_max_coalesced_frames, adaptive_state);
         }
-        log_line.print();
     }
     if_freenameindex(network_interfaces);
     close(socket_descriptor);

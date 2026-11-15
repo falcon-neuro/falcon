@@ -32,7 +32,7 @@ void core4() {
                         .lfp_frequency = 8,
                         .lfp_amplitude = 500,
                     }>
-        signal_generator;
+        signal_generator{"signal_generator"};
 
     if (!wait_at_start_barrier()) {
         return;
@@ -73,15 +73,15 @@ void core5() {
                           },
                       },
               }>
-        ap_filter;
-    SpikeDetector<ComparisonTestStream, {.threshold = -70}> filtered_spike_detector;
-    EventLogger<Spikes<ComparisonTestStream>, 1,
-                {.label = "filtered", .style = LoggingStyle::CountPerSecond}>
-        filtered_logger;
-    SpikeDetector<ComparisonTestStream, {.threshold = -70}> unfiltered_spike_detector;
-    EventLogger<Spikes<ComparisonTestStream>, 1,
-                {.label = "unfiltered", .style = LoggingStyle::CountPerSecond}>
-        unfiltered_logger;
+        ap_filter{"ap_filter"};
+    SpikeDetector<ComparisonTestStream, {.threshold = -70}> filtered_spike_detector{
+        "filtered_spike_detector"};
+    EventLogger<Spikes<ComparisonTestStream>, 1, {.style = LoggingStyle::CountPerSecond}>
+        filtered_logger{"filtered_logger"};
+    SpikeDetector<ComparisonTestStream, {.threshold = -70}> unfiltered_spike_detector{
+        "unfiltered_spike_detector"};
+    EventLogger<Spikes<ComparisonTestStream>, 1, {.style = LoggingStyle::CountPerSecond}>
+        unfiltered_logger{"unfiltered_logger"};
 
     // Connections
     SampleBuffer<ComparisonTestStream>
@@ -118,7 +118,7 @@ void core5() {
 }
 
 int main() {
-    return run_on_cores({
+    return run_on_cores("filter_comparison", {
         {.core_number = 2, .entry_point = core4},
         {.core_number = 5, .entry_point = core5},
     });

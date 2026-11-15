@@ -2,18 +2,15 @@
 #include <chrono>
 #include <concepts>
 #include <cstdint>
-#include <format>
-#include <print>
-#include <string>
 #include "../core/engine.cpp"
 
-// EventLogger: prints the events it receives to the console: each one, or how many arrived in each
-// second. Printing is a system call, so it runs on a non-realtime core.
+// EventLogger: logs the events it receives: each one, or how many arrived in each second. Its
+// lines go through log(), so at a high rate, events beyond one per 100 ms show only as a count.
+// It runs on a non-realtime core.
 
 enum class LoggingStyle : std::uint8_t { EveryEvent, CountPerSecond };
 
 struct EventLoggerOptions {
-    Str label = "EventLogger";  // starts every line, so several loggers can be told apart
     LoggingStyle style = LoggingStyle::EveryEvent;
 };
 
@@ -24,6 +21,9 @@ struct EventLogger {
         EventInputBuffer<EventType, Capacity> input;
     };
 
+    explicit EventLogger(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
     u64 received = 0;  // events received since the start
 
     // An event with a channel mask holds several channels, e.g. several spikes, so a count of
@@ -32,10 +32,10 @@ struct EventLogger {
 
     void process(Connections connections) {
         if constexpr (options.style == LoggingStyle::EveryEvent) {
-            print_every_event(connections);
+            log_every_event(connections);
         } else {
             static_assert(options.style == LoggingStyle::CountPerSecond);
-            print_count_per_second(connections);
+            log_count_per_second(connections);
         }
     }
 
@@ -45,8 +45,8 @@ private:
     u64 received_this_second_ = 0;
     u64 channels_this_second_ = 0;  // the channels set in the masks of those events
 
-    // Checked on every pass, so a second with no events still prints its 0.
-    void print_count_per_second(Connections connections) {
+    // Checked on every pass, so a second with no events still logs its 0.
+    void log_count_per_second(Connections connections) {
         const auto received_now = static_cast<u64>(connections.input.size());
         received += received_now;
         received_this_second_ += received_now;
@@ -63,12 +63,11 @@ private:
         }
         if (now - second_start_ >= std::chrono::seconds(1)) {
             if constexpr (has_channel_mask) {
-                std::println(
-                    "{}: {} events with {} channels in the last second ({} events in total)",
-                    options.label.c_str(), received_this_second_, channels_this_second_, received);
+                log(name, "{} events with {} channels in the last second ({} events in total)",
+                    received_this_second_, channels_this_second_, received);
             } else {
-                std::println("{}: {} events in the last second ({} in total)",
-                             options.label.c_str(), received_this_second_, received);
+                log(name, "{} events in the last second ({} in total)", received_this_second_,
+                    received);
             }
             received_this_second_ = 0;
             channels_this_second_ = 0;
@@ -76,28 +75,20 @@ private:
         }
     }
 
-    void print_every_event(Connections connections) {
+    // Only a stream event's sample number, and fields named `channels` and `count`, are logged.
+    void log_every_event(Connections connections) {
         for (const EventType& event : connections.input) {
             ++received;
-            std::string line = std::format("{}: event {}", options.label.c_str(), received);
-            // Only a stream event's sample number and fields named `channel`, `channels` and
-            // `count` are printed.
-            if constexpr (std::derived_from<EventType, StreamEvent>) {
-                line += std::format(", sample {}", event.header.sample_number);
+            if constexpr (std::derived_from<EventType, StreamEvent> && has_channel_mask) {
+                log(name, "event {}, sample {}, channels {}", received, event.header.sample_number,
+                    event.channels);
+            } else if constexpr (std::derived_from<EventType, StreamEvent>) {
+                log(name, "event {}, sample {}", received, event.header.sample_number);
+            } else if constexpr (requires { event.count; }) {
+                log(name, "event {}, count {}", received, event.count);
+            } else {
+                log(name, "event {}", received);
             }
-            if constexpr (requires { event.channel; }) {
-                line += std::format(", channel {}", event.channel);
-            }
-            if constexpr (has_channel_mask) {
-                line += ", channels";
-                for (const u32 channel : event.channels) {
-                    line += std::format(" {}", channel);
-                }
-            }
-            if constexpr (requires { event.count; }) {
-                line += std::format(", count {}", event.count);
-            }
-            std::println("{}", line);
         }
     }
 };

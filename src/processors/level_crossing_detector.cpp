@@ -34,6 +34,10 @@ struct LevelCrossingDetector {
         EventOutputBuffer<LevelCrossings<InputStreamInfo>, 1> output;
     };
 
+    explicit LevelCrossingDetector(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
+
     void process(Connections connections) {
         if (connections.input.is_empty()) {
             return;

@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <numbers>
-#include <stdexcept>
 #include <thread>
 #include "../core/engine.cpp"
 
@@ -52,11 +51,13 @@ struct SignalGenerator {
 
     // Runs on the core's own thread, so it sets that thread's timer slack: Linux lets a normal
     // thread's sleep end up to 50 µs late, longer than a whole period at 30 kHz.
-    SignalGenerator() {
+    explicit SignalGenerator(ProcessorName processor_name) : name(processor_name) {
         if (prctl(PR_SET_TIMERSLACK, 1UL) != 0) {
-            throw std::runtime_error("SignalGenerator: can't set the thread's timer slack");
+            fail(name, "can't set the thread's timer slack");
         }
     }
+
+    RegisteredName name;
 
     void process(Connections connections) {
         using std::chrono::steady_clock;

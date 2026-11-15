@@ -14,6 +14,10 @@ struct Trigger {
         EventOutputBuffer<TriggerEvent, 1> output;
     };
 
+    explicit Trigger(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
+
     void process(Connections connections) {
         for (const EventType& event : connections.input) {
             fired_channels_ |= event.channels;

@@ -16,6 +16,10 @@ struct Gain {
         SampleOutputBuffer<InputStreamInfo> output;
     };
 
+    explicit Gain(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
+
     void process(Connections connections) {
         if (connections.input.is_empty()) {
             return;

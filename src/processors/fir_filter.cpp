@@ -39,6 +39,10 @@ struct FirFilter {
         SampleOutputBuffer<InputStreamInfo> output;
     };
 
+    explicit FirFilter(ProcessorName processor_name) : name(processor_name) {}
+
+    RegisteredName name;
+
     void process(Connections connections) {
         if (connections.input.is_empty()) {
             return;
@@ -48,8 +52,14 @@ struct FirFilter {
         // Where samples were lost the signal jumps, and filtering across the jump would give a
         // transient that a detector reads as spikes on every channel.
         const u64 lost_sample_count = connections.input.header.lost_sample_count;
-        const bool is_restarting =
-            !has_started_ || lost_sample_count != previous_lost_sample_count_;
+        const bool has_lost_samples =
+            has_started_ && lost_sample_count != previous_lost_sample_count_;
+        if (has_lost_samples) {
+            warn(name, "restarted after {} lost samples, at sample {}",
+                 lost_sample_count - previous_lost_sample_count_,
+                 connections.input.header.sample_number);
+        }
+        const bool is_restarting = !has_started_ || has_lost_samples;
         has_started_ = true;
         previous_lost_sample_count_ = lost_sample_count;
 

@@ -1,7 +1,6 @@
 #pragma once
 #include <x86intrin.h>
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cmath>
 #include <concepts>
@@ -27,34 +26,36 @@
 // rows stay in memory until the loop ends, since a realtime core makes no system calls.
 
 struct LatencyBenchmarkOptions {
-    Str file_prefix = "latency_benchmark";  // the log is <file_prefix>_<start time>.csv
+    Str file_name = "latency_benchmark.csv";  // in the run's directory
 };
 
 template <std::derived_from<StreamEvent> EventType, int Capacity,
           LatencyBenchmarkOptions options = LatencyBenchmarkOptions{}>
 struct LatencyBenchmark {
+    static_assert(is_file_name(options.file_name),
+                  "file_name is a name inside the run's directory, without a /");
+
     struct Connections {
         EventInputBuffer<EventType, Capacity> input;
     };
 
     // Value-initialising the rows writes every page now, so the loop never takes a page fault on
     // its first row in a page.
-    LatencyBenchmark() : rows_(row_capacity) {
-        check_that_tsc_is_usable();
-        csv_path_ = csv_path_for_now();
-        csv_file_ = create_file(csv_path_);
-        std::println("LatencyBenchmark: logging to {}", csv_path_);
+    explicit LatencyBenchmark(ProcessorName processor_name)
+        : name(processor_name), rows_(row_capacity) {
+        check_that_tsc_is_usable(name);
+        csv_path_ = (run_directory() / options.file_name.c_str()).string();
+        csv_file_ = create_file(name, csv_path_);
+        log(name, "logging to {}", csv_path_.c_str());
         start_anchor_ = read_clock_anchor();
     }
 
-    // A destructor must not throw, and the rows are the run's only copy, so a failure is printed.
+    // A destructor must not throw, and the rows are the run's only copy, so a failure is warned.
     ~LatencyBenchmark() {
         try {
             write_log();
         } catch (const std::exception& error) {
-            std::fputs("LatencyBenchmark: can't write the log: ", stderr);
-            std::fputs(error.what(), stderr);
-            std::fputs("\n", stderr);
+            warn(name, "can't write the log: {}", error.what());
         }
     }
 
@@ -62,6 +63,8 @@ struct LatencyBenchmark {
     LatencyBenchmark& operator=(const LatencyBenchmark&) = delete;
     LatencyBenchmark(LatencyBenchmark&&) = delete;
     LatencyBenchmark& operator=(LatencyBenchmark&&) = delete;
+
+    RegisteredName name;
 
     void process(Connections connections) {
         if (connections.input.is_empty()) {
@@ -108,7 +111,7 @@ private:
 
     // The arrival and the decision are read on different cores, and ticks must be a fixed unit of
     // time to become ns.
-    static void check_that_tsc_is_usable() {
+    static void check_that_tsc_is_usable(ProcessorName processor_name) {
         std::ifstream cpu_info("/proc/cpuinfo");
         std::string line;
         bool has_found_flags = false;
@@ -120,7 +123,7 @@ private:
         }
         const std::size_t colon_position = line.find(':');
         if (!has_found_flags || colon_position == std::string::npos) {
-            throw std::runtime_error("LatencyBenchmark: no CPU flags in /proc/cpuinfo");
+            fail(processor_name, "no CPU flags in /proc/cpuinfo");
         }
         std::istringstream flag_words(line.substr(colon_position + 1));
         bool has_constant_tsc = false;
@@ -135,9 +138,9 @@ private:
             }
         }
         if (!has_constant_tsc || !has_nonstop_tsc) {
-            throw std::runtime_error(
-                "LatencyBenchmark: the CPU's TSC is not invariant (/proc/cpuinfo lacks "
-                "constant_tsc or nonstop_tsc), so its ticks are not a fixed unit of time");
+            fail(processor_name,
+                 "the CPU's TSC is not invariant (/proc/cpuinfo lacks constant_tsc or "
+                 "nonstop_tsc), so its ticks are not a fixed unit of time");
         }
 
         std::ifstream clock_source_file(
@@ -145,34 +148,20 @@ private:
         std::string clock_source;
         clock_source_file >> clock_source;
         if (clock_source != "tsc") {
-            throw std::runtime_error(std::format(
-                "LatencyBenchmark: the kernel's clock source is '{}', not tsc, so the cores' TSCs "
-                "may disagree",
-                clock_source));
+            fail(processor_name,
+                 "the kernel's clock source is '{}', not tsc, so the cores' TSCs may disagree",
+                 clock_source.c_str());
         }
     }
 
-    [[nodiscard]] static std::string csv_path_for_now() {
-        const std::time_t start_time = std::time(nullptr);
-        std::tm local_start_time{};
-        if (localtime_r(&start_time, &local_start_time) == nullptr) {
-            throw std::runtime_error("LatencyBenchmark: can't read the local time");
-        }
-        std::array<char, 32> start_time_text{};
-        if (std::strftime(start_time_text.data(), start_time_text.size(), "%Y%m%d_%H%M%S",
-                          &local_start_time) == 0) {
-            throw std::runtime_error("LatencyBenchmark: can't format the start time");
-        }
-        return std::format("{}_{}.csv", options.file_prefix.c_str(), start_time_text.data());
-    }
-
-    // "x" makes fopen fail if the file exists, so a run never overwrites another's log.
+    // "x" makes fopen fail if the file exists, so a second benchmark with the same file name can't
+    // overwrite the first's log.
     [[nodiscard]] static std::unique_ptr<std::FILE, FileCloser> create_file(
-        const std::string& path) {
+        ProcessorName processor_name, const std::string& path) {
         std::FILE* const file = std::fopen(path.c_str(), "wx");
         if (file == nullptr) {
-            throw std::runtime_error(std::format("LatencyBenchmark: can't create {}: {}", path,
-                                                 std::system_category().message(errno)));
+            fail(processor_name, "can't create {}: {}", path.c_str(),
+                 std::system_category().message(errno).c_str());
         }
         return std::unique_ptr<std::FILE, FileCloser>(file);
     }
@@ -246,22 +235,21 @@ private:
         }
 
         if (latencies_nanoseconds.empty()) {
-            std::println("LatencyBenchmark: no events, {} has its header only", csv_path_);
+            log(name, "no events, {} has its header only", csv_path_.c_str());
         } else {
             std::ranges::sort(latencies_nanoseconds);
             constexpr double nanoseconds_per_microsecond = 1000.0;
-            std::println(
-                "LatencyBenchmark: {} events, µs from arrival: min {:.2f}, median {:.2f}, 99th "
-                "percentile {:.2f}, max {:.2f} (each event in {})",
+            log(name,
+                "{} events, µs from arrival: min {:.2f}, median {:.2f}, 99th percentile {:.2f}, "
+                "max {:.2f} (each event in {})",
                 latencies_nanoseconds.size(),
                 latencies_nanoseconds.front() / nanoseconds_per_microsecond,
                 value_at_fraction(latencies_nanoseconds, 0.5) / nanoseconds_per_microsecond,
                 value_at_fraction(latencies_nanoseconds, 0.99) / nanoseconds_per_microsecond,
-                latencies_nanoseconds.back() / nanoseconds_per_microsecond, csv_path_);
+                latencies_nanoseconds.back() / nanoseconds_per_microsecond, csv_path_.c_str());
         }
         if (unrecorded_count_ > 0) {
-            std::println("LatencyBenchmark: the log was full, so {} later events weren't kept",
-                         unrecorded_count_);
+            warn(name, "the log was full, so {} later events weren't kept", unrecorded_count_);
         }
     }
 };

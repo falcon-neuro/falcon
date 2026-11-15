@@ -200,7 +200,7 @@ struct TestRun {
 template <IirFilterOptions options>
 void run_design(TestRun& test_run, std::string_view name, std::string_view design) {
     std::vector<float> output_values(test_run.input_values.size());
-    IirFilter<TestStream, options> iir_filter;
+    IirFilter<TestStream, options> iir_filter{"iir_filter"};
     SampleBuffer<TestStream> input_buffer;
     SampleBuffer<TestStream> output_buffer;
     for (std::size_t sample_index = 0; sample_index < SAMPLE_COUNT; ++sample_index) {

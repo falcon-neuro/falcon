@@ -15,7 +15,7 @@ SampleRing<TestStream, 64> signal_generator_to_spike_detector_sample_ring{
 void core1() {
     // Processors
     SignalGenerator<TestStream, {.waveform = Waveform::Square, .frequency = 5, .amplitude = 100}>
-        signal_generator;
+        signal_generator{"signal_generator"};
 
     if (!wait_at_start_barrier()) {
         return;
@@ -30,8 +30,8 @@ void core1() {
 
 void core2() {
     // Processors
-    SpikeDetector<TestStream, {.threshold = -70}> spike_detector;
-    EventLogger<Spikes<TestStream>, 1> example_logger;
+    SpikeDetector<TestStream, {.threshold = -70}> spike_detector{"spike_detector"};
+    EventLogger<Spikes<TestStream>, 1> example_logger{"example_logger"};
 
     // Connections
     SampleBuffer<TestStream> signal_generator_to_spike_detector_sample_buffer;
@@ -53,7 +53,7 @@ void core2() {
 }
 
 int main() {
-    return run_on_cores({
+    return run_on_cores("spike_detector", {
         {.core_number = 4, .entry_point = core1},
         {.core_number = 5, .entry_point = core2},
     });

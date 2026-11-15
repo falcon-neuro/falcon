@@ -7,17 +7,17 @@ Moved here on Claude's judgment and not yet confirmed: **Heavy processors**, **S
 ## Engine
 
 ### Generator
-- The generator, and with it the UI reading `graph.cpp` back (see **Graph definition** below). The prototype uses a hand-written `graph.cpp` (see **Prototype plan** in spec.md).
-- **UI and engine are separate programs** (see **Boundaries** in spec.md). The UI is the frontend. It generates `graph.cpp`, compiles it with the bundled clang into an engine executable, and runs that as a child process.
-- **Graph definition** is a generated .cpp file (`graph.cpp`), compiled with the bundled clang (JIT plan).
-  - The generator is simple drag-and-drop editor logic: after each edit to the graph in the UI, it regenerates `graph.cpp`. Users only place and connect processor nodes; they never write `graph.cpp`.
-  - The UI re-opens a saved graph by reading `graph.cpp` back, so the file follows a fixed generated format. Node positions are stored as comments at the end of the file; if they are missing, the UI places the nodes itself.
+- The generator, and with it the UI reading `pipeline.cpp` back (see **Graph definition** below). The prototype uses a hand-written `pipeline.cpp` (see **Prototype plan** in spec.md).
+- **UI and engine are separate programs** (see **Boundaries** in spec.md). The UI is the frontend. It generates `pipeline.cpp`, compiles it with the bundled clang into an engine executable, and runs that as a child process.
+- **Graph definition** is a generated .cpp file (`pipeline.cpp`), compiled with the bundled clang (JIT plan).
+  - The generator is simple drag-and-drop editor logic: after each edit to the graph in the UI, it regenerates `pipeline.cpp`. Users only place and connect processor nodes; they never write `pipeline.cpp`.
+  - The UI re-opens a saved graph by reading `pipeline.cpp` back, so the file follows a fixed generated format. Node positions are stored as comments at the end of the file; if they are missing, the UI places the nodes itself.
   - The node editor can be simple and fairly static rather than smooth and Figma-like. Adding a processor by clicking it instead of dragging is fine.
 - **Placement** is chosen by the user in a single node editor:
   - CPU cores are drawn as areas in the node editor (one core is reserved for the OS and interrupts, chosen from the detected CPU topology; ideally a core outside the large-L3 CCD, e.g. core 15 on a 9950X3D, so all V-cache cores go to Falcon. Falls back to core 0 if the boot CPU's kernel duties can't be moved; to be checked on preempt_rt).
   - The user places each processor in a core's area and draws connections freely between any processors, also across cores. Each processor ends up with a core number.
-- **Chains are detected automatically** by the generator each time it regenerates `graph.cpp` (see **Chains** in spec.md). The user never marks chains.
-- Only processors placed on a core are written to the generated `graph.cpp`; everything else does not run. Empty cores stay idle, which lowers heat.
+- **Chains are detected automatically** by the generator each time it regenerates `pipeline.cpp` (see **Chains** in spec.md). The user never marks chains.
+- Only processors placed on a core are written to the generated `pipeline.cpp`; everything else does not run. Empty cores stay idle, which lowers heat.
 - The generator's tasks are C under **Tasks**.
 
 ### Splittable processors
@@ -70,12 +70,12 @@ A processor author must copy what they need to keep and never keep a pointer int
 
 ### FIR filter
 FirFilter is in the prototype (see **FirFilter** in spec.md). Still to come:
-- Falcon 1's FIR filter files (32 taps for Neuralynx's spike filter, 101 for a low-pass example): the generator writes their taps into `graph.cpp` like the biquad coefficients.
+- Falcon 1's FIR filter files (32 taps for Neuralynx's spike filter, 101 for a low-pass example): the generator writes their taps into `pipeline.cpp` like the biquad coefficients.
 - Float32 filters: FirFilter computes in double for now. An FIR filter has no feedback, so its rounding is never amplified and can't make it unstable; float32 would halve its state (101 taps at 384 channels: 155 KB instead of 310 KB) and its vector operations.
 - Decided: each filter kind is its own processor and its own UI node: `IirFilter` (the prototype's), `FirFilter` and `SlopeFilter` (see **Filter kinds** in [falcon1_differences.md](falcon1_differences.md)). The kinds differ in options (sections, taps, or a window size and two orders), in state and in delay, and a node of its own makes choosing a long-delay FIR visible in the graph.
 - The names say IIR and FIR, the terms SciPy, MATLAB and papers use, because those name the trade-off a user picks between: a delay of a few samples, or a longer delay that is the same at every frequency. A coefficients file's `type` header names its processor (`iir`, `fir` or `slope`), and each node's file picker refuses a file of another kind.
 - A slope filter (a Savitzky–Golay derivative) takes the window size, the polynomial order and the derivative order as its options and computes its taps from them at compile time, reusing the FIR code, so the graph keeps the values the user set rather than the taps.
-- Coefficients as template arguments are encoded into the processor's symbol names. Hundreds are fine; thousands would bloat the symbols and slow the compile. If it ever matters, `graph.cpp` can declare them as a `constexpr` array and pass a reference to it as the template argument (allowed since C++20), so they stay compile-time constants. To be measured.
+- Coefficients as template arguments are encoded into the processor's symbol names. Hundreds are fine; thousands would bloat the symbols and slow the compile. If it ever matters, `pipeline.cpp` can declare them as a `constexpr` array and pass a reference to it as the template argument (allowed since C++20), so they stay compile-time constants. To be measured.
 
 ### Decimator
 Decided: no decimator until a measured graph needs one. A decimator (e.g. 30 kHz to 1 kHz, shape 6a in graph_shapes.md) removes with a low-pass filter what the lower rate can't hold (anti-aliasing), then keeps one sample in N.
@@ -126,7 +126,7 @@ Decided:
 - Feedback is mostly a state (e.g. an adaptive threshold, "a stimulation is ongoing", the last stimulation's sample number), passed by reference like any state (see **Buffers** in spec.md). A state keeps its value, so its reader sees it whenever it runs.
 - Across cores, a feedback connection is an ordinary ring.
 - Within a chain, feedback through a buffer (events or samples) is a known weakness of the engine, not worth more engine work:
-  - The reader sees the producer's output from the previous pass (see **`Out` clears an output buffer** under **graph.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
+  - The reader sees the producer's output from the previous pass (see **`Out` clears an output buffer** under **pipeline.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
   - It sees that output during one pass only, and live that pass is usually an empty one. So the reader must read its feedback input even when its other inputs are empty, and copy what it needs (the rule for several inputs, see **Processors** in spec.md).
   - A reader that skips it misses feedback without an error, e.g. the last sample of every 12-sample Neuropixels 1.0 packet.
 
@@ -146,13 +146,13 @@ Open: Falcon 1 let clients such as the UI read and write a processor's states wh
 
 ### Buffer reuse
 Decided:
-- **Buffer reuse**: the processors in one core's loop share buffers instead of each owning a separate one, to keep the cache footprint small. Example: a loop of 5 processors does not need 5 separate buffers. Since the engine owns the output buffers (see **graph.cpp** in spec.md), this needs no change to any processor.
+- **Buffer reuse**: the processors in one core's loop share buffers instead of each owning a separate one, to keep the cache footprint small. Example: a loop of 5 processors does not need 5 separate buffers. Since the engine owns the output buffers (see **pipeline.cpp** in spec.md), this needs no change to any processor.
 
 Open (formerly open question 9): how buffers are assigned, i.e. which connections may share a buffer.
-- Fan-out: `neuropixels_input_to_ap_filter_and_lfp_decimator_sample_buffer` is read by both `ap_filter` and `lfp_decimator` (see the sketch under **graph.cpp** in spec.md), so no processor may overwrite that buffer until both have read it in the current pass.
+- Fan-out: `neuropixels_input_to_ap_filter_and_lfp_decimator_sample_buffer` is read by both `ap_filter` and `lfp_decimator` (see the sketch under **pipeline.cpp** in spec.md), so no processor may overwrite that buffer until both have read it in the current pass.
 - Feedback connections hold the previous pass's output (see **Feedback connections**), so that buffer must survive into the next pass and cannot be shared with other connections.
 - A buffer can point into a ring slot or a socket receive buffer (see **Buffers** in spec.md). A processor that writes its output into such a buffer in place would corrupt data that other readers of the same ring still need.
-- Who decides which connections share a buffer: the generator of `graph.cpp`, which sees the whole graph and the call order on each core, or each processor (e.g. a filter that declares it can work in place)?
+- Who decides which connections share a buffer: the generator of `pipeline.cpp`, which sees the whole graph and the call order on each core, or each processor (e.g. a filter that declares it can work in place)?
 
 ### Event rings between cores
 - Between cores, events go through a small ring of fixed-size events (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
@@ -174,10 +174,17 @@ In all of them, `sample` is the sample number of the threshold crossing, so ever
 - A slow reader that falls behind (formerly part of the rings question in spec.md): the viewer can skip data, but the recorder must not lose any. Is falling behind a failure for every reader, or only for some?
 
 ### Experiment files
-- **Each experiment is saved as one plain zip file** (e.g. `my_experiment.zip`) containing `graph.cpp` and every resource it uses.
+- **Each experiment is saved as one plain zip file** (e.g. `my_experiment.zip`) containing `pipeline.cpp` and every resource it uses.
   - Each recording stores a copy of the experiment zip it was recorded with, so every dataset shows exactly which graph, filters and IMRO produced it (recording itself is discussed later).
   - Resources such as filter and IMRO files can live anywhere the user likes.
   - When the user picks a resource, Falcon copies it into the experiment zip, so later edits, moves or deletes of the original don't affect the experiment.
+
+### Paths on Debian
+A plan for the user experience of the whole Falcon app on Debian, including where its files go: each run's directory (`~/falcon/runs/` until then, see **Each run writes into a directory of its own** in spec.md), experiments, settings and the installed program, e.g. following the XDG base directories.
+- An idea: one directory per pipeline, `~/falcon/pipelines/<pipeline name>/`, holding its `pipeline.cpp` and assets, with its runs in `runs/`. A run's directory is named by its date and time, or by a name the user gives it (e.g. `without_calcium_blockers`); if that name is taken, Falcon offers to add a number or the date and time.
+
+### Privileges
+The engine program runs as the user instead of with `sudo`, holding only the privileges it needs as Linux file capabilities on the program (`setcap`), e.g. `CAP_SYS_RAWIO` for the PCIe card's I/O ports and `CAP_SYS_NICE` for SCHED_FIFO. Then `~` is the user's home and a run's files are the user's (see **Each run writes into a directory of its own** in spec.md). Catch: a file capability belongs to the built file, so every newly compiled engine program must get it again, which itself needs root (e.g. once per build through `pkexec`).
 
 ### Group masks
 An event about groups of channels, e.g. which tetrodes spiked on a sample. Until a processor decides per group itself, a consumer derives it from the channel mask (see **Detection events are channel masks** in spec.md) with an AND per group. Once one does, e.g. a detector that blocks a whole tetrode after it spikes, a mask with one bit per group becomes a second mask type.
@@ -207,6 +214,7 @@ The prototype puts each sample's header in its ring slot, in front of the sample
 ### Hardware wait
 - **hardware wait** (MWAITX on AMD, UMWAIT on Intel): the core sleeps until the ring's write-position cache line is written. No OS involved, caches kept, low power. Added only if a diagnostic on the target machine shows its wake-up time is close to spin.
 - A hardware wait watches a single memory address range (one cache line) per core. A core whose loop reads several rings (e.g. one per chain) can sleep on only one of them; data arriving in another ring does not wake the core.
+- For warnings (see **How a processor raises a warning** in spec.md): every core's `warn()` also bumps one shared "warning posted" counter, and the main thread sleeps on its cache line instead of polling every 100 ms, so a warning shows within microseconds and the writing core makes no system call. Catches: the OS sees the waiting thread as running, so it holds an OS core while it waits; it still needs a timeout, for stop signals and the data rings' drop counts, and wakes at every timer interrupt anyway; and the code differs between AMD and Intel and must check that the CPU and kernel allow it from user space.
 
 ### Huge pages
 - Each core's memory (rings, processor state, buffers) in 2 MB pages instead of 4 KB pages, so the CPU needs far fewer address translations (TLB entries). At any channel count; the gain is to be measured.
@@ -220,12 +228,18 @@ The prototype puts each sample's header in its ring slot, in front of the sample
   - Adding it later without touching processors needs per-channel processors written in a per-vector form: a per-sample "do I run?" plus a per-vector `process()` that returns its output instead of writing it.
 
 ### Inlining every `process()`
-In the prototype, clang decides which `process()` calls to inline (see **Processors** in spec.md). A call it doesn't inline runs on every pass, even when its input is empty, and since the buffer's address goes into the call, the buffer's count lives on the stack instead of in a register (see **graph.cpp** in spec.md).
+In the prototype, clang decides which `process()` calls to inline (see **Processors** in spec.md). A call it doesn't inline runs on every pass, even when its input is empty, and since the buffer's address goes into the call, the buffer's count lives on the stack instead of in a register (see **pipeline.cpp** in spec.md).
 - Measured on the monotonous event pipeline, with a test event logger whose `process()` printed with `std::println`: clang didn't inline it, because `std::println` made it too big, so that core's loop was not one fused unit and the call saved and restored six registers on every pass. A small processor was inlined: with a test processor between the generator and the logger that adds a constant to each event, the buffer between the generator and that processor disappeared from the machine code entirely, with no stack slot and no register.
 - Harmless on that non-realtime core, but any realtime processor too big to inline does the same.
 - Measured on a realtime core too: in the FIR chain latency pipeline (128 channels), clang called each of the 7 FirFilters' `process()` out of line, with its `Connections` struct on the stack, and inside it reloaded both buffers' sample pointers for every channel vector, since it couldn't rule out that its own stores change them.
-- Open: should `graph.cpp` force every `process()` call inline (clang's `[[clang::always_inline]]` on the call statement, which processors never see), or keep leaving it to clang and check the disassembly?
+- Open: should `pipeline.cpp` force every `process()` call inline (clang's `[[clang::always_inline]]` on the call statement, which processors never see), or keep leaving it to clang and check the disassembly?
 
+### Arithmetic across processors
+Once a core's `process()` calls are inlined into one loop (see **Inlining every `process()`**), clang optimises across processors: it removes buffers between them (measured) and folds integer arithmetic (`3 × (2x + 5)` becomes `6x + 15`).
+- It doesn't do that for float32 samples by default, since IEEE floating-point arithmetic isn't associative: `3 × (2x + 5)` and `6x + 15` round differently. Flags such as `-ffast-math` or `-fassociative-math` allow it, but then results differ from a reference script that computes in the written order (see **How we judge that it works** in spec.md) and from one build to the next. Rejected, even for processors that opt in: accuracy comes first (see **Priorities** in spec.md).
+- Related: clang contracts `a * b + c` within one expression into a fused multiply-add by default (`-ffp-contract=on`), which rounds once instead of twice: slightly more accurate, but different from a reference that rounds twice. It applies to plain arithmetic, not to SIMD intrinsics, which processors mostly use (IirFilter uses fused multiply-adds on purpose). Kept as clang's default; `-ffp-contract=off`, so that only an explicit fused multiply-add fuses, was not taken.
+- Each processor loops over its channel vectors on its own, and clang doesn't fuse two such loops by default; keeping a vector in registers from one processor to the next is **Vector chains**.
+- An exact alternative is fusion by the generator: it could merge consecutive linear processors (e.g. two gains, or a gain into an IirFilter's gain) into one before compiling, as long as the merged form gives the same results within the tolerance agreed for that processor.
 
 ### False sharing
 - `alignas(64)` is not enough. Switch `alignas(64)` → `alignas(128)` on data written by different threads (counters, filter state) to stop neighbor-line prefetch interference; verify with perf c2c.
@@ -239,12 +253,20 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
 ### Jitter and joins across rates
 - **Jitter from uneven passes** (the pass in which an every-N processor fires takes longer) and **join semantics across rates**: low priority. Joins are the processor's own business.
 
+### Log ring
+The engine's own ring for `warn()` and `log()` is in spec.md (**How a processor raises a warning** under **Open questions**). The libraries considered instead:
+- The realistic library is Quill: one queue per thread, a polling backend thread, TSC timestamps, a bounded queue that drops and counts, ready file and console output. Against it: its default queue grows by allocating, so it must be configured bounded and preallocated per thread; its macros expand at every call site, which may keep clang from inlining `process()` (see **Inlining every `process()`**; to measure); it formats through a formatter per type, not C++26 reflection; and it is a large dependency with a thread of its own, whose queues and drop counts are separate from the engine's rings.
+- spdlog's asynchronous mode doesn't fit: it wakes its thread through a condition variable, a system call.
+
+### A cap per kind of message
+Every kind of message gets at most one record per 100 ms in its core's ring (see **How a processor raises a warning** in spec.md). Wanted later, not a priority: each kind sets its own cap, passed with its message.
+
 ### Runtime performance measurement
 - Not the priority now. Measure, while the graph runs, the time between consecutive processors, including ring hops between cores, using the CPU's timestamp counter (TSC). This would show the user when a chain waits for another chain's work on the same core. Details for later:
-  - Cost: each TSC read takes tens of CPU cycles (to be measured), paid at every processor boundary on every pass. Proposed: only in a separate measurement build of `graph.cpp`, never in a session's build, since reads between processors keep the CPU from overlapping one processor's work with the next, so the measured loop runs differently. A run-time switch would leave a branch at every boundary and still change the loop.
+  - Cost: each TSC read takes tens of CPU cycles (to be measured), paid at every processor boundary on every pass. Proposed: only in a separate measurement build of `pipeline.cpp`, never in a session's build, since reads between processors keep the CPU from overlapping one processor's work with the next, so the measured loop runs differently. A run-time switch would leave a branch at every boundary and still change the loop.
   - In that build the generator surrounds every `process()` call with TSC reads, and no processor changes. For an operator, the time around its call is its cost, and the time after it minus its input's arrival time is the latency so far. An input processor's call includes polling the device, so what counts there is the arrival time to the ring's publish. An output processor's cost is mostly its hardware write, once pulse timing has its own processor (see **Pulse processor**).
   - The UI shows each processor's share as a heat map: the border of its node turns red for the processors that take the most time. A toggle in the UI switches it between the mean and the 99th percentile (latency suffers from the spikes). Open: red relative to the other processors (one is always the reddest, even when all are cheap) or to the time a sample allows (33 µs at 30 kHz, so red means real time is at risk).
-  - Realtime cores never print, so the timestamps would go through a ring to a non-realtime core, like log messages (see **Logging** in spec.md): the engine runs a collector thread there that reads them and feeds the UI, which also runs on a non-realtime core (see the advised cores under **Machine setup** in spec.md).
+  - Realtime cores never print, so the timestamps would go through a ring to a non-realtime core (see **Logging** in spec.md): the engine runs a collector thread there that reads them and feeds the UI, which also runs on a non-realtime core (see the advised cores under **Machine setup** in spec.md).
   - TSC values from different cores are only comparable if the TSC is invariant and synchronised across cores; to be checked on the target CPUs.
   - Related: the arrival time in each sample's header (see **Buffers** in spec.md) and task A.2 (benchmark each processor on the target machine before the graph runs).
 
@@ -318,7 +340,7 @@ From the former TODO.md. Its other tasks are now part of spec.md.
 - **C:** JIT
     1. Replace existing YAML based graph definition with "poor-mans-JIT".
     2. Ship with clang compiler and compile the graph from the generated .cpp file.
-    3. Generate one loop per core in `graph.cpp` (see **Per-core loop** in spec.md).
+    3. Generate one loop per core in `pipeline.cpp` (see **Per-core loop** in spec.md).
 - **D:** UI
     1. Make scientifically accurate multichannel viewer that never drops a frame and up to modern neuroscience ephys standards. UI should be at least as good as other ephys software, such as Cheetah, SpikeGlx, OpenEphys, Plexon, Trellis and more.
         1. Units and scale: real µV (ADC counts × probe gain), positive-up polarity, µV and ms scale bars.

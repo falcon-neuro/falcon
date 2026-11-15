@@ -33,7 +33,7 @@ void core1() {
                         .amplitude = 900,
                         .phase_step_per_channel = 0,
                     }>
-        signal_generator;
+        signal_generator{"signal_generator"};
 
     if (!wait_at_start_barrier()) {
         return;
@@ -49,23 +49,23 @@ void core1() {
 
 void core2() {
     // Processors
-    PassThroughFilter pass_through_filter_1;
-    PassThroughFilter pass_through_filter_2;
-    PassThroughFilter pass_through_filter_3;
-    PassThroughFilter pass_through_filter_4;
-    PassThroughFilter pass_through_filter_5;
-    PassThroughFilter pass_through_filter_6;
-    PassThroughFilter pass_through_filter_7;
+    PassThroughFilter pass_through_filter_1{"pass_through_filter_1"};
+    PassThroughFilter pass_through_filter_2{"pass_through_filter_2"};
+    PassThroughFilter pass_through_filter_3{"pass_through_filter_3"};
+    PassThroughFilter pass_through_filter_4{"pass_through_filter_4"};
+    PassThroughFilter pass_through_filter_5{"pass_through_filter_5"};
+    PassThroughFilter pass_through_filter_6{"pass_through_filter_6"};
+    PassThroughFilter pass_through_filter_7{"pass_through_filter_7"};
     LevelCrossingDetector<LatencyStream,
                           {
                               .threshold = 100,
                               .direction = CrossingDirection::Upward,
                               .post_detection_block = 2,
                           }>
-        level_crossing_detector;
-    Trigger<LatencyStream, LevelCrossings<LatencyStream>> trigger;
-    LatencyBenchmark<TriggerEvent, 1, {.file_prefix = "fir_chain_latency_benchmark"}>
-        latency_benchmark;
+        level_crossing_detector{"level_crossing_detector"};
+    Trigger<LatencyStream, LevelCrossings<LatencyStream>> trigger{"trigger"};
+    LatencyBenchmark<TriggerEvent, 1, {.file_name = "fir_chain_latency_benchmark.csv"}>
+        latency_benchmark{"latency_benchmark"};
 
     // Connections
     SampleBuffer<LatencyStream> signal_generator_to_pass_through_filter_1_sample_buffer;
@@ -127,7 +127,7 @@ void core2() {
 }
 
 int main() {
-    return run_on_cores({
+    return run_on_cores("fir_chain_latency", {
         {.core_number = 1, .entry_point = core1},
         {.core_number = 2, .entry_point = core2},
     });

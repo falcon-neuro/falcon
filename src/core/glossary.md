@@ -17,7 +17,7 @@ The fundamental words of the engine docs, each with one meaning.
 - **Slot**: one sample's place in a ring.
 - **Hop**: a sample's move from one core to another through a ring. It takes time, because the data must travel between the two cores' caches.
 - **Graph**: the processors and connections that make up one experiment, as the user designs it in the editor.
-- **Pipeline**: a graph written by hand in C++ as its own program, instead of designed in the editor.
+- **Pipeline**: a graph written in C++ as its own program, `pipeline.cpp`: generated from the graph the user designs in the editor, or written by hand.
 - **Core**: one processing unit of the CPU; a CPU with 16 cores runs 16 things at once.
 - **Loop**: what each core runs over and over for as long as the experiment runs: each of its processors in a fixed order, then from the start again.
 - **Pass**: one turn of a core's loop, in which each processor on that core runs once.

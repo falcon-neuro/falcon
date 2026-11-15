@@ -30,6 +30,8 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - The linter isn't automatic: after changing code, propose running `sh scripts/tidy.sh` (the `lint` VS Code task) through the shell, so I approve or deny it, then fix what it reports. This is the one exception to only generating code.
 - Planning, including plan mode, is brainstorming. Never prompt me with selection prompts (multiple-choice questions); we discuss in plain text.
 - Always start slow and high level, without diving deep. Only after we have discussed the high level do we go into specifics.
+- Reply to a new topic in seconds, from what is already known. Read code, think long or run tools at length only once we have agreed to go deep on it, and then work in very small steps, one change at a time. Run several agents or a workflow only when I explicitly unleash you.
+- Give a short status update every few steps while working. Never think silently for minutes: if something needs long thought, say so first and split it into smaller steps.
 - We are dealing with complex software architecture: there are no easy solutions, only trade-offs. If the answers were easy, I wouldn't brainstorm with you, so don't present a choice as obvious; work through the trade-offs with me.
 - One question or topic per message, never several. Queue the other pending points in the open questions of spec.md and raise them one per turn.
 

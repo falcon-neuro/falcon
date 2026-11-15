@@ -19,7 +19,7 @@ void core4() {
     // Processors
     SignalGenerator<SparseTestStream,
                     {.waveform = Waveform::Square, .frequency = 1, .amplitude = 100}>
-        signal_generator;
+        signal_generator{"signal_generator"};
 
     if (!wait_at_start_barrier()) {
         return;
@@ -60,9 +60,9 @@ void core5() {
                           },
                       },
               }>
-        ap_filter;
-    SpikeDetector<SparseTestStream, {.threshold = -70}> spike_detector;
-    EventLogger<Spikes<SparseTestStream>, 1> example_logger;
+        ap_filter{"ap_filter"};
+    SpikeDetector<SparseTestStream, {.threshold = -70}> spike_detector{"spike_detector"};
+    EventLogger<Spikes<SparseTestStream>, 1> example_logger{"example_logger"};
 
     // Connections
     SampleBuffer<SparseTestStream> signal_generator_to_ap_filter_sample_buffer;
@@ -88,7 +88,7 @@ void core5() {
 }
 
 int main() {
-    return run_on_cores({
+    return run_on_cores("filtered_spike_detector", {
         {.core_number = 4, .entry_point = core4},
         {.core_number = 5, .entry_point = core5},
     });
