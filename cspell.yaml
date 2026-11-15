@@ -10,8 +10,10 @@ dictionaries:
   - cpp
 words:
   - AABB
+  - Advantech
   - alignas
   - ALSA
+  - Arduino
   - ASIC
   - backend
   - biquad
@@ -59,8 +61,10 @@ words:
   - glGetShaderiv
   - GLsizeiptr
   - glTexParameteri
+  - gmmcompression
   - GRAPHERROR
   - headeronly
+  - Hilbert
   - hippocampal
   - iirfilter
   - imgui
@@ -86,6 +90,7 @@ words:
   - mavx
   - Maxs
   - mfma
+  - Michon
   - microvolts
   - multichannelfilter
   - nchannels
