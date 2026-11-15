@@ -72,8 +72,12 @@ target_link_libraries(imgui PUBLIC
 #     src/main.cpp
 # )
 
+# add_executable(falcon
+#     src/processors/custom/ripple_neuromed_reader/pipelines/round_trip_latency_pipeline.cpp
+# )
+
 add_executable(falcon
-    src/processors/custom/ripple_neuromed_reader/pipelines/round_trip_latency_pipeline.cpp
+    src/tests/logger/logging_tour_test.cpp
 )
 
 target_compile_options(falcon PRIVATE

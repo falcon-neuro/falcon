@@ -1,8 +1,8 @@
 // Runs IirFilter under several designs on one test input and writes the input, each design's
-// output, its coefficients and the filter they claim to be, for
-// scripts/python/compare_iir_filter.py. The files go to the repository's build/iir_filter_test/,
-// or to the directory given as the first argument.
-#include "../processors/iir_filter.cpp"
+// output, its coefficients and the filter they claim to be, for compare_iir_filter.py in this
+// folder. The files go to the repository's build/iir_filter_test/, or to the directory given as
+// the first argument.
+#include "../../processors/iir_filter.cpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -20,7 +20,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include "../core/engine.cpp"
+#include "../../core/engine.cpp"
 #include "iir_filter_test_designs.cpp"
 
 // 37 channels, padded to 48: on either instruction set every lane of every vector half carries a
@@ -259,7 +259,7 @@ int main(int argument_count, char** arguments) {
         // __FILE__ is this source file's path as given to the compiler, absolute in a CMake build,
         // so the default doesn't depend on the folder the program is started from.
         const std::filesystem::path repository_root =
-            std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+            std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path().parent_path();
         const std::filesystem::path directory = argument_count > 1
                                                     ? std::filesystem::path{arguments[1]}
                                                     : repository_root / "build" / "iir_filter_test";

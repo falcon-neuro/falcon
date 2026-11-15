@@ -55,14 +55,7 @@ A processor author must copy what they need to keep and never keep a pointer int
 - Still possible: keeping a reference to a buffer and reading it in a later pass, when it already holds newer data or nothing. Candidate safety net: a debug build that fills every buffer with NaN after its pass, so such a mistake shows at once in a test. Release builds pay nothing. Not needed for the prototype, whose processors we write ourselves.
 
 ### Processor tests
-- The first: IirFilter against SciPy. `src/tests/iir_filter_test.cpp` filters a known input on 37 channels, so every lane of every vector half carries its own signal (DC offsets, chirps, noise, impulses and square waves, different on each channel, and losses that make it restart, twice apart and twice in a row), checks that each output header is its input's, and writes the input, each design's output, its coefficients and the filter they claim to be.
-  - The designs: Falcon 1's Bessel spike band, copied by hand with its separate gain, and nine that `scripts/python/design_iir_test_filters.py` designs with SciPy and writes into the tracked `src/tests/iir_filter_test_designs.cpp`, since the coefficients must be compile-time constants (a small preview of the generator). They cover other families (Butterworth, Chebyshev I and II, elliptic, whose numerators aren't 1, ±2, 1), every band type, a first-order section, 1 to 12 sections, and the low cutoffs that are the reason IirFilter computes in double (theta, a 1 Hz high-pass, the 150–250 Hz ripple band).
-  - `scripts/python/compare_iir_filter.py` checks, for every design, that SciPy's own design of the claimed filter has the coefficients' frequency response (for the hand-copied Bessel this catches a mistyped coefficient), and that SciPy's `sosfilt`, started the same way, agrees with every output value within one float32 step plus 0.001 µV, since IirFilter rounds its double result to float32. Once, it checks that outputs with deliberate mistakes (a start from zero, no restart after a loss, two channels swapped, one sample of delay) miss by more than 100 tolerances, so the comparison can see such mistakes.
-  - Results on AVX2: all ten designs pass, each worst output difference being at most half a float32 step of the value, i.e. only the output's rounding; every number is in `scripts/python/results.md`. Still to run: the AVX512 version, on an AVX512 machine.
-- Proposed further IirFilter tests, most important first:
-  - extreme inputs, to document what happens: NaN or infinity (likely spoiling that channel's output until the next restart), values at an ADC's limit, long runs of zeros (denormals);
-  - the AVX512 version, on an AVX512 machine or an emulator;
-  - long runs and other channel counts (1, exactly 16): least needed, since a stable filter forgets its rounding errors and 37 channels already reach the padding.
+- The first: IirFilter against SciPy, in `src/tests/iir_filter/`. Its `README.md` describes the test, its results and what is still to test.
 - Each test runs both versions of the processor, AVX512 and AVX2 (see **One processor per stream** under **Processors** in spec.md). An AVX2 build runs on any supported CPU; an AVX512 build needs an AVX512 CPU or an emulator (e.g. Intel's SDE).
 - Every processor gets tests. They catch mistakes the processor interface doesn't prevent, e.g. a sample processor that never calls `set_header`, so its output is always empty and everything downstream stays silent (see **Operations a processor uses** under **Buffers** in spec.md).
 - Each processor is also run with every optional connection left out, since using a missing one compiles and is undefined behaviour (see **Required and optional connections** under **Processors** in spec.md).
@@ -214,7 +207,7 @@ The prototype puts each sample's header in its ring slot, in front of the sample
 ### Hardware wait
 - **hardware wait** (MWAITX on AMD, UMWAIT on Intel): the core sleeps until the ring's write-position cache line is written. No OS involved, caches kept, low power. Added only if a diagnostic on the target machine shows its wake-up time is close to spin.
 - A hardware wait watches a single memory address range (one cache line) per core. A core whose loop reads several rings (e.g. one per chain) can sleep on only one of them; data arriving in another ring does not wake the core.
-- For warnings (see **How a processor raises a warning** in spec.md): every core's `warn()` also bumps one shared "warning posted" counter, and the main thread sleeps on its cache line instead of polling every 100 ms, so a warning shows within microseconds and the writing core makes no system call. Catches: the OS sees the waiting thread as running, so it holds an OS core while it waits; it still needs a timeout, for stop signals and the data rings' drop counts, and wakes at every timer interrupt anyway; and the code differs between AMD and Intel and must check that the CPU and kernel allow it from user space.
+- For warnings (see **Logging** in spec.md): every core's `warn()` also bumps one shared "warning posted" counter, and the main thread sleeps on its cache line instead of polling every 100 ms, so a warning shows within microseconds and the writing core makes no system call. Catches: the OS sees the waiting thread as running, so it holds an OS core while it waits; it still needs a timeout, for stop signals and the data rings' drop counts, and wakes at every timer interrupt anyway; and the code differs between AMD and Intel and must check that the CPU and kernel allow it from user space.
 
 ### Huge pages
 - Each core's memory (rings, processor state, buffers) in 2 MB pages instead of 4 KB pages, so the CPU needs far fewer address translations (TLB entries). At any channel count; the gain is to be measured.
@@ -254,12 +247,12 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
 - **Jitter from uneven passes** (the pass in which an every-N processor fires takes longer) and **join semantics across rates**: low priority. Joins are the processor's own business.
 
 ### Log ring
-The engine's own ring for `warn()` and `log()` is in spec.md (**How a processor raises a warning** under **Open questions**). The libraries considered instead:
+The engine's own ring for `warn()` and `log()` is in spec.md (**In the loop** under **Logging**). The libraries considered instead:
 - The realistic library is Quill: one queue per thread, a polling backend thread, TSC timestamps, a bounded queue that drops and counts, ready file and console output. Against it: its default queue grows by allocating, so it must be configured bounded and preallocated per thread; its macros expand at every call site, which may keep clang from inlining `process()` (see **Inlining every `process()`**; to measure); it formats through a formatter per type, not C++26 reflection; and it is a large dependency with a thread of its own, whose queues and drop counts are separate from the engine's rings.
 - spdlog's asynchronous mode doesn't fit: it wakes its thread through a condition variable, a system call.
 
 ### A cap per kind of message
-Every kind of message gets at most one record per 100 ms in its core's ring (see **How a processor raises a warning** in spec.md). Wanted later, not a priority: each kind sets its own cap, passed with its message.
+Every kind of message gets at most one record per 100 ms in its core's ring (see **The throttle** under **Logging** in spec.md). Wanted later, not a priority: each kind sets its own cap, passed with its message.
 
 ### Runtime performance measurement
 - Not the priority now. Measure, while the graph runs, the time between consecutive processors, including ring hops between cores, using the CPU's timestamp counter (TSC). This would show the user when a chain waits for another chain's work on the same core. Details for later:

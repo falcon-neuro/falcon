@@ -1,13 +1,13 @@
 """Checks IirFilter against SciPy, three ways.
 
-src/tests/iir_filter_test.cpp runs IirFilter under several designs on one test input, and writes
+iir_filter_test.cpp runs IirFilter under several designs on one test input, and writes
 the input, each design's output, its coefficients and the filter they claim to be. For every design
 this script checks:
 
 1. Design: SciPy designs the claimed filter itself, and its frequency response must match the
    coefficients'. For the hand-copied Bessel spike band this is an independent check: it catches a
    mistyped coefficient or a wrong gain convention, which comparing outputs made from the same
-   coefficients can't. For the designs scripts/python/design_iir_test_filters.py generated, it
+   coefficients can't. For the designs design_iir_test_filters.py generated, it
    checks that they reached the C++ code intact.
 2. Output: SciPy's sosfilt filters the same input, started the way IirFilter starts (sosfilt_zi
    scaled by each channel's first value, and again from the first sample after each loss), and
@@ -19,7 +19,7 @@ Then, once, on the Bessel spike band:
    every design.
 
 Usage, from the repository's root:
-    uv run --project scripts/python scripts/python/compare_iir_filter.py [directory]
+    uv run --project src/tests/iir_filter src/tests/iir_filter/compare_iir_filter.py [directory]
 The directory defaults to build/iir_filter_test.
 """
 
@@ -178,7 +178,7 @@ def check_that_mistakes_are_caught(
 
 
 def main() -> int:
-    repository_root = Path(__file__).resolve().parents[2]
+    repository_root = Path(__file__).resolve().parents[3]
     directory = Path(sys.argv[1]) if len(sys.argv) > 1 else repository_root / "build" / "iir_filter_test"
     description = json.loads((directory / "test.json").read_text())
     channel_count = description["channel_count"]

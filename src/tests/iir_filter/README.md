@@ -1,21 +1,34 @@
-# IirFilter test results
+# IirFilter test
 
-Results of checking IirFilter (`src/processors/iir_filter.cpp`), measured on 2026-11-08. All runs used the AVX2 version: the machine has no AVX512. The AVX512 version is still to run.
+Checks IirFilter (`src/processors/iir_filter.cpp`) against SciPy: its coefficients against SciPy's own designs, and its output against SciPy's on the same input.
 
-## How to reproduce
+## What it does
 
-From the repository's root, with `add_executable(falcon …)` in `CMakeLists.txt` pointing at `src/tests/iir_filter_test.cpp`:
+- **`iir_filter_test.cpp`** filters a known input on 37 channels, so every lane of every vector half carries its own signal: DC offsets, chirps, noise, impulses and square waves, different on each channel, and losses that make the filter restart, twice apart and twice in a row. It checks that each output header is its input's, and writes the input, each design's output, its coefficients and the filter they claim to be to `build/iir_filter_test/`.
+- **The designs** are Falcon 1's Bessel spike band, copied by hand with its separate gain, and nine that `design_iir_test_filters.py` designs with SciPy and writes into the tracked `iir_filter_test_designs.cpp`, since the coefficients must be compile-time constants (a small preview of the `pipeline.cpp` generator). They cover other families (Butterworth, Chebyshev I and II, elliptic, whose numerators aren't 1, ±2, 1), every band type, a first-order section, 1 to 12 sections, and the low cutoffs that are the reason IirFilter computes in double (theta, a 1 Hz high-pass, the 150–250 Hz ripple band).
+- **`compare_iir_filter.py`** checks, for every design, that SciPy's own design of the claimed filter has the coefficients' frequency response (for the hand-copied Bessel this catches a mistyped coefficient), and that SciPy's `sosfilt`, started the same way, agrees with every output value within one float32 step plus 0.001 µV, since IirFilter rounds its double result to float32. Once, it checks that outputs with deliberate mistakes (a start from zero, no restart after a loss, two channels swapped, one sample of delay) miss by more than 100 tolerances, so the comparison can see such mistakes.
+- **`pyproject.toml` and `uv.lock`** describe the Python environment of the two scripts (NumPy and SciPy), which uv sets up.
+
+## How to run it
+
+From the repository's root, with `add_executable(falcon …)` in `CMakeLists.txt` pointing at `src/tests/iir_filter/iir_filter_test.cpp`:
 
 ```
-uv run --project scripts/python scripts/python/design_iir_test_filters.py   # only to change the designs
+uv run --project src/tests/iir_filter src/tests/iir_filter/design_iir_test_filters.py   # only to change the designs
 scripts/make.sh
 ./build/falcon
-uv run --project scripts/python scripts/python/compare_iir_filter.py
+uv run --project src/tests/iir_filter src/tests/iir_filter/compare_iir_filter.py
 ```
 
-`design_iir_test_filters.py` writes the generated designs into `src/tests/iir_filter_test_designs.cpp`. `iir_filter_test.cpp` runs IirFilter and writes the input, each design's output and the coefficients to `build/iir_filter_test/`. `compare_iir_filter.py` checks them against SciPy.
+Running the design script again leaves every coefficient as it is, but indents nine lines of `iir_filter_test_designs.cpp` one space further than the tracked file has them.
 
-## Final run: 10 designs, 37 channels
+## Results
+
+Measured on 2026-11-08. All runs used the AVX2 version: the machine has no AVX512.
+
+On 2026-11-15 the final run was repeated with the AVX512 version, on a machine that has AVX512: PASS on every check for all ten designs, each worst output difference again at most half a float32 step at its value. Its numbers differ slightly from the table below, since the test seeds its noise from the system's random source, so every run has its own input.
+
+### Final run: 10 designs, 37 channels
 
 **Result: PASS on every check.**
 
@@ -61,7 +74,7 @@ What the numbers mean:
 
 All four were caught by about a million tolerances or more.
 
-## Earlier runs
+### Earlier runs
 
 **Bessel only, 37 channels, fixed tolerance 0.001 µV.** PASS.
 - Design off by 2.0×10⁻¹⁴.
@@ -84,7 +97,7 @@ Its worst difference was 2.71×10⁻⁵ µV, at sample 6, channel 1 (−592.964 
 
 The 3-channel run was replaced because IirFilter splits each SIMD vector into two halves of doubles, and 3 channels only fill the first half of the first vector. The 37-channel input gives every lane of every half its own signal, on both instruction sets.
 
-## IirFilter in the filter comparison pipeline
+### IirFilter in the filter comparison pipeline
 
 Pipeline: `src/pipelines/filter_comparison_pipeline.cpp`. It runs a 2-channel spike train (3 spikes/s) on an 8 Hz, 500 µV LFP through IirFilter and SpikeDetector at −70 µV, next to an unfiltered SpikeDetector. Without losses it expects 6 filtered and 17 unfiltered detections per second.
 
@@ -95,5 +108,6 @@ Pipeline: `src/pipelines/filter_comparison_pipeline.cpp`. It runs a 2-channel sp
 
 ## Not yet tested
 
-- The AVX512 version, on an AVX512 machine.
-- Extreme inputs: NaN or infinity, values at an ADC's limit, long runs of zeros.
+Most important first:
+- Extreme inputs, to document what happens: NaN or infinity (likely spoiling that channel's output until the next restart), values at an ADC's limit, long runs of zeros (denormals).
+- Long runs and other channel counts (1, exactly 16): least needed, since a stable filter forgets its rounding errors and 37 channels already reach the padding.
