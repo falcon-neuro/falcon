@@ -39,11 +39,8 @@ void core1() {
         return;
     }
 
-    while (is_pipeline_running) {
-        SampleBuffer<LatencyStream>& slot =
-            signal_generator_to_pass_through_filter_1_sample_ring.next_slot();
-        signal_generator.process({.output = slot});
-        signal_generator_to_pass_through_filter_1_sample_ring.publish();
+    while (next_pass()) {
+        signal_generator.process({.output = signal_generator_to_pass_through_filter_1_sample_ring});
     }
 }
 
@@ -68,7 +65,6 @@ void core2() {
         latency_benchmark{"latency_benchmark"};
 
     // Connections
-    SampleBuffer<LatencyStream> signal_generator_to_pass_through_filter_1_sample_buffer;
     SampleBuffer<LatencyStream> pass_through_filter_1_to_pass_through_filter_2_sample_buffer;
     SampleBuffer<LatencyStream> pass_through_filter_2_to_pass_through_filter_3_sample_buffer;
     SampleBuffer<LatencyStream> pass_through_filter_3_to_pass_through_filter_4_sample_buffer;
@@ -83,11 +79,9 @@ void core2() {
         return;
     }
 
-    while (is_pipeline_running) {
-        signal_generator_to_pass_through_filter_1_sample_ring.read(
-            signal_generator_to_pass_through_filter_1_sample_buffer);
+    while (next_pass()) {
         pass_through_filter_1.process({
-            .input = signal_generator_to_pass_through_filter_1_sample_buffer,
+            .input = signal_generator_to_pass_through_filter_1_sample_ring,
             .output = pass_through_filter_1_to_pass_through_filter_2_sample_buffer,
         });
         pass_through_filter_2.process({

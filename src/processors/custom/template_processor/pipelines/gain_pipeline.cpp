@@ -24,10 +24,8 @@ void core4() {
         return;
     }
 
-    while (is_pipeline_running) {
-        SampleBuffer<TemplateStream>& slot = signal_generator_to_gain_sample_ring.next_slot();
-        signal_generator.process({.output = slot});
-        signal_generator_to_gain_sample_ring.publish();
+    while (next_pass()) {
+        signal_generator.process({.output = signal_generator_to_gain_sample_ring});
     }
 }
 
@@ -39,7 +37,6 @@ void core5() {
         "event_logger"};
 
     // Connections
-    SampleBuffer<TemplateStream> signal_generator_to_gain_sample_buffer;
     SampleBuffer<TemplateStream> gain_to_spike_detector_sample_buffer;
     EventBuffer<Spikes<TemplateStream>, 1> spike_detector_to_event_logger_event_buffer;
 
@@ -47,10 +44,9 @@ void core5() {
         return;
     }
 
-    while (is_pipeline_running) {
-        signal_generator_to_gain_sample_ring.read(signal_generator_to_gain_sample_buffer);
+    while (next_pass()) {
         gain.process({
-            .input = signal_generator_to_gain_sample_buffer,
+            .input = signal_generator_to_gain_sample_ring,
             .output = gain_to_spike_detector_sample_buffer,
         });
         spike_detector.process({

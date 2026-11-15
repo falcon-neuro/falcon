@@ -38,11 +38,9 @@ void core4() {
         return;
     }
 
-    while (is_pipeline_running) {
-        SampleBuffer<ComparisonTestStream>& slot =
-            signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring.next_slot();
-        signal_generator.process({.output = slot});
-        signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring.publish();
+    while (next_pass()) {
+        signal_generator.process(
+            {.output = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring});
     }
 }
 
@@ -84,8 +82,6 @@ void core5() {
         unfiltered_logger{"unfiltered_logger"};
 
     // Connections
-    SampleBuffer<ComparisonTestStream>
-        signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_buffer;
     SampleBuffer<ComparisonTestStream> ap_filter_to_filtered_spike_detector_sample_buffer;
     EventBuffer<Spikes<ComparisonTestStream>, 1>
         filtered_spike_detector_to_filtered_logger_event_buffer;
@@ -96,11 +92,9 @@ void core5() {
         return;
     }
 
-    while (is_pipeline_running) {
-        signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring.read(
-            signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_buffer);
+    while (next_pass()) {
         ap_filter.process({
-            .input = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_buffer,
+            .input = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring,
             .output = ap_filter_to_filtered_spike_detector_sample_buffer,
         });
         filtered_spike_detector.process({
@@ -109,7 +103,7 @@ void core5() {
         });
         filtered_logger.process({.input = filtered_spike_detector_to_filtered_logger_event_buffer});
         unfiltered_spike_detector.process({
-            .input = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_buffer,
+            .input = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring,
             .output = unfiltered_spike_detector_to_unfiltered_logger_event_buffer,
         });
         unfiltered_logger.process(

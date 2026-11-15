@@ -561,6 +561,10 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Set by fail() before it throws. While the exception unwinds a process() call, its outputs are
+// destroyed like after a normal return, and must not hand a half-written sample to another core.
+thread_local bool is_failing_of_this_thread = false;
+
 // Ends the run: the core's thread catches the exception, every loop stops and every destructor
 // runs. Cold and never inlined, as warn() is. It logs its line itself, before it throws: the
 // core's destructors run before the catch, and one that hangs would otherwise hide the reason.
@@ -568,6 +572,7 @@ template <MessageArgument... Arguments>
 [[noreturn, gnu::cold, gnu::noinline]] void fail(
     ProcessorName name, std::format_string<FormattedAs<Arguments>...> format,
     Arguments... arguments) {
+    is_failing_of_this_thread = true;
     const std::string text = format_values(format.get(), arguments...);
     logger.write_now(MessageType::Error, name.c_str(), text);
     throw ProcessorFailure(std::format("{}: {}", name.c_str(), replace_argument_marks(text, {})));

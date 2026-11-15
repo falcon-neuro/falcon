@@ -12,24 +12,33 @@
 #include "../core/engine.cpp"
 
 // SignalGenerator: stands in for acquisition hardware when testing. It outputs a sine wave, a
-// square wave or a train of spike-shaped pulses in µV on every channel at the output stream's rate,
-// optionally on top of a slow LFP sine, so a filter's effect can be seen. As an input it runs alone
+// square wave, a train of spike-shaped pulses or bursts of a ripple-band oscillation in µV on every
+// channel at the output stream's rate, optionally on top of a slow LFP sine, so a filter's effect
+// can be seen. As an input it runs alone
 // on its core, so it may block that core's thread: it sleeps until shortly before each sample is
 // due, then busy-spins to the exact time. Sleeping alone wakes too late for a 33 µs period, and
 // spinning alone keeps the core at 100%. The spin adapts: it lasts the minimum plus the worst
 // recent wake-up delay, so after a late wake-up the generator sleeps less for a while, and stops
 // sleeping if wake-ups take a whole period.
 
-enum class Waveform : std::uint8_t { Sine, Square, SpikeTrain };
+enum class Waveform : std::uint8_t { Sine, Square, SpikeTrain, RippleBursts };
 
 struct SignalGeneratorOptions {
     Waveform waveform = Waveform::Sine;
-    double frequency = 10;   // Hz; for SpikeTrain, spikes per second
-    double amplitude = 100;  // µV, from zero to peak; for SpikeTrain, the depth of each trough
+    // Hz; for SpikeTrain, spikes per second; for RippleBursts, bursts per second
+    double frequency = 10;
+    // µV, from zero to peak; for SpikeTrain, the depth of each trough; for RippleBursts, the
+    // oscillation's amplitude at a burst's peak
+    double amplitude = 100;
     double phase_step_per_channel = 1;  // radians, so channels can be told apart in a viewer
     double lfp_frequency = 0;           // Hz
     double lfp_amplitude = 0;           // µV, from zero to peak; 0 adds no LFP
-    double minimum_busy_spin_microseconds = 10;  // before each sample is due
+    // RippleBursts only: an oscillation at ripple_frequency that never stops, whose amplitude
+    // swells from the background's to `amplitude` and back within each burst.
+    double ripple_frequency = 180;                   // Hz
+    double ripple_burst_duration_milliseconds = 80;  // from a burst's start to its end
+    double ripple_background_amplitude = 10;         // µV, from zero to peak, between bursts
+    double minimum_busy_spin_microseconds = 10;      // before each sample is due
 };
 
 template <typename OutputStreamInfo, SignalGeneratorOptions options>
@@ -43,6 +52,19 @@ struct SignalGenerator {
                       (options.lfp_frequency > 0 &&
                        options.lfp_frequency < OutputStreamInfo::rate / 2),
                   "the LFP needs a frequency above 0 and below the Nyquist frequency");
+    static_assert(options.waveform != Waveform::RippleBursts ||
+                      (options.ripple_frequency > 0 &&
+                       options.ripple_frequency < OutputStreamInfo::rate / 2),
+                  "the ripple needs a frequency above 0 and below the Nyquist frequency");
+    static_assert(options.waveform != Waveform::RippleBursts ||
+                      (options.ripple_burst_duration_milliseconds > 0 &&
+                       options.frequency * options.ripple_burst_duration_milliseconds < 1000),
+                  "bursts this frequent would overlap");
+    static_assert(options.waveform != Waveform::RippleBursts ||
+                      (options.ripple_background_amplitude >= 0 &&
+                       options.ripple_background_amplitude <= options.amplitude),
+                  "a burst swells up from the background's amplitude, so its peak can't be below "
+                  "it");
     static_assert(options.minimum_busy_spin_microseconds >= 0);
 
     struct Connections {
@@ -80,8 +102,11 @@ struct SignalGenerator {
 
         // Kept within one period, so the phase doesn't lose precision as sample_number_ grows.
         const double time = static_cast<double>(sample_number_) / OutputStreamInfo::rate;
-        const double cycle_fraction = std::fmod(options.frequency * time, 1.0);
-        const double lfp_cycle_fraction = std::fmod(options.lfp_frequency * time, 1.0);
+        const CycleFractions cycle_fractions{
+            .wave = std::fmod(options.frequency * time, 1.0),
+            .lfp = std::fmod(options.lfp_frequency * time, 1.0),
+            .ripple = std::fmod(options.ripple_frequency * time, 1.0),
+        };
 
         for (int simd_vector_index = 0; simd_vector_index < OutputStreamInfo::simd_vectors;
              ++simd_vector_index) {
@@ -91,8 +116,7 @@ struct SignalGenerator {
                 const int channel = (simd_vector_index * FLOATS_PER_SIMD_VECTOR) + lane_index;
                 if (channel < OutputStreamInfo::channels) {
                     channel_values[static_cast<std::size_t>(lane_index)] =
-                        static_cast<float>(channel_value(
-                            {.wave = cycle_fraction, .lfp = lfp_cycle_fraction}, channel));
+                        static_cast<float>(channel_value(cycle_fractions, channel));
                 }
             }
             if constexpr (HAS_AVX512) {
@@ -174,10 +198,27 @@ private:
                 gaussian(time_since_spike, spike_trough));
     }
 
+    static constexpr double ripple_burst_duration =
+        options.ripple_burst_duration_milliseconds / 1000.0;  // s
+
+    // The oscillation's amplitude a given time after a burst started: a raised cosine from the
+    // background's amplitude up to the burst's peak and back, so a burst starts and ends smoothly
+    // and at a known sample.
+    [[nodiscard]] static double ripple_amplitude(double time_since_burst_start) {
+        if (time_since_burst_start >= ripple_burst_duration) {
+            return options.ripple_background_amplitude;
+        }
+        const double swell = 0.5 * (1.0 - std::cos(2.0 * std::numbers::pi * time_since_burst_start /
+                                                   ripple_burst_duration));
+        return options.ripple_background_amplitude +
+               ((options.amplitude - options.ripple_background_amplitude) * swell);
+    }
+
     // Where the current sample falls within each wave's period, from 0 to 1.
     struct CycleFractions {
         double wave = 0;
         double lfp = 0;
+        double ripple = 0;
     };
 
     [[nodiscard]] static double channel_value(CycleFractions cycle_fractions, int channel) {
@@ -190,12 +231,18 @@ private:
             value = options.amplitude * std::sin(phase);
         } else if constexpr (options.waveform == Waveform::Square) {
             value = std::sin(phase) >= 0.0 ? options.amplitude : -options.amplitude;
-        } else {
-            static_assert(options.waveform == Waveform::SpikeTrain);
+        } else if constexpr (options.waveform == Waveform::SpikeTrain) {
             // The phase offset shifts each channel's spikes by that fraction of the period.
             const double channel_cycle_fraction =
                 std::fmod(cycle_fraction + (phase_offset / (2.0 * std::numbers::pi)), 1.0);
             value = spike_value(channel_cycle_fraction / options.frequency);
+        } else {
+            static_assert(options.waveform == Waveform::RippleBursts);
+            // A burst comes on every channel at once, as a ripple does: the phase offset shifts
+            // only the oscillation inside it.
+            const double ripple_phase =
+                (2.0 * std::numbers::pi * cycle_fractions.ripple) + phase_offset;
+            value = ripple_amplitude(cycle_fraction / options.frequency) * std::sin(ripple_phase);
         }
         if constexpr (options.lfp_amplitude > 0) {
             value += options.lfp_amplitude *

@@ -4,7 +4,7 @@ Everything that is not part of the prototype engine: features, ideas and tasks f
 
 Order of work from here: first a usable product that can be downloaded from GitHub, with the basic detectors such as SpikeDetector, to ship by 29 November 2026 at the latest; from there we iterate. Replay-content detection, the ultimate goal (see **Decoding** under **Processors to port** in falcon1_differences.md), comes later. Still to list: what the first product needs of Falcon 1's other processors (see **Processors to port** in falcon1_differences.md), of the drag-and-drop pipeline designer (see **Generator**) and of the tests (see **Tests as whole runs** in spec.md).
 
-Moved here on Claude's judgment and not yet confirmed: **Heavy processors**, **Several chains on one core**, **Feedback connections**, **Buffer reuse**, **Event rings between cores**, **Slow readers**, **Experiment files**, **Channel labels and positions** and **Rings with many readers**. Whatever belongs in the prototype moves back to spec.md.
+Moved here on Claude's judgment and not yet confirmed: **Heavy processors**, **Several chains on one core**, **Feedback connections**, **Buffer reuse**, **Event rings between cores**, **Slow readers**, **Experiment files**, **Channel labels and positions** and **Rings with many readers**. Whatever belongs in the prototype moves back to spec.md. **Event rings between cores** was parked by mistake and is in spec.md now (**Event rings** under **Rings**), but for what follows it under its heading here; the other candidates are under **Parked too early** in the open questions of spec.md.
 
 ## Engine
 
@@ -137,7 +137,7 @@ Planned once several output processors need pulses (see **Trigger and outputs** 
 Open: in the prototype, a state value connects processors on the same core as a plain value (see **State values** under **Buffers** in spec.md). One whose producer and reader are on different cores needs a ring, like a feedback connection across cores (see **Feedback connections**), or an atomic value.
 
 ### Runtime control
-Open: Falcon 1 let clients such as the UI read and write a processor's states while the graph ran (its `external` state permissions), e.g. to watch a value or to switch stimulation on and off during a session. Here every option is a compile-time constant and changing one restarts the engine program (see **Every option is a compile-time constant** in spec.md). Is a switch that the UI flips during a run needed, and how does it reach the realtime cores?
+Open: Falcon 1 let clients such as the UI read and write a processor's states while the graph ran (its `external` state permissions), e.g. to watch a value or to switch stimulation on and off during a session. Here every option is a compile-time constant and changing one restarts the engine program (see **Every option is a compile-time constant** in spec.md). Decided: it is needed, and it goes through state values: whatever the UI changes during a run is a state input of the processor that reads it (see **Parameters changed during a run** in the open questions of spec.md). Open: how the UI's write reaches the realtime cores.
 
 ### Buffer reuse
 Decided:
@@ -150,8 +150,9 @@ Open (formerly open question 9): how buffers are assigned, i.e. which connection
 - Who decides which connections share a buffer: the generator of `pipeline.cpp`, which sees the whole graph and the call order on each core, or each processor (e.g. a filter that declares it can work in place)?
 
 ### Event rings between cores
-- Between cores, events go through a small ring of fixed-size events (see **Events** in spec.md). There is no completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line reserves space for a future "processed up to sample N" field, in case it's ever needed.
-- In the prototype, `EventBuffer<EventType, Capacity>` holds its events inside itself. Reading from an event ring without a copy needs it to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
+The prototype's event ring copies events in and out (see **Event rings** under **Rings** in spec.md). For later:
+- No completeness tracking: a processor that needs complete events (e.g. spike binning) runs on the same core as the processor producing them. The event ring's writer cache line can reserve space for a "processed up to sample N" field, in case it's ever needed.
+- Reading without a copy: `EventBuffer<EventType, Capacity>` holds its events inside itself, so it would have to point at the ring slot instead, as a sample buffer can (see **Buffers** in spec.md).
 - Writing an event in place: the event buffer hands the producer an event to fill and the producer commits it, so `push` copies nothing, e.g. a channel mask of 1.25 KB at 10,000 channels (see **Detection events are channel masks** in spec.md). It adds an API and two silent mistakes: a forgotten commit drops the event, and an empty mask is pushed with no channel.
 
 ### Richer spike events
@@ -167,6 +168,9 @@ In all of them, `sample` is the sample number of the threshold crossing, so ever
 ### Slow readers
 - **Slow readers** (viewer, recorder, audio) subscribe to what the hot loop publishes and never slow down the hot cores. The viewer is just another processor in the graph.
 - A slow reader that falls behind (formerly part of the rings question in spec.md): the viewer can skip data, but the recorder must not lose any. Is falling behind a failure for every reader, or only for some?
+
+### Recording formats
+Recordings need proper file formats, such as NWB. The first recorder processor writes raw binary only (see **SampleRecorder** in spec.md). Not designed yet: which formats, and where each stream's facts (channel count, rate, sample numbers) go.
 
 ### Experiment files
 - **Each experiment is saved as one plain zip file** (e.g. `my_experiment.zip`) containing `pipeline.cpp` and every resource it uses.
@@ -197,7 +201,7 @@ An event about groups of channels, e.g. which tetrodes spiked on a sample. Until
   - Still to design: how the packer picks channels out of the input's vectors.
 
 ### Rings with many readers
-The prototype's rings have one writer and one reader (SPSC, see **Rings** in spec.md). With SPSC, fan-out to several cores writes the same sample into each ring. The alternative for later:
+The prototype's rings have one writer and one reader (SPSC, see **Rings** in spec.md). With SPSC, fan-out to several cores writes the same sample into each ring, which a buffer that feeds rings does (see **A buffer that feeds rings** under **Rings** in spec.md). The alternative for later:
 - One writer, many readers (SPMC): one ring per output, and each reader keeps its own read position. Fan-out needs no copies. Since a full ring is a failure, the writer never reads reader positions; each reader detects being overrun from the sample number. Slow readers subscribing to what the hot loop publishes fit this model.
 
 ### Ring header layout
@@ -308,7 +312,6 @@ Ways to catch bugs that the current build setup (`CMakeLists.txt`, `.clang-tidy`
 - **Settings that look like protection but do nothing** (cheap to fix):
   - `CMakeLists.txt` defines `_GLIBCXX_ASSERTIONS`, which only affects GCC's standard library (libstdc++), and `LIBCXX_ENABLE_HARDENING`, which libc++ doesn't know. Falcon builds with libc++ (`-stdlib=libc++`), whose switch is `_LIBCPP_HARDENING_MODE`. So no build checks `std::array` or `std::vector` indexes.
   - `.clang-tidy` sets options for `misc-assert-side-effect`, but `misc-*` is not in its `Checks`, so the check never runs.
-  - Compiler warnings are not errors (no `-Werror`), so a new warning scrolls past and stays.
 - **More clang-tidy check families:**
   - `clang-analyzer-*` (the Clang Static Analyzer) follows code paths and finds null dereferences, use-after-free, leaks and reads of uninitialised values. It finds the most real bugs of all of these, but is slow.
   - `cppcoreguidelines-*`: uninitialised members, missing copy/move members (rule of five), object slicing, raw `new`/`delete`. Its pointer-arithmetic and `reinterpret_cast` checks flag SIMD intrinsic code on purpose, so they need a rule for where exceptions are allowed.

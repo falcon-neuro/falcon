@@ -76,8 +76,16 @@ target_link_libraries(imgui PUBLIC
 #     src/processors/custom/ripple_neuromed_reader/pipelines/round_trip_latency_pipeline.cpp
 # )
 
+# add_executable(falcon
+#     src/tests/logger/logging_tour_test.cpp
+# )
+
+# add_executable(falcon
+#     src/pipelines/ripple_bursts_recording_pipeline.cpp
+# )
+
 add_executable(falcon
-    src/tests/logger/logging_tour_test.cpp
+    src/pipelines/ripple_detector_pipeline.cpp
 )
 
 target_compile_options(falcon PRIVATE
