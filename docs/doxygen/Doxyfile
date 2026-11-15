@@ -1,8 +1,13 @@
 PROJECT_NAME           = "Falcon"
+PROJECT_LOGO           = docs/doxygen/logo.svg
+PROJECT_ICON           = docs/doxygen/favicon.ico
 OUTPUT_DIRECTORY       = build
 
 INPUT                  = docs/ src/
-EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/**
+# Internal notes that must stay off the website: the engine's design docs (src/core) and the
+# brochure's working notes (docs/poster).
+EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/** \
+                            */docs/poster/* */src/core/*.md
 
 FILE_PATTERNS          = *.hpp *.cpp *.h *.md
 RECURSIVE              = YES

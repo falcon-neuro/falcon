@@ -1,21 +1,21 @@
-# Getting Started {#mainpage}
+# Overview {#mainpage}
 
-Falcon is a modular framework for soft real-time signal processing, originally designed for short-latency closed-loop neural applications. It runs on a graph-based architecture where processors are composed into a directed graph to accomplish tasks like ripple detection, neural decoding, and low-latency feedback.
+Falcon is open-source software for closed-loop neuroscience experiments. It reads neural signals from an acquisition system while they are being recorded, runs them through a pipeline of processors, such as filters and detectors, and triggers an output, for example a TTL pulse to a stimulator, when the pattern of interest appears. Each experiment assembles its own pipeline from these processors.
 
-# ⚡ Quick installation (Debian)
+Falcon runs on Linux and is released under the GNU General Public License v3. The source code is on [GitHub](https://github.com/falcon-neuro/falcon).
 
-To install Falcon on Debian Linux, simply run the following command in your terminal:
+## Status
 
-```bash
-wget -qO- https://raw.githubusercontent.com/falcon-neuro/falcon/refs/heads/develop/install.sh | bash
-```
+A new engine is in development. It is designed for dense recordings, with hundreds of channels sampled at 30 kHz, processed sample by sample on a standard CPU.
 
-## Core Workflows
+No installable release is available yet. Installation instructions and the user guide will be published here with the first release of the new engine.
 
-1. **Architecture:** Define your directed processing graphs. Core execution is managed by the framework, while individual processors live as external extensions.
-2. **Development:** Build custom processors and data types using C++ and CMake. You can use the boilerplate layout located inside the extensions folder.
-3. **Execution:** Compose your processors into a topology graph and pass it to the backend server.
+## Publications
 
-## Usage
+Falcon was introduced in:
 
-TODO: Explain usage of Falcon 2
+- Ciliberti D, Kloosterman F (2017). Falcon: a highly flexible open-source software for closed-loop neuroscience. *Journal of Neural Engineering* 14, 045004. https://doi.org/10.1088/1741-2552/aa7526
+
+It was used to detect the content of hippocampal replay in real time in:
+
+- Ciliberti D, Michon F, Kloosterman F (2018). Real-time classification of experience-related ensemble spiking patterns for closed-loop applications. *eLife* 7, e36275. https://doi.org/10.7554/eLife.36275
