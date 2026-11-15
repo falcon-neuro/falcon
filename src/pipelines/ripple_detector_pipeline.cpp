@@ -5,10 +5,9 @@
 // scripts/plot_recording.py can show where in a burst each detection falls.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
-#include "../processors/event_recorder.cpp"
 #include "../processors/iir_filter.cpp"
+#include "../processors/recorder.cpp"
 #include "../processors/ripple_detector.cpp"
-#include "../processors/sample_recorder.cpp"
 #include "../processors/signal_generator.cpp"
 
 using RippleTestStream = StreamInfo<4, 30000.0, float>;
@@ -17,10 +16,10 @@ using RippleTestStream = StreamInfo<4, 30000.0, float>;
 SampleRing<RippleTestStream, 64> signal_generator_to_ripple_filter_sample_ring{
     "signal_generator_to_ripple_filter_sample_ring"};
 // Half a second of samples, so a write that blocks for a while loses none.
-SampleRing<RippleTestStream, 16384> ripple_filter_to_signal_recorder_sample_ring{
-    "ripple_filter_to_signal_recorder_sample_ring"};
-EventRing<Ripple, 1, 64> ripple_detector_to_ripple_recorder_event_ring{
-    "ripple_detector_to_ripple_recorder_event_ring"};
+SampleRing<RippleTestStream, 16384> ripple_filter_to_recorder_sample_ring{
+    "ripple_filter_to_recorder_sample_ring"};
+EventRing<Ripple, 1, 64> ripple_detector_to_recorder_event_ring{
+    "ripple_detector_to_recorder_event_ring"};
 
 void core4() {
     // Processors
@@ -83,11 +82,11 @@ void core5() {
     EventLogger<Ripple, 1> ripple_logger{"ripple_logger"};
 
     // Connections
-    // Each of these two is read on this core and also goes to the recorders' core.
+    // Each of these two is read on this core and also goes to the recorder's core.
     SampleBuffer<RippleTestStream> ripple_filter_to_ripple_detector_sample_buffer{
-        ripple_filter_to_signal_recorder_sample_ring};
+        ripple_filter_to_recorder_sample_ring};
     EventBuffer<Ripple, 1> ripple_detector_to_ripple_logger_event_buffer{
-        ripple_detector_to_ripple_recorder_event_ring};
+        ripple_detector_to_recorder_event_ring};
 
     if (!wait_at_start_barrier()) {
         return;
@@ -108,22 +107,30 @@ void core5() {
 
 void core8() {
     // Processors
-    SampleRecorder<RippleTestStream, {.file_name = "filtered_signal.bin"}> signal_recorder{
-        "signal_recorder"};
-    EventRecorder<Ripple, 1, {.file_name = "ripples.bin"}> ripple_recorder{"ripple_recorder"};
+    Recorder<RecorderOptions<2>{
+                 .file_name = "ripple_detector.bin",
+                 .slot_names = {"filtered_signal", "ripples"},
+             },
+             SampleBuffer<RippleTestStream>, EventBuffer<Ripple, 1>>
+        recorder{"recorder"};
 
     if (!wait_at_start_barrier()) {
         return;
     }
 
     while (next_pass()) {
-        signal_recorder.process({.input = ripple_filter_to_signal_recorder_sample_ring});
-        ripple_recorder.process({.input = ripple_detector_to_ripple_recorder_event_ring});
+        recorder.process({
+            .inputs =
+                {
+                    ripple_filter_to_recorder_sample_ring,
+                    ripple_detector_to_recorder_event_ring,
+                },
+        });
     }
 }
 
 int main() {
-    // The recorders write to files, so their core isn't a realtime one.
+    // The recorder writes to a file, so its core isn't a realtime one.
     return run_on_cores("ripple_detector",
                         {
                             {.core_number = 4, .entry_point = core4},

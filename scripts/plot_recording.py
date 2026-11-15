@@ -2,20 +2,24 @@
 # requires-python = ">=3.12"
 # dependencies = ["numpy", "matplotlib"]
 # ///
-"""Plots a file that SampleRecorder wrote: raw little-endian records, each a sample's number as a
-u64 followed by its channels' values in order as float32. The file holds neither its channel count
-nor its rate, so both are arguments; SampleRecorder logs them when it starts.
+"""Plots a file that Recorder wrote. The file describes itself: its first line is JSON that names
+each connection (a slot) and says how its records are laid out. Chunks follow, each a u32 for the
+slot, a u32 for the number of records, then that many records of that slot. A sample's record is its
+number as a u64 and its channels' values in order as float32; an event's record is its header's
+sample number, device timestamp, arrival TSC and lost-sample count, each a u64. All little-endian.
 
-    uv run scripts/plot_recording.py ~/falcon/runs/<run>/ripple_bursts.bin --channels 4 --rate 30000
+    uv run scripts/plot_recording.py ~/falcon/runs/<run>/ripple_detector.bin
 
-With --events, a file that EventRecorder wrote (per event, its header's sample number, device
-timestamp, arrival TSC and lost-sample count, each a u64) is drawn as a vertical line per event.
-With --mean-square, a last panel shows the mean over the channels of their squared values, which
-is what RippleDetector compares with its threshold.
+One sample slot is plotted, a panel per channel: the first one, or the one named with --samples.
+Every event slot is drawn as vertical lines, a colour per slot. With --mean-square, a last panel
+shows the mean over the channels of their squared values, which is what RippleDetector compares
+with its threshold.
 """
 
 import argparse
+import json
 import pathlib
+import struct
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,50 +32,94 @@ EVENT_TYPE = np.dtype(
         ("lost_sample_count", "<u8"),
     ]
 )
+CHUNK_HEADER = struct.Struct("<II")
+EVENT_COLOURS = ["tab:red", "tab:purple", "tab:orange", "tab:brown", "tab:pink"]
 
 
-def read_records(path: pathlib.Path, record_type: np.dtype, hint: str) -> np.ndarray:
-    byte_count = path.stat().st_size
-    if byte_count % record_type.itemsize != 0:
+def record_type_of(slot: dict) -> np.dtype:
+    if slot["kind"] == "samples":
+        record_type = np.dtype([("sample_number", "<u8"), ("values", "<f4", (slot["channels"],))])
+    elif slot["kind"] == "events":
+        record_type = EVENT_TYPE
+    else:
+        raise SystemExit(f"slot {slot['name']} is of an unknown kind, {slot['kind']}")
+    if record_type.itemsize != slot["record_bytes"]:
         raise SystemExit(
-            f"{path} holds {byte_count} bytes, which is not a whole number of records of "
-            f"{record_type.itemsize} bytes{hint}"
+            f"slot {slot['name']} says its records take {slot['record_bytes']} bytes, "
+            f"not the {record_type.itemsize} of its kind"
         )
-    return np.fromfile(path, dtype=record_type)
+    return record_type
 
 
-def read_recording(path: pathlib.Path, channel_count: int) -> np.ndarray:
-    """Returns the records: `["sample_number"]` per sample, `["values"]` per sample and channel."""
-    record_type = np.dtype([("sample_number", "<u8"), ("values", "<f4", (channel_count,))])
-    records = read_records(path, record_type, ": is --channels right?")
-    if records.size == 0:
-        raise SystemExit(f"{path} holds no samples")
-    return records
+def read_recording(path: pathlib.Path) -> tuple[dict, dict[str, np.ndarray]]:
+    """Returns the file's description and each slot's records, by the slot's name."""
+    with open(path, "rb") as file:
+        description = json.loads(file.readline())
+        data = file.read()
+    if description.get("format") != "falcon_recording" or description.get("version") != 1:
+        raise SystemExit(f"{path} is not a falcon_recording file of version 1")
+
+    slots = description["slots"]
+    record_types = [record_type_of(slot) for slot in slots]
+    chunks: list[list[memoryview]] = [[] for _ in slots]
+    view = memoryview(data)
+    offset = 0
+    while offset + CHUNK_HEADER.size <= len(data):
+        slot_index, record_count = CHUNK_HEADER.unpack_from(data, offset)
+        offset += CHUNK_HEADER.size
+        if slot_index >= len(slots):
+            raise SystemExit(f"{path} holds a chunk of slot {slot_index}, which it doesn't describe")
+        byte_count = record_count * record_types[slot_index].itemsize
+        if offset + byte_count > len(data):
+            # The last chunk is cut short, e.g. because the run was killed.
+            break
+        chunks[slot_index].append(view[offset : offset + byte_count])
+        offset += byte_count
+
+    records = {
+        slot["name"]: np.frombuffer(b"".join(chunks[slot_index]), dtype=record_types[slot_index])
+        for slot_index, slot in enumerate(slots)
+    }
+    return description, records
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("recording", type=pathlib.Path)
-    parser.add_argument("--channels", type=int, required=True, help="the stream's channel count")
-    parser.add_argument("--rate", type=float, required=True, help="the stream's rate in Hz")
+    parser.add_argument("--samples", help="the sample slot to plot; the first one if left out")
     parser.add_argument("--start", type=float, default=0.0, help="seconds after the first sample")
     parser.add_argument("--duration", type=float, default=2.0, help="seconds to plot")
-    parser.add_argument("--events", type=pathlib.Path, help="a file that EventRecorder wrote")
     parser.add_argument(
         "--mean-square", action="store_true", help="add a panel with the channels' mean square"
     )
     parser.add_argument("--output", type=pathlib.Path, help="save a PNG instead of opening a window")
     arguments = parser.parse_args()
 
-    records = read_recording(arguments.recording, arguments.channels)
-    sample_numbers = records["sample_number"]
+    description, records = read_recording(arguments.recording)
+    slots = description["slots"]
+    for slot in slots:
+        print(f"slot {slot['name']}: {slot['kind']}, {records[slot['name']].size} records")
+
+    sample_slots = [slot for slot in slots if slot["kind"] == "samples"]
+    if arguments.samples is not None:
+        sample_slots = [slot for slot in sample_slots if slot["name"] == arguments.samples]
+    if not sample_slots:
+        raise SystemExit("no such sample slot in the recording")
+    sample_slot = sample_slots[0]
+    samples = records[sample_slot["name"]]
+    if samples.size == 0:
+        raise SystemExit(f"slot {sample_slot['name']} holds no samples")
+    channel_count = sample_slot["channels"]
+    rate = sample_slot["rate"]
+
+    sample_numbers = samples["sample_number"]
     first_sample_number = int(sample_numbers[0])
     # From the sample numbers, not from the position in the file, so lost samples leave a gap in
     # the plot instead of shifting everything after them.
-    seconds = (sample_numbers - sample_numbers[0]) / arguments.rate
+    seconds = (sample_numbers - sample_numbers[0]) / rate
     lost_sample_count = int(sample_numbers[-1]) - first_sample_number + 1 - sample_numbers.size
     print(
-        f"{sample_numbers.size} samples, numbers {first_sample_number} to {sample_numbers[-1]}, "
+        f"{sample_slot['name']}: samples {first_sample_number} to {sample_numbers[-1]}, "
         f"{seconds[-1]:.3f} s, {lost_sample_count} lost"
     )
 
@@ -80,44 +128,47 @@ def main() -> None:
     if not is_shown.any():
         raise SystemExit(f"nothing to plot: the recording is {seconds[-1]:.3f} s long")
     shown_seconds = seconds[is_shown]
-    shown_values = records["values"][is_shown]
+    shown_values = samples["values"][is_shown]
 
-    shown_event_seconds = np.array([])
-    if arguments.events is not None:
-        events = read_records(arguments.events, EVENT_TYPE, "")
-        event_seconds = (
-            events["sample_number"].astype(np.int64) - first_sample_number
-        ) / arguments.rate
-        shown_event_seconds = event_seconds[
-            (event_seconds >= arguments.start) & (event_seconds < window_end)
-        ]
-        print(f"{events.size} events, {shown_event_seconds.size} of them in the plot:")
-        for event_second in shown_event_seconds:
-            print(f"  at {event_second:.6f} s")
-
-    panel_count = arguments.channels + (1 if arguments.mean_square else 0)
+    panel_count = channel_count + (1 if arguments.mean_square else 0)
     figure, axes = plt.subplots(
         panel_count, 1, sharex=True, squeeze=False, figsize=(12, 2 * panel_count)
     )
     panels = axes[:, 0]
-    for channel in range(arguments.channels):
+    for channel in range(channel_count):
         panels[channel].plot(shown_seconds, shown_values[:, channel], linewidth=0.6)
         panels[channel].set_ylabel(f"channel {channel}\n(µV)")
     if arguments.mean_square:
         mean_square = np.mean(shown_values.astype(np.float64) ** 2, axis=1)
         panels[-1].plot(shown_seconds, mean_square, linewidth=0.6, color="tab:green")
         panels[-1].set_ylabel("mean square\n(µV²)")
-    for panel in panels:
+
+    event_slots = [slot for slot in slots if slot["kind"] == "events"]
+    for event_slot_index, event_slot in enumerate(event_slots):
+        events = records[event_slot["name"]]
+        event_seconds = (events["sample_number"].astype(np.int64) - first_sample_number) / rate
+        shown_event_seconds = event_seconds[
+            (event_seconds >= arguments.start) & (event_seconds < window_end)
+        ]
+        print(f"{event_slot['name']}: {shown_event_seconds.size} of its events are in the plot:")
         for event_second in shown_event_seconds:
-            panel.axvline(event_second, color="tab:red", linewidth=0.8)
+            print(f"  at {event_second:.6f} s")
+        colour = EVENT_COLOURS[event_slot_index % len(EVENT_COLOURS)]
+        for panel in panels:
+            for event_second in shown_event_seconds:
+                panel.axvline(event_second, color=colour, linewidth=0.8)
+        if shown_event_seconds.size > 0:
+            panels[0].axvline(
+                shown_event_seconds[0], color=colour, linewidth=0.8, label=event_slot["name"]
+            )
+    if event_slots and panels[0].get_legend_handles_labels()[0]:
+        panels[0].legend(loc="upper right")
+
     panels[-1].set_xlabel(f"time since sample {first_sample_number} (s)")
-    title = (
-        f"{arguments.recording.name}: {sample_numbers.size} samples, {lost_sample_count} lost, "
-        f"{arguments.channels} channels at {arguments.rate:g} Hz"
+    figure.suptitle(
+        f"{arguments.recording.name}, slot {sample_slot['name']}: {sample_numbers.size} samples, "
+        f"{lost_sample_count} lost, {channel_count} channels at {rate:g} Hz"
     )
-    if arguments.events is not None:
-        title += f"; red lines: {arguments.events.name}"
-    figure.suptitle(title)
     figure.tight_layout()
 
     if arguments.output is not None:

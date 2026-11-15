@@ -1,9 +1,9 @@
-// Ripple bursts recording pipeline: SignalGenerator -> ring -> SampleRecorder. It records
+// Ripple bursts recording pipeline: SignalGenerator -> ring -> Recorder. It records
 // SignalGenerator's ripple bursts so they can be looked at: scripts/plot_recording.py plots the
 // file. Expect 2 bursts per second on each of the 4 channels, each 80 ms long, a 180 Hz
 // oscillation that swells from 10 µV to 100 µV and back.
 #include "../core/engine.cpp"
-#include "../processors/sample_recorder.cpp"
+#include "../processors/recorder.cpp"
 #include "../processors/signal_generator.cpp"
 
 using RippleTestStream = StreamInfo<4, 30000.0, float>;
@@ -30,14 +30,16 @@ void core4() {
 
 void core8() {
     // Processors
-    SampleRecorder<RippleTestStream, {.file_name = "ripple_bursts.bin"}> recorder{"recorder"};
+    Recorder<RecorderOptions<1>{.file_name = "ripple_bursts.bin", .slot_names = {"ripple_bursts"}},
+             SampleBuffer<RippleTestStream>>
+        recorder{"recorder"};
 
     if (!wait_at_start_barrier()) {
         return;
     }
 
     while (next_pass()) {
-        recorder.process({.input = signal_generator_to_recorder_sample_ring});
+        recorder.process({.inputs = {signal_generator_to_recorder_sample_ring}});
     }
 }
 

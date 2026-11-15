@@ -33,6 +33,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <typeinfo>
 #include <vector>
@@ -612,6 +613,15 @@ template <StateValueType StateType, StateType default_value>
 using StateInput = In<StateValue<StateType, default_value>>;
 template <StateValueType StateType, StateType initial_value>
 using StateOutput = Out<StateValue<StateType, initial_value>>;
+
+// A port with slots: one member of Connections that takes as many connections as pipeline.cpp
+// gives it, each of its own kind (a SampleBuffer or an EventBuffer type). Its processor is a
+// template over those kinds and goes through them with `template for`, where each slot has its
+// own type.
+template <typename... Kinds>
+using InputSlots = std::tuple<In<Kinds>...>;
+template <typename... Kinds>
+using OutputSlots = std::tuple<Out<Kinds>...>;
 
 // --- Passes ---
 

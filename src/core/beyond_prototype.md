@@ -170,7 +170,7 @@ In all of them, `sample` is the sample number of the threshold crossing, so ever
 - A slow reader that falls behind (formerly part of the rings question in spec.md): the viewer can skip data, but the recorder must not lose any. Is falling behind a failure for every reader, or only for some?
 
 ### Recording formats
-Recordings need proper file formats, such as NWB. The first recorder processor writes raw binary only (see **SampleRecorder** in spec.md). Not designed yet: which formats, and where each stream's facts (channel count, rate, sample numbers) go.
+Recordings need proper file formats, such as NWB. Decided: later, since supporting NWB isn't affordable now. Until then Recorder writes a format of its own, one file for all its connections, as a session in NWB is one file (see **Recorder** in spec.md). Not designed yet: which formats, and how Recorder writes them.
 
 ### Experiment files
 - **Each experiment is saved as one plain zip file** (e.g. `my_experiment.zip`) containing `pipeline.cpp` and every resource it uses.

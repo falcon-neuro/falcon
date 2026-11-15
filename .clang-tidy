@@ -43,6 +43,10 @@ CheckOptions:
     value: CamelCase
   - key: readability-identifier-naming.EnumConstantCase
     value: CamelCase
+  - key: readability-identifier-naming.VariableIgnoredRegexp
+    value: '^__u[0-9]+$'   # the names clang gives a `template for` loop's slots
+  - key: bugprone-reserved-identifier.AllowedIdentifiers
+    value: '^__u[0-9]+$'   # the same names
   - key: readability-identifier-length.IgnoredParameterNames
     value: '^$'         # none
   - key: readability-identifier-length.IgnoredVariableNames
