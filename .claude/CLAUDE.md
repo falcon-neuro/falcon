@@ -13,6 +13,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Only .cpp files, for minimalism.
 - Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does. Code outlives our discussions: comments never carry decision history, rejected options, plans or progress ("so far", "for now"), and never quote doc headings as if they explained the code; that context lives in the docs under `.claude/ongoing_work`.
 - Write each comment for someone reading the code in ten years, not as a chat reply: no comparisons with Falcon 1 or with earlier versions ("as Falcon 1's", "unlike before"), and nothing the md docs already say. When in doubt, leave the comment out.
+- Doc comments (`///`) are another kind: written for Falcon's user, never for whoever reads the code. Every option of a processor has one, strict and good, since the UI shows it as that option's description and the API website prints it (see **Every option has a doc comment, written for the user** in generator.md).
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, IirFilter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress

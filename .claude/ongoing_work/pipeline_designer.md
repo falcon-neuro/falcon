@@ -12,6 +12,10 @@ The part of the UI in which a user builds a graph: places processors on cores, c
 - **Bypass toggle**: for processors with the same input and output type (signal passes through unchanged). Only while the graph is not running.
 - **Order of processors**: Let the user set the order of processors on each core in the node editor (see **Per-core loop** in engine.md).
 
+## Done
+- **A panel that lists the processors**, `src/ui/main_window/processors_panel.cpp`, at the left of the main window beside the ephys viewer. It shows every processor of `all_processors.cpp` (see **Done** in generator.md): opened, its description, its file, its options with type and default, and its connections with direction and kind. The "(i)" beside an option or connection shows its description. Built; not yet looked at by the user. Nothing can be placed or connected yet.
+- Its lint needs one build first, since it includes the file the build generates.
+
 ## Open questions
 - The first to settle is shared with the generator: what a graph is while it is held in memory, since the node editor fills it and the generator reads it. A rough list of its components is proposed under **The graph's components** in generator.md.
 - What the old Dart GUI's editor did, as a list to choose from: dragging a node, clicking a port and then a compatible port to connect them, removing a connection under the cursor, renaming and duplicating a processor, folding a node, zooming, and a panel of processors sorted into inputs, outputs and the rest.

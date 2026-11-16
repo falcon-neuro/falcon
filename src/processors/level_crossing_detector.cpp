@@ -20,17 +20,32 @@ struct LevelCrossings : StreamEvent {
 enum class CrossingDirection : std::uint8_t { Upward, Downward };
 
 struct LevelCrossingDetectorOptions {
-    double threshold = 0;  // µV, or the stream's unit
+    /// The level a channel must cross, in µV or whatever unit the stream is in. It may be
+    /// positive, negative or 0.
+    double threshold = 0;
+    /// The direction in which a channel must cross the level to be detected: upward, from below
+    /// the level to above it, or downward. It is separate from the level's sign, since a signal
+    /// can cross a positive level downward.
     CrossingDirection direction = CrossingDirection::Upward;
-    int post_detection_block = 2;  // samples a channel is ignored for after each of its crossings
+    /// How many samples a channel is ignored for after each of its crossings. Each channel is
+    /// ignored on its own, so channels that cross a sample apart are all detected. 0 ignores
+    /// nothing; it can't be negative.
+    int post_detection_block = 2;
 };
 
+/// Detects channels crossing a level in a chosen direction: on every sample where one or more do,
+/// it emits an event that names them, then ignores each of those channels for a few samples.
 template <typename InputStreamInfo, LevelCrossingDetectorOptions options>
 struct LevelCrossingDetector {
-    static_assert(options.post_detection_block >= 0);
+    static_assert(options.post_detection_block >= 0,
+                  "a channel can't be ignored for a negative number of samples");
 
     struct Connections {
+        /// The signal to watch. Each channel's value is compared with the level as it is, its
+        /// offset and slow waves included.
         SampleInputBuffer<InputStreamInfo> input;
+        /// One event for each sample on which at least one channel crossed the level, naming every
+        /// channel that did.
         EventOutputBuffer<LevelCrossings<InputStreamInfo>, 1> output;
     };
 

@@ -19,8 +19,14 @@ struct BiquadSection {
 
 template <int SectionCount>
 struct IirFilterOptions {
-    double design_rate = 0;  // Hz, the sampling rate the coefficients were designed for
-    double gain = 1;         // for the whole cascade
+    /// The sampling rate the coefficients were designed for, in Hz. It must equal the rate of the
+    /// input stream, or every cutoff would shift.
+    double design_rate = 0;
+    /// A factor the whole filter's output is multiplied by. 1 leaves it as the sections give it.
+    double gain = 1;
+    /// The filter's second-order sections, applied one after the other, each with its coefficients
+    /// b0, b1, b2, a1 and a2, where a0 is already divided out. There must be at least one, and each
+    /// must be stable.
     std::array<BiquadSection, SectionCount> sections{};
 };
 
@@ -36,11 +42,13 @@ template <std::size_t SectionCount>
     });
 }
 
+/// An IIR filter on every channel, built from second-order sections applied one after the other. It
+/// delays the signal by only a few samples, but not every frequency by the same time.
 template <typename InputStreamInfo, IirFilterOptions options>
 struct IirFilter {
     static constexpr std::size_t section_count = options.sections.size();
 
-    static_assert(section_count > 0);
+    static_assert(section_count > 0, "an IIR filter needs at least one section");
     static_assert(options.design_rate == InputStreamInfo::rate,
                   "the coefficients were designed for another sampling rate, so every cutoff "
                   "would shift");
@@ -48,7 +56,9 @@ struct IirFilter {
                   "a filter section is unstable: check its a1 and a2");
 
     struct Connections {
+        /// The signal to filter.
         SampleInputBuffer<InputStreamInfo> input;
+        /// The filtered signal: one sample for each input sample, with the same channels and rate.
         SampleOutputBuffer<InputStreamInfo> output;
     };
 

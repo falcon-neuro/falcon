@@ -78,18 +78,23 @@ concept RecordableKind = requires { RecorderSlotFormatOf<Kind>::value; };
 
 template <int SlotCount>
 struct RecorderOptions {
-    Str file_name = "recording.bin";  // in the run's directory
-    // What the file calls each connection, in the order of `inputs`.
+    /// The name of the file, in the run's directory. A name only, without a folder.
+    Str file_name = "recording.bin";
+    /// What the file calls each connection, in the order they are connected: one name each, of
+    /// letters, digits, _ and - only.
     std::array<Str, SlotCount> slot_names{};
 };
 
 // `options` comes first and its type is checked below: a template's list of kinds has to come
 // last, and the options' type depends on how many kinds there are.
+/// Writes everything its connections bring, samples and events alike, into one file in the run's
+/// directory, to look at after the run. Writing to a file can stall, so it belongs on a core that
+/// isn't realtime.
 template <auto options, RecordableKind... InputKinds>
 struct Recorder {
     static constexpr std::size_t slot_count = sizeof...(InputKinds);
 
-    static_assert(slot_count > 0);
+    static_assert(slot_count > 0, "a recorder needs at least one connection");
     static_assert(std::same_as<decltype(options), RecorderOptions<static_cast<int>(slot_count)>>,
                   "options is a RecorderOptions<N>, with a name for each of the N connections");
     static_assert(is_file_name(options.file_name),
@@ -98,6 +103,8 @@ struct Recorder {
                   "a slot's name holds only letters, digits, _ and -");
 
     struct Connections {
+        /// Whatever is to be recorded: any number of connections, each bringing samples or events.
+        /// Of an event, only its sample number and its times are written.
         InputSlots<InputKinds...> inputs;
     };
 

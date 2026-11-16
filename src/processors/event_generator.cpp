@@ -13,12 +13,18 @@ struct ScheduledEvent : Event {
 };
 
 struct EventGeneratorOptions {
-    double rate = 1;  // events per second (Hz)
+    /// How many events it emits per second, in Hz. It must be above 0.
+    double rate = 1;
 };
 
+/// Emits an event at a fixed rate, from a timer and not from a signal, e.g. to try a graph without
+/// acquisition hardware. It sleeps between events, so it needs a core of its own.
 template <EventGeneratorOptions options>
 struct EventGenerator {
+    static_assert(options.rate > 0, "the rate must be above 0");
+
     struct Connections {
+        /// One event each time the period has passed, numbered from 1.
         EventOutputBuffer<ScheduledEvent, 1> output;
     };
 

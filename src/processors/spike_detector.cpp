@@ -14,16 +14,25 @@ struct Spikes : StreamEvent {
 };
 
 struct SpikeDetectorOptions {
-    double threshold = -50;  // µV: negative detects downward crossings, positive upward ones
+    /// The level a channel must cross to count as a spike, in µV. Its sign gives the direction:
+    /// a negative threshold detects a channel falling below it, a positive one a channel rising
+    /// above it. It can't be 0.
+    double threshold = -50;
 };
 
+/// Detects spikes: on every sample where one or more channels cross a threshold it emits an event
+/// that names those channels, without waiting for the spike's peak.
 template <typename InputStreamInfo, SpikeDetectorOptions options>
 struct SpikeDetector {
     static_assert(options.threshold != 0,
                   "the threshold's sign gives the direction, so it can't be 0");
 
     struct Connections {
+        /// The signal to detect spikes in. Each channel's value is compared with the threshold as
+        /// it is, so the stream should already be filtered to the spike band.
         SampleInputBuffer<InputStreamInfo> input;
+        /// One event for each sample on which at least one channel crossed the threshold, naming
+        /// every channel that did. A channel is named on the sample it crosses, not at its peak.
         EventOutputBuffer<Spikes<InputStreamInfo>, 1> output;
     };
 

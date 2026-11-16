@@ -11,7 +11,11 @@
 // y[n] = taps[0]·x[n] + taps[1]·x[n−1] + … + taps[N−1]·x[n−N+1]
 template <int TapCount>
 struct FirFilterOptions {
-    double design_rate = 0;  // Hz, the sampling rate the taps were designed for
+    /// The sampling rate the taps were designed for, in Hz. It must equal the rate of the input
+    /// stream, or every cutoff would shift.
+    double design_rate = 0;
+    /// The filter's taps: the weight of the newest input value first, of the oldest last. There
+    /// must be at least one, and none may be NaN or infinite.
     std::array<double, TapCount> taps{};
 };
 
@@ -25,17 +29,21 @@ template <std::size_t TapCount>
     });
 }
 
+/// An FIR filter on every channel: each output value is a weighted sum of the newest input values,
+/// with the taps as the weights.
 template <typename InputStreamInfo, FirFilterOptions options>
 struct FirFilter {
     static constexpr std::size_t tap_count = options.taps.size();
 
-    static_assert(tap_count > 0);
+    static_assert(tap_count > 0, "an FIR filter needs at least one tap");
     static_assert(options.design_rate == InputStreamInfo::rate,
                   "the taps were designed for another sampling rate, so every cutoff would shift");
     static_assert(is_every_tap_finite(options.taps), "a tap is NaN or infinite");
 
     struct Connections {
+        /// The signal to filter.
         SampleInputBuffer<InputStreamInfo> input;
+        /// The filtered signal: one sample for each input sample, with the same channels and rate.
         SampleOutputBuffer<InputStreamInfo> output;
     };
 

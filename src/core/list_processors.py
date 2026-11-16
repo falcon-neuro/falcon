@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Lists Falcon's processors for the UI and the generator.
+
+Reads each processor's definition from clang's syntax tree of its file and writes them all as C++
+data (see processor_list.cpp). It parses no C++ itself. It refuses a processor whose description,
+options, connections or checks lack the text a user is shown. The build runs it (CMakeLists.txt):
+
+    list_processors.py --clang clang++ --source-root src --output all_processors.cpp FILE... -- CLANG_FLAG...
+"""
+
+import json
+import re
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+# A member of Connections is recognised by how its type starts.
+PORT_TYPES = {
+    "SampleInputBuffer<": ("Input", "Samples", False),
+    "SampleOutputBuffer<": ("Output", "Samples", False),
+    "EventInputBuffer<": ("Input", "Events", False),
+    "EventOutputBuffer<": ("Output", "Events", False),
+    "StateInput<": ("Input", "State", False),
+    "StateOutput<": ("Output", "State", False),
+    "InputSlots<": ("Input", "Any", True),
+    "OutputSlots<": ("Output", "Any", True),
+}
+
+
+def fail(message):
+    sys.exit("list_processors.py: " + message)
+
+
+def arguments():
+    args = sys.argv[1:]
+    clang_flags = []
+    if "--" in args:
+        clang_flags = args[args.index("--") + 1:]
+        args = args[:args.index("--")]
+    named, files = {}, []
+    while args:
+        argument = args.pop(0)
+        if argument in ("--clang", "--source-root", "--output"):
+            named[argument] = args.pop(0)
+        else:
+            files.append(Path(argument))
+    for name in ("--clang", "--source-root", "--output"):
+        if name not in named:
+            fail("missing " + name)
+    return named["--clang"], Path(named["--source-root"]), Path(named["--output"]), files, clang_flags
+
+
+def declared_names(source):
+    """The structs a file declares, only to ask clang about each: clang's answer is what counts."""
+    text = source.decode("utf-8", errors="replace")
+    return sorted(set(re.findall(r"^\s*(?:struct|class)\s+([A-Za-z_]\w*)", text, re.MULTILINE)) - {"Connections"})
+
+
+def syntax_trees(clang, clang_flags, path, name):
+    """What clang parsed of the declarations of `path` whose name holds `name`."""
+    command = [clang, *clang_flags, "-fsyntax-only", "-Wno-pragma-once-outside-header",
+               "-Xclang", "-ast-dump=json", "-Xclang", "-ast-dump-filter=" + name, str(path)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        # A file that doesn't compile still gives a tree, with wrong types in it.
+        fail("clang couldn't compile %s, so nothing in it can be trusted:\n%s" % (path, result.stderr[-2000:]))
+    trees, position, decoder = [], 0, json.JSONDecoder()
+    while True:
+        while position < len(result.stdout) and result.stdout[position] in " \n\r\t":
+            position += 1
+        if position >= len(result.stdout):
+            return trees
+        tree, position = decoder.raw_decode(result.stdout, position)
+        trees.append(tree)
+
+
+def children(node):
+    return [child for child in node.get("inner", []) if child]
+
+
+def offset_of(location):
+    if "offset" in location:
+        return location["offset"]
+    return location.get("expansionLoc", {}).get("offset")
+
+
+def source_text(source, node):
+    """A node's text as written. Clang counts in bytes, so `source` is the file's bytes."""
+    begin = offset_of(node["range"]["begin"])
+    end_location = node["range"]["end"]
+    end = offset_of(end_location)
+    if begin is None or end is None:
+        return None
+    length = end_location.get("tokLen", end_location.get("expansionLoc", {}).get("tokLen", 0))
+    return " ".join(source[begin:end + length].decode("utf-8").split())
+
+
+def parameter_text(source, parameter):
+    """A template parameter as written. Clang's range starts after a concept's namespace, so that
+    is taken from the source in front of it."""
+    text = source_text(source, parameter) or parameter.get("name", "")
+    begin = offset_of(parameter["range"]["begin"])
+    qualifier = re.search(rb"((?:[A-Za-z_]\w*::)+)$", source[:begin] if begin is not None else b"")
+    return (qualifier.group(1).decode("utf-8") if qualifier else "") + text
+
+
+def line_of(source, node):
+    begin = offset_of(node["range"]["begin"])
+    return source.count(b"\n", 0, begin) + 1 if begin is not None else 0
+
+
+def doc_comment(node):
+    """The node's doc comment (`///`), as one line of text."""
+    words = []
+
+    def gather(comment):
+        if comment.get("kind") == "TextComment":
+            words.append(comment.get("text", "").strip())
+        for child in children(comment):
+            gather(child)
+
+    for child in children(node):
+        if child.get("kind") == "FullComment":
+            gather(child)
+    return " ".join(word for word in words if word)
+
+
+def uses_options(node):
+    if node.get("kind") == "DeclRefExpr" and node.get("referencedDecl", {}).get("name") == "options":
+        return True
+    return any(uses_options(child) for child in children(node))
+
+
+def fields_of(record):
+    return [child for child in children(record) if child.get("kind") == "FieldDecl"]
+
+
+def initializer_text(source, field):
+    initializers = [child for child in children(field) if child.get("kind") != "FullComment"]
+    return source_text(source, initializers[0]) if initializers else ""
+
+
+def read_port(source, field, where, problems):
+    written_type = field["type"]["qualType"]
+    initializer = initializer_text(source, field) or ""
+    is_optional = written_type.startswith("std::optional<") or initializer == "UNCONNECTED"
+    inner_type = written_type[len("std::optional<"):] if written_type.startswith("std::optional<") else written_type
+    kind = next((value for start, value in PORT_TYPES.items() if inner_type.startswith(start)), None)
+    if kind is None:
+        problems.append("%s: `%s` is of a type this script doesn't know as a connection: %s" % (where, field["name"], written_type))
+        return None
+    description = doc_comment(field)
+    if not description:
+        problems.append("%s: the connection `%s` has no doc comment (///) saying what it expects or gives" % (where, field["name"]))
+    direction, port_kind, has_slots = kind
+    return {"name": field["name"], "direction": direction, "kind": port_kind, "is_optional": is_optional,
+            "has_slots": has_slots, "type": written_type, "description": description}
+
+
+def read_file(clang, clang_flags, source_root, path):
+    """The processors one file defines, and what is wrong with them."""
+    source = path.read_bytes()
+    shown_path = path.resolve().relative_to(source_root.resolve()).as_posix()
+    records, templates = {}, {}
+
+    def gather(node, template):
+        kind = node.get("kind")
+        if kind == "ClassTemplateDecl":
+            template = node
+        if kind == "CXXRecordDecl" and node.get("completeDefinition") and node.get("name"):
+            records.setdefault(node["name"], node)
+            if template is not None:
+                templates.setdefault(node["name"], template)
+            template = None
+        for child in children(node):
+            gather(child, template)
+
+    for name in declared_names(source):
+        for tree in syntax_trees(clang, clang_flags, path, name):
+            gather(tree, None)
+
+    processors, problems = [], []
+    for name, record in sorted(records.items()):
+        connections = [child for child in children(record)
+                       if child.get("kind") == "CXXRecordDecl" and child.get("name") == "Connections" and child.get("completeDefinition")]
+        if not connections:
+            continue
+        where = "%s:%d" % (path, line_of(source, record))
+        template = templates.get(name)
+        parameters = [child for child in children(template or {})
+                      if child.get("kind") in ("TemplateTypeParmDecl", "NonTypeTemplateParmDecl", "TemplateTemplateParmDecl")]
+
+        description = doc_comment(template) if template is not None and doc_comment(template) else doc_comment(record)
+        if not description:
+            problems.append("%s: the processor `%s` has no doc comment (///) saying what it does" % (where, name))
+
+        options_name = next((re.sub(r"<.*", "", parameter["type"]["qualType"]) for parameter in parameters
+                             if parameter.get("kind") == "NonTypeTemplateParmDecl" and parameter.get("name") == "options"), None)
+        if options_name not in records:
+            options_name = name + "Options"
+        options = []
+        for field in fields_of(records.get(options_name, {})):
+            option_description = doc_comment(field)
+            if not option_description:
+                problems.append("%s:%d: the option `%s` has no doc comment (///) written for the user" % (path, line_of(source, field), field["name"]))
+            options.append({"name": field["name"], "type": field["type"]["qualType"],
+                            "default": initializer_text(source, field) or "", "description": option_description})
+
+        ports = [read_port(source, field, "%s:%d" % (path, line_of(source, field)), problems) for field in fields_of(connections[0])]
+
+        for check in children(record):
+            if check.get("kind") != "StaticAssertDecl":
+                continue
+            parts = children(check)
+            has_message = any(part.get("kind") == "StringLiteral" for part in parts[1:])
+            if parts and uses_options(parts[0]) and not has_message:
+                problems.append("%s:%d: a static_assert about an option has no message for the user" % (path, line_of(source, check)))
+
+        processors.append({"name": name, "file": shown_path, "description": description,
+                           "parameters": [parameter_text(source, parameter) for parameter in parameters],
+                           "options": options, "ports": [port for port in ports if port is not None]})
+    return path, processors, problems
+
+
+def literal(text):
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+
+
+def write_output(output, processors):
+    lines = ["// Written by src/core/list_processors.py from the processors' source when Falcon is built.",
+             "// Not to be edited: change the processor, and build again.",
+             "#pragma once",
+             "#include <array>",
+             '#include "core/processor_list.cpp"',
+             "",
+             "namespace all_processors_detail {",
+             ""]
+    for processor in processors:
+        name = processor["name"]
+        lines.append("inline constexpr std::array<const char*, %d> %s_template_parameters{{" % (len(processor["parameters"]), name))
+        lines += ["    %s," % literal(parameter) for parameter in processor["parameters"]]
+        lines.append("}};")
+        lines.append("inline constexpr std::array<OptionDescription, %d> %s_options{{" % (len(processor["options"]), name))
+        for option in processor["options"]:
+            lines.append("    OptionDescription{.name = %s, .type = %s, .default_value = %s," % (
+                literal(option["name"]), literal(option["type"]), literal(option["default"])))
+            lines.append("                      .description = %s}," % literal(option["description"]))
+        lines.append("}};")
+        lines.append("inline constexpr std::array<PortDescription, %d> %s_ports{{" % (len(processor["ports"]), name))
+        for port in processor["ports"]:
+            lines.append("    PortDescription{.name = %s, .direction = PortDirection::%s, .kind = PortKind::%s," % (
+                literal(port["name"]), port["direction"], port["kind"]))
+            lines.append("                    .is_optional = %s, .has_slots = %s, .type = %s," % (
+                "true" if port["is_optional"] else "false", "true" if port["has_slots"] else "false", literal(port["type"])))
+            lines.append("                    .description = %s}," % literal(port["description"]))
+        lines.append("}};")
+        lines.append("")
+    lines += ["}  // namespace all_processors_detail", "",
+              "inline constexpr std::array<ProcessorDescription, %d> ALL_PROCESSORS{{" % len(processors)]
+    for processor in processors:
+        name = processor["name"]
+        lines.append("    ProcessorDescription{.name = %s, .file = %s," % (literal(name), literal(processor["file"])))
+        lines.append("                         .description = %s," % literal(processor["description"]))
+        lines.append("                         .template_parameters = all_processors_detail::%s_template_parameters," % name)
+        lines.append("                         .options = all_processors_detail::%s_options," % name)
+        lines.append("                         .ports = all_processors_detail::%s_ports}," % name)
+    lines += ["}};", ""]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main():
+    clang, source_root, output, files, clang_flags = arguments()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda path: read_file(clang, clang_flags, source_root, path), sorted(files)))
+    processors, problems = [], []
+    for path, found, file_problems in results:
+        if not found:
+            print("list_processors.py: %s defines no processor (nothing with a Connections struct), so it is left out" % path)
+        processors += found
+        problems += file_problems
+    if problems:
+        fail("these must be put right before Falcon builds:\n  " + "\n  ".join(problems))
+    processors.sort(key=lambda processor: processor["name"].lower())
+    write_output(output, processors)
+    print("list_processors.py: %d processors listed in %s" % (len(processors), output))
+
+
+if __name__ == "__main__":
+    main()

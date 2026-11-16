@@ -20,17 +20,24 @@
 // data byte, so only one may drive a card. Port access needs root or CAP_SYS_RAWIO.
 
 struct PCIeParallelOutputOptions {
-    int pin = 5;  // 2 to 9, the data lines D0 to D7
+    /// The pin of the parallel port that pulses: 2 to 9, the port's data lines D0 to D7.
+    int pin = 5;
+    /// How long the pin stays high for each pulse, in microseconds. It must be above 0.
     double pulse_width_microseconds = 1000;
 };
 
+/// Turns each event into a pulse on one pin of a PCIe parallel port card, e.g. to trigger a
+/// stimulator. It times the pulse itself, so it needs a core that never sleeps, and it needs
+/// permission to write to the card. Only one may drive a card.
 template <std::derived_from<Event> EventType, int Capacity, PCIeParallelOutputOptions options>
 struct PCIeParallelOutput {
     static_assert(options.pin >= 2 && options.pin <= 9,
                   "a parallel port's data lines are pins 2 to 9");
-    static_assert(options.pulse_width_microseconds > 0);
+    static_assert(options.pulse_width_microseconds > 0, "the pulse width must be above 0");
 
     struct Connections {
+        /// The events that each start a pulse, of any kind. An event that arrives during a pulse is
+        /// ignored.
         EventInputBuffer<EventType, Capacity> input;
     };
 

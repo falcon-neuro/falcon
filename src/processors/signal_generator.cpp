@@ -24,30 +24,51 @@
 enum class Waveform : std::uint8_t { Sine, Square, SpikeTrain, RippleBursts };
 
 struct SignalGeneratorOptions {
+    /// The shape of the signal: a sine wave, a square wave, a train of spike-shaped pulses, or
+    /// bursts of a ripple-band oscillation.
     Waveform waveform = Waveform::Sine;
-    // Hz; for SpikeTrain, spikes per second; for RippleBursts, bursts per second
+    /// How often the shape repeats, in Hz: the wave's frequency, for a spike train the spikes per
+    /// second, for ripple bursts the bursts per second. It must be above 0 and below half the
+    /// stream's rate.
     double frequency = 10;
-    // µV, from zero to peak; for SpikeTrain, the depth of each trough; for RippleBursts, the
-    // oscillation's amplitude at a burst's peak
+    /// The signal's size, in µV from zero to peak: for a spike train the depth of each trough, for
+    /// ripple bursts the oscillation's amplitude at a burst's peak. It can't be negative.
     double amplitude = 100;
-    double phase_step_per_channel = 1;  // radians, so channels can be told apart in a viewer
-    double lfp_frequency = 0;           // Hz
-    double lfp_amplitude = 0;           // µV, from zero to peak; 0 adds no LFP
-    // RippleBursts only: an oscillation at ripple_frequency that never stops, whose amplitude
-    // swells from the background's to `amplitude` and back within each burst.
-    double ripple_frequency = 180;                   // Hz
-    double ripple_burst_duration_milliseconds = 80;  // from a burst's start to its end
-    double ripple_background_amplitude = 10;         // µV, from zero to peak, between bursts
-    double minimum_busy_spin_microseconds = 10;      // before each sample is due
+    /// How far each channel is shifted against the one before it, in radians, so that channels can
+    /// be told apart in a viewer. 0 gives every channel the same signal.
+    double phase_step_per_channel = 1;
+    /// The frequency of a slow LFP wave added under the signal, in Hz. It counts only when that
+    /// wave's amplitude is above 0, and must then be above 0 and below half the stream's rate.
+    double lfp_frequency = 0;
+    /// The size of that slow LFP wave, in µV from zero to peak. 0 adds none; it can't be negative.
+    double lfp_amplitude = 0;
+    /// For ripple bursts only: the frequency of the oscillation inside the bursts, in Hz. The
+    /// oscillation never stops; its amplitude swells within each burst. It must be above 0 and
+    /// below half the stream's rate.
+    double ripple_frequency = 180;
+    /// For ripple bursts only: how long a burst lasts from its start to its end, in milliseconds.
+    /// It must be above 0, and short enough that bursts don't overlap.
+    double ripple_burst_duration_milliseconds = 80;
+    /// For ripple bursts only: the oscillation's amplitude between bursts, in µV from zero to peak.
+    /// It can't be negative or above the amplitude at a burst's peak.
+    double ripple_background_amplitude = 10;
+    /// The shortest time before each sample is due at which the generator stops sleeping and waits
+    /// actively, in microseconds. A larger value keeps the samples on time at the price of a busier
+    /// core. It can't be negative.
+    double minimum_busy_spin_microseconds = 10;
 };
 
+/// Stands in for acquisition hardware when testing: it makes a signal on every channel at the
+/// stream's rate, a sine wave, a square wave, a train of spike-shaped pulses or bursts of a ripple-
+/// band oscillation, optionally on top of a slow LFP wave. It keeps the samples on time itself, so
+/// it needs a core of its own.
 template <typename OutputStreamInfo, SignalGeneratorOptions options>
 struct SignalGenerator {
-    static_assert(options.frequency > 0);
+    static_assert(options.frequency > 0, "the frequency must be above 0");
     static_assert(options.frequency < OutputStreamInfo::rate / 2,
                   "the wave must be below the Nyquist frequency, or it aliases");
-    static_assert(options.amplitude >= 0);
-    static_assert(options.lfp_amplitude >= 0);
+    static_assert(options.amplitude >= 0, "the amplitude can't be negative");
+    static_assert(options.lfp_amplitude >= 0, "the LFP wave's amplitude can't be negative");
     static_assert(options.lfp_amplitude == 0 ||
                       (options.lfp_frequency > 0 &&
                        options.lfp_frequency < OutputStreamInfo::rate / 2),
@@ -65,9 +86,12 @@ struct SignalGenerator {
                        options.ripple_background_amplitude <= options.amplitude),
                   "a burst swells up from the background's amplitude, so its peak can't be below "
                   "it");
-    static_assert(options.minimum_busy_spin_microseconds >= 0);
+    static_assert(options.minimum_busy_spin_microseconds >= 0,
+                  "the time of active waiting can't be negative");
 
     struct Connections {
+        /// The generated signal: one sample at a time at the stream's rate, the same shape on every
+        /// channel, each shifted by the phase step.
         SampleOutputBuffer<OutputStreamInfo> output;
     };
 

@@ -12,29 +12,43 @@
 struct Ripple : StreamEvent {};
 
 struct RippleDetectorOptions {
-    // How long the running mean and deviation average over. The first such period only fills
-    // them, and nothing is detected during it.
+    /// The time over which the detector averages the signal to learn its usual level and spread,
+    /// in seconds. For the first such period after the start it only learns and detects nothing.
+    /// It must last at least one sample. A longer time gives a steadier threshold, which follows
+    /// slow changes of the signal later.
     double smoothing_time_seconds = 10;
-    // After a detection, samples are neither tested nor added to the running statistics for this
-    // long, so one ripple gives one event and stays out of the statistics.
+    /// How long the detector waits after a detection before it can detect again, in milliseconds.
+    /// During the wait, samples are neither tested nor added to the running statistics, so one
+    /// ripple gives one event. 0 means no wait; it can't be negative.
     double lockout_milliseconds = 30;
 };
 
+/// Detects ripples in a signal already filtered to the ripple band, and emits an event for each. It
+/// follows the signal's power and detects when that rises well above its usual level, which it
+/// learns as it runs.
 template <typename InputStreamInfo, RippleDetectorOptions options>
 struct RippleDetector {
     static_assert(options.smoothing_time_seconds * InputStreamInfo::rate >= 1,
                   "the smoothing time is shorter than one sample");
-    static_assert(options.lockout_milliseconds >= 0);
+    static_assert(options.lockout_milliseconds >= 0, "the lockout can't be negative");
 
     struct Connections {
+        /// The signal to detect ripples in: samples already filtered to the ripple band. The
+        /// detector follows the signal's power, the mean over all channels of their squared
+        /// values, so every channel of the stream should carry ripples.
         SampleInputBuffer<InputStreamInfo> input;
-        // In mean absolute deviations of the envelope above its running mean.
+        /// How far the signal's power must rise above its usual level to count as a ripple, in
+        /// mean absolute deviations above its running mean. A lower value detects more ripples
+        /// and earlier, a higher one fewer and later. A change takes effect on the next sample.
         StateInput<float, 6.0F> threshold_multiplier = UNCONNECTED;
-        // While false, e.g. during a stimulation's artifact, samples are neither tested nor added
-        // to the running statistics.
+        /// Whether the detector is detecting. While it is off, e.g. during a stimulation's
+        /// artifact, samples are neither tested nor added to the running statistics.
         StateInput<bool, true> is_detection_enabled = UNCONNECTED;
+        /// One event for each detected ripple, on the sample at which the signal's power crossed
+        /// the threshold.
         EventOutputBuffer<Ripple, 1> output;
-        // True from the sample whose envelope crossed the threshold until the lockout has passed.
+        /// On from the sample that crossed the threshold until the lockout has passed, off
+        /// otherwise. It lasts as long as the lockout, not as long as the ripple.
         std::optional<StateOutput<bool, false>> is_in_lockout = std::nullopt;
     };
 
