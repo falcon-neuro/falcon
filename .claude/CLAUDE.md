@@ -11,18 +11,21 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - We want flexibility, user friendliness, scalability for massive electrode arrays.
 - Code safety matters much more than brevity: when they conflict, choose safety (descriptive names, never `i` or `in`; bools start with `is_` or `has_`; braces everywhere; strict clang-tidy, see `.clang-tidy`). We write the processors, rarely, and users only build graphs in the UI, so more code to write is never a reason to skip a check: a mistake found only after a clinical session can't be undone.
 - Only .cpp files, for minimalism.
-- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does. Code outlives our discussions: comments never carry decision history, rejected options, plans or progress ("so far", "for now"), and never quote doc headings as if they explained the code; that context lives in the src/core docs.
+- Comments only for what the code can't say (a non-obvious reason or trap), never restating what a line, flag or setting plainly does. Code outlives our discussions: comments never carry decision history, rejected options, plans or progress ("so far", "for now"), and never quote doc headings as if they explained the code; that context lives in the docs under `.claude/ongoing_work`.
 - Write each comment for someone reading the code in ten years, not as a chat reply: no comparisons with Falcon 1 or with earlier versions ("as Falcon 1's", "unlike before"), and nothing the md docs already say. When in doubt, leave the comment out.
+- Doc comments (`///`) are another kind: written for Falcon's user, never for whoever reads the code. Every option of a processor has one, strict and good, since the UI shows it as that option's description and the API website prints it (see **Every option has a doc comment, written for the user** in generator.md).
 - Falcon gets it's flexibility from it's engine that run a graph composed of "processors". Example processors are NeuropixelsInput, NeuralynxInput, IirFilter, SpikeDetector, PCIeParallelOutput. Users design the graph they need for their experimental needs.
 
 ## In progress
-- Prototype spec: [src/core/spec.md](../src/core/spec.md).
-- After the prototype: [src/core/beyond_prototype.md](../src/core/beyond_prototype.md).
-- Graph shapes atlas: [src/core/graph_shapes.md](../src/core/graph_shapes.md).
-- Differences from Falcon 1: [src/core/falcon1_differences.md](../src/core/falcon1_differences.md).
-- Glossary: [src/core/glossary.md](../src/core/glossary.md).
-- Test plan: [src/tests/test_plan.md](../src/tests/test_plan.md).
-- Website plan: [docs/website_plan.md](../docs/website_plan.md).
+- Engine: [.claude/ongoing_work/engine.md](ongoing_work/engine.md).
+- Generator: [.claude/ongoing_work/generator.md](ongoing_work/generator.md).
+- Pipeline designer: [.claude/ongoing_work/pipeline_designer.md](ongoing_work/pipeline_designer.md).
+- After the prototype: [.claude/ongoing_work/beyond_prototype.md](ongoing_work/beyond_prototype.md).
+- Graph shapes atlas: [.claude/ongoing_work/graph_shapes.md](ongoing_work/graph_shapes.md).
+- Differences from Falcon 1: [.claude/ongoing_work/falcon1_differences.md](ongoing_work/falcon1_differences.md).
+- Glossary: [docs/pages/glossary.md](../docs/pages/glossary.md), which is also the website's glossary page.
+- Test suite: [.claude/ongoing_work/test_suite.md](ongoing_work/test_suite.md).
+- Website: [.claude/ongoing_work/website.md](ongoing_work/website.md).
 
 ## Guidelines
 - Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.
@@ -37,16 +40,17 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Give a short status update every few steps while working. Never think silently for minutes: if something needs long thought, say so first and split it into smaller steps.
 - We are dealing with complex software architecture: there are no easy solutions, only trade-offs. If the answers were easy, I wouldn't brainstorm with you, so don't present a choice as obvious; work through the trade-offs with me.
 - In chat, always write "Ripple Neuromed" for the acquisition system, never "Ripple" alone: I mix it up with ripple detection.
-- One question or topic per message, never several. Queue the other pending points in the open questions of spec.md and raise them one per turn.
+- One question or topic per message, never several. Queue the other pending points in the open questions of engine.md and raise them one per turn.
 
 ## Spec sessions
 Engine planning works only from the docs under **In progress** and this file.
 - Don't read or cite source files (the old `falcon/` engine, the `src/` sketches) unless I ask or we start writing code. They are what is being replaced; reading them anchors the spec on it.
 - beyond_prototype.md is parked: leave its topics out of the discussion until the prototype engine works.
-- **Simplest first.** For what only the engine sees (cheap to change, see **How to prioritise** in spec.md), recommend the simplest version and offer to park the better one, and any optimisation or safety net, in beyond_prototype.md. For what processor code sees (expensive to change), push to get it right now. Outside the hot loop (setup, teardown, failure handling), any simple solution is fine: propose it briefly and don't overengineer it or debate it at length.
+- **Simplest first.** For what only the engine sees (cheap to change, see **How to prioritise** in engine.md), recommend the simplest version and offer to park the better one, and any optimisation or safety net, in beyond_prototype.md. For what processor code sees (expensive to change), push to get it right now. Outside the hot loop (setup, teardown, failure handling), any simple solution is fine: propose it briefly and don't overengineer it or debate it at length.
 - **Terms**: use each word as glossary.md defines it, in the docs and in chat. glossary.md holds only fundamental words, one plain meaning each, never facts or decisions the other docs hold.
-- **Doc style** (spec.md, beyond_prototype.md, graph_shapes.md, falcon1_differences.md, glossary.md, test_plan.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
+- **Doc style** (engine.md, generator.md, pipeline_designer.md, beyond_prototype.md, graph_shapes.md, falcon1_differences.md, glossary.md, test_suite.md): as short as possible, yet impossible to misread; I must understand each entry cold, months later, without the conversation. State each fact once, in its section, and point to it from elsewhere. No repetition, padding or cryptic shorthand. The docs describe the engine, never the dev setup (the IDE, installed tools, build paths, versions or CPU). Later ideas go to beyond_prototype.md, graph shapes (with ASCII drawings) to graph_shapes.md.
 
 ## Memory
-- Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the src/core docs. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.
-- **Stateless chat.** I may close the chat at any moment and resume in a new one exactly where I left off. So the files must always hold everything discussed: write each decision, conclusion and new question into the files in the same turn it comes up (questions go to the open questions of spec.md, of test_plan.md when they are about tests, or of website_plan.md when they are about the website). Nothing may live only in the chat. Exception: temporary tests and diagnostics (e.g. checking a compiler feature) stay out of the docs.
+- Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the docs under `.claude/ongoing_work`. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.
+- **One file per area.** Whoever works on an area, an agent or I, keeps that area's whole state in its own file: what is open, what is decided and what is done. The engine's is engine.md, the generator's is generator.md, the pipeline designer's is pipeline_designer.md, the test suite's is test_suite.md, the website's is website.md. Each file is that area's spec followed by its open questions: a question that is settled moves up into the spec, so the open questions shrink as the spec grows. Every task on a component is tracked in its own file, never in another's.
+- **Stateless chat.** I may close the chat at any moment and resume in a new one exactly where I left off. So the files must always hold everything discussed: write each decision, conclusion and new question into the files in the same turn it comes up (a question goes to the open questions of its area's file, see **One file per area**). Nothing may live only in the chat. Exception: temporary tests and diagnostics (e.g. checking a compiler feature) stay out of the docs.

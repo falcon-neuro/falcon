@@ -7,6 +7,7 @@ site_dir = "build"
 repo_url = "https://github.com/falcon-neuro/falcon"
 repo_name = "falcon-neuro/falcon"
 extra_css = ["stylesheets/extra.css"]
+extra_javascript = ["javascripts/search_dialog.js"]
 
 nav = [
   { "Home" = "index.md" },

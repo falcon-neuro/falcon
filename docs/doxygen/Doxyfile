@@ -7,10 +7,7 @@ GENERATE_TAGFILE       = build/falcon_api.tag
 
 INPUT                  = src/ docs/doxygen/api_main.md
 USE_MDFILE_AS_MAINPAGE = docs/doxygen/api_main.md
-# Internal notes that must stay off the website: the engine's design docs (src/core) and the test
-# plan (src/tests).
-EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/** \
-                            */src/core/*.md */src/tests/*.md
+EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/**
 
 FILE_PATTERNS          = *.hpp *.cpp *.h *.md
 RECURSIVE              = YES

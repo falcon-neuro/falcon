@@ -11,13 +11,18 @@
 enum class LoggingStyle : std::uint8_t { EveryEvent, CountPerSecond };
 
 struct EventLoggerOptions {
+    /// What it writes to the log: every event, with its sample number and what it holds, or once a
+    /// second how many events arrived.
     LoggingStyle style = LoggingStyle::EveryEvent;
 };
 
+/// Writes the events it receives to the log: each one, or how many arrived in each second. At a
+/// high rate the log shows at most one line per 100 ms and counts the rest.
 template <std::derived_from<Event> EventType, int Capacity,
           EventLoggerOptions options = EventLoggerOptions{}>
 struct EventLogger {
     struct Connections {
+        /// The events to log, of any kind.
         EventInputBuffer<EventType, Capacity> input;
     };
 

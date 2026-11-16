@@ -26,9 +26,15 @@
 // rows stay in memory until the loop ends, since a realtime core makes no system calls.
 
 struct LatencyBenchmarkOptions {
-    Str file_name = "latency_benchmark.csv";  // in the run's directory
+    /// The name of the file the measurements are written to, in the run's directory. A name only,
+    /// without a folder.
+    Str file_name = "latency_benchmark.csv";
 };
 
+/// Measures how long Falcon takes: for each event it receives, the time from the arrival of the
+/// event's sample to the moment this processor runs. Placed right before an output, it measures
+/// everything up to the decision. When the run ends it writes one row per event to a file and logs
+/// the shortest, the median, the 99th percentile and the longest.
 template <std::derived_from<StreamEvent> EventType, int Capacity,
           LatencyBenchmarkOptions options = LatencyBenchmarkOptions{}>
 struct LatencyBenchmark {
@@ -36,6 +42,8 @@ struct LatencyBenchmark {
                   "file_name is a name inside the run's directory, without a /");
 
     struct Connections {
+        /// The events to time. Each must belong to a sample, since its time is counted from that
+        /// sample's arrival.
         EventInputBuffer<EventType, Capacity> input;
     };
 

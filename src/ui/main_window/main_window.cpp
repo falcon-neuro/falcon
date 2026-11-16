@@ -5,6 +5,7 @@
 #include "left_panel.cpp"
 #include "main_viewport.cpp"
 #include "main_window_controller.cpp"
+#include "processors_panel.cpp"
 
 #include "../signal_viewer/signal_viewer.cpp"
 
@@ -44,10 +45,22 @@ public:
         }
 
         ImVec2 space = ImGui::GetContentRegionAvail();
+        constexpr float processors_panel_width = 380.0f;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
+        // ImGui's flags are signed ints by its API
+        // NOLINTNEXTLINE(bugprone-signed-bitwise)
+        ImGui::BeginChild("ProcessorsPanel", ImVec2(processors_panel_width, space.y),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ProcessorsPanel::render();
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::SameLine(0.0f, 0.0f);
 
         ImGui::BeginGroup();
         {
-            ImGui::BeginChild("MainViewportContainer", ImVec2(space.x, space.y),
+            ImGui::BeginChild("MainViewportContainer",
+                              ImVec2(space.x - processors_panel_width, space.y),
                               ImGuiChildFlags_Borders);
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1.0f));
             signal_viewer_.render();

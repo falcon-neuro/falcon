@@ -2,7 +2,7 @@
 // The generator's ripple bursts, 2 per second, pass a ripple band-pass filter, and the logger
 // shows each Ripple event with its sample number. Nothing is detected during the first 10 s, the
 // detector's burn-in. The filtered signal and the Ripple events are recorded, so
-// scripts/plot_recording.py can show where in a burst each detection falls.
+// src/tests/plot_recording.py can show where in a burst each detection falls.
 #include "../core/engine.cpp"
 #include "../processors/event_logger.cpp"
 #include "../processors/iir_filter.cpp"

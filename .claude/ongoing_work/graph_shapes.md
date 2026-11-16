@@ -2,7 +2,7 @@
 
 The atlas of graph shapes the engine must support. Every engine design decision (core placement, rings, joins) must handle all of them. The graph is not a DAG: feedback loops (shape 7) are supported.
 
-The prototype runs shape 1 (see **Prototype plan** in [spec.md](spec.md)). The processor interface must not rule out any other shape.
+The prototype runs shape 1 (see **Prototype plan** in [engine.md](engine.md)). The processor interface must not rule out any other shape.
 
 How to read the drawings:
 - A box is a processor.
@@ -78,7 +78,7 @@ Example: Decoder (every 10 ms) + RippleDetector (every sample) → Trigger
 +---------+
 ```
 
-Trigger gets a ripple result on every sample but a decoder result only every 10 ms, so it decides itself how to combine them (see **Processors** in spec.md). The decoder's input is spike counts per 10 ms bin (shape 6c).
+Trigger gets a ripple result on every sample but a decoder result only every 10 ms, so it decides itself how to combine them (see **Processors** in engine.md). The decoder's input is spike counts per 10 ms bin (shape 6c).
 
 ## 5. Multiple sources, different clocks
 Inputs from different devices, each on its own clock. Not a priority now.

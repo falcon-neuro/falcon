@@ -8,7 +8,7 @@ slot, a u32 for the number of records, then that many records of that slot. A sa
 number as a u64 and its channels' values in order as float32; an event's record is its header's
 sample number, device timestamp, arrival TSC and lost-sample count, each a u64. All little-endian.
 
-    uv run scripts/plot_recording.py ~/falcon/runs/<run>/ripple_detector.bin
+    uv run src/tests/plot_recording.py ~/falcon/runs/<run>/ripple_detector.bin
 
 One sample slot is plotted, a panel per channel: the first one, or the one named with --samples.
 Every event slot is drawn as vertical lines, a colour per slot. With --mean-square, a last panel

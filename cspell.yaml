@@ -3,8 +3,6 @@ version: "0.2"
 language: en
 ignorePaths:
   - build/**
-  - cmake_cache/**
-  - extensions/**
   - docs/doxygen/**
 dictionaries:
   - cpp

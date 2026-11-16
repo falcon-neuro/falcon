@@ -6,13 +6,20 @@ namespace template_processor {
 // Gain: multiplies every channel by a constant factor.
 
 struct GainOptions {
+    /// The factor every channel's value is multiplied by. 1 leaves the signal as it is, and a
+    /// negative factor turns it upside down.
     double factor = 1;
 };
 
+/// Multiplies every channel by a constant factor. It is the example a lab starts its own processor
+/// from.
 template <typename InputStreamInfo, GainOptions options>
 struct Gain {
     struct Connections {
+        /// The signal to multiply.
         SampleInputBuffer<InputStreamInfo> input;
+        /// The multiplied signal: one sample for each input sample, with the same channels and
+        /// rate.
         SampleOutputBuffer<InputStreamInfo> output;
     };
 
