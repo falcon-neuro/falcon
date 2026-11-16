@@ -22,7 +22,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-#include "base.cpp"
+#include "common.cpp"
 
 // The logger, and how a processor's warn(), log() and fail() reach it.
 
