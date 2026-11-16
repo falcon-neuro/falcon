@@ -1,17 +1,13 @@
-name: Build backend
+name: Lint, format and compile
 
 on:
   pull_request:
-    branches: [develop]
-    paths:
-      # Skip CPP pipeline if the changes are only GUI
-      - "**"
-      - "!falcon_gui/**"
-      - "!.github/workflows/build_gui.yml"
-      - "!.github/workflows/release_all.yml"
+    branches:
+      - develop
+
 jobs:
   build-linux:
-    name: Build backend
+    name: Lint, format and compile
     runs-on: ubuntu-24.04
 
     strategy:
