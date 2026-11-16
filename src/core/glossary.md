@@ -1,7 +1,5 @@
 # Glossary
 
-The fundamental words of the engine docs, each with one meaning.
-
 - **Channel**: one electrode's signal, the voltage one recording site measures over time. A probe with 32 recording sites gives 32 channels.
 - **Channel value**: one channel's measurement at one time point: a single number, in microvolts.
 - **Sample**: a snapshot of all channels at one time point: every channel's value, plus a header. Recording at 30 kHz gives 30,000 samples per second, one every 33.3 µs. A sample is never one channel's value alone.

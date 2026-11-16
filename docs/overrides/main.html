@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{# Zensical leaves page.is_homepage unset, so the main page is recognised by its address. #}
+
+{% block htmltitle %}
+  {% if page.canonical_url == config.site_url %}
+    <title>{{ config.site_name }}: {{ config.extra.tagline }}</title>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block extrahead %}
+  {% if page.meta and page.meta.description %}
+    {% set description = page.meta.description %}
+  {% else %}
+    {% set description = config.site_description %}
+  {% endif %}
+  {% set is_main_page = page.canonical_url == config.site_url %}
+  {% if is_main_page %}
+    {% set shared_title = config.site_name ~ ": " ~ config.extra.tagline %}
+  {% else %}
+    {% set shared_title = page.title ~ " - " ~ config.site_name %}
+  {% endif %}
+  {% set social_card = config.site_url ~ "assets/social_card.png" %}
+
+  {# What a link to the page shows when shared in a chat or on social media. #}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ shared_title | e }}">
+  <meta property="og:description" content="{{ description | e }}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+  <meta property="og:image" content="{{ social_card }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="{{ config.site_name }}: {{ config.extra.tagline }}">
+  <meta name="twitter:card" content="summary_large_image">
+
+  {# Tells search engines that the website is about one piece of software, in schema.org's terms. #}
+  {% if is_main_page %}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "{{ config.site_url }}#website",
+          "url": "{{ config.site_url }}",
+          "name": "{{ config.site_name }}",
+          "description": {{ config.site_description | tojson }},
+          "inLanguage": "en",
+          "about": { "@id": "{{ config.site_url }}#software" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "{{ config.site_url }}#software",
+          "name": "{{ config.site_name }}",
+          "description": {{ config.site_description | tojson }},
+          "url": "{{ config.site_url }}",
+          "image": "{{ social_card }}",
+          "applicationCategory": "Science",
+          "applicationSubCategory": "Neuroscience",
+          "operatingSystem": "Linux",
+          "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+          "isAccessibleForFree": true,
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+          "sameAs": ["{{ config.extra.repository }}"],
+          "softwareHelp": { "@type": "CreativeWork", "url": "{{ config.site_url }}overview/" },
+          "citation": {
+            "@type": "ScholarlyArticle",
+            "name": "Falcon: a highly flexible open-source software for closed-loop neuroscience",
+            "author": [
+              { "@type": "Person", "name": "Davide Ciliberti" },
+              { "@type": "Person", "name": "Fabian Kloosterman" }
+            ],
+            "datePublished": "2017",
+            "isPartOf": { "@type": "Periodical", "name": "Journal of Neural Engineering" },
+            "sameAs": "https://doi.org/10.1088/1741-2552/aa7526"
+          }
+        }
+      ]
+    }
+    </script>
+  {% endif %}
+{% endblock %}

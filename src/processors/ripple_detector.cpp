@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include "../core/engine.cpp"
 
 // RippleDetector: reduces each sample of a stream already filtered to the ripple band to its
@@ -33,6 +34,8 @@ struct RippleDetector {
         // to the running statistics.
         StateInput<bool, true> is_detection_enabled = UNCONNECTED;
         EventOutputBuffer<Ripple, 1> output;
+        // True from the sample whose envelope crossed the threshold until the lockout has passed.
+        std::optional<StateOutput<bool, false>> is_in_lockout = std::nullopt;
     };
 
     explicit RippleDetector(ProcessorName processor_name) : name(processor_name) {}
@@ -59,6 +62,9 @@ struct RippleDetector {
             --lockout_samples_left_;
             return;
         }
+        if (connections.is_in_lockout) {
+            *connections.is_in_lockout = false;
+        }
         if (!connections.is_detection_enabled) {
             return;
         }
@@ -72,6 +78,9 @@ struct RippleDetector {
         if (is_crossing) {
             lockout_samples_left_ = lockout_samples;
             connections.output.push(connections.input.header, Ripple{});
+            if (connections.is_in_lockout) {
+                *connections.is_in_lockout = true;
+            }
         }
         add_to_statistics(envelope, smoothing_weight);
     }

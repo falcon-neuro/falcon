@@ -2,7 +2,9 @@
 
 Everything that is not part of the prototype engine: features, ideas and tasks for after the prototype works. The prototype spec is in [spec.md](spec.md). We leave all of this out of the engine spec discussion until the prototype engine works. Each item keeps the status it had before it moved here (decided, open or deferred).
 
-Order of work from here: first a usable product that can be downloaded from GitHub, with the basic detectors such as SpikeDetector, to ship by 29 November 2026 at the latest; from there we iterate. Replay-content detection, the ultimate goal (see **Decoding** under **Processors to port** in falcon1_differences.md), comes later. Still to list: what the first product needs of Falcon 1's other processors (see **Processors to port** in falcon1_differences.md), of the drag-and-drop pipeline designer (see **Generator**) and of the tests (see **Tests as whole runs** in spec.md).
+**Order of work**, set by the user on 16 November 2026: once the engine runs its hand-written graphs on the Ripple system (see **Engine 0.0.1 before the UI** in the open questions of spec.md), the generator, then the UI's pipeline designer, then its ephys viewer; only after the UI, a bridge between the engine program and the UI, through which the UI reads streams, events and state values and writes state values (see **Runtime control**).
+
+Order of work from here: first a usable product that can be downloaded from GitHub, with the basic detectors such as SpikeDetector, to ship by 29 November 2026 at the latest; from there we iterate. Replay-content detection, the ultimate goal (see **Decoding** under **Processors to port** in falcon1_differences.md), comes later. Still to list: what the first product needs of Falcon 1's other processors (see **Processors to port** in falcon1_differences.md), of the drag-and-drop pipeline designer (see **Generator**) and of the tests (see **Tests as whole runs** in [test_plan.md](../tests/test_plan.md)).
 
 Moved here on Claude's judgment and not yet confirmed: **Heavy processors**, **Several chains on one core**, **Feedback connections**, **Buffer reuse**, **Event rings between cores**, **Slow readers**, **Experiment files**, **Channel labels and positions** and **Rings with many readers**. Whatever belongs in the prototype moves back to spec.md. **Event rings between cores** was parked by mistake and is in spec.md now (**Event rings** under **Rings**), but for what follows it under its heading here; the other candidates are under **Parked too early** in the open questions of spec.md.
 
@@ -55,13 +57,6 @@ A processor is a struct with an `Options` template parameter (see **Processors**
 A processor author must copy what they need to keep and never keep a pointer into a buffer (see **Buffers** in spec.md). Breaking this rule gives wrong triggers and no error, and keeping such a pointer compiles without a warning. When it breaks depends on where the buffer points: an engine-owned buffer is overwritten on the next pass, so the bug shows at once; a ring slot is overwritten only when the ring wraps around (e.g. 64 samples later), so a short test passes. The same processor can therefore work on one core layout and give wrong values on another.
 - Mostly prevented already: processors read samples only through the buffer's load/store helpers (see **Sample type** in spec.md), so they never get a raw pointer to keep.
 - Still possible: keeping a reference to a buffer and reading it in a later pass, when it already holds newer data or nothing. Candidate safety net: a debug build that fills every buffer with NaN after its pass, so such a mistake shows at once in a test. Release builds pay nothing. Not needed for the prototype, whose processors we write ourselves.
-
-### Processor tests
-- The first: IirFilter against SciPy, in `src/tests/iir_filter/`. Its `README.md` describes the test, its results and what is still to test.
-- Each test runs both versions of the processor, AVX512 and AVX2 (see **One processor per stream** under **Processors** in spec.md). An AVX2 build runs on any supported CPU; an AVX512 build needs an AVX512 CPU or an emulator (e.g. Intel's SDE).
-- Every processor gets tests. They catch mistakes the processor interface doesn't prevent, e.g. a sample processor that never calls `set_header`, so its output is always empty and everything downstream stays silent (see **Operations a processor uses** under **Buffers** in spec.md).
-- Each processor is also run with every optional connection left out, since using a missing one compiles and is undefined behaviour (see **Required and optional connections** under **Processors** in spec.md).
-- The tests also matter for linting: clang-tidy analyzes a processor's code only where something instantiates its template, so a processor that no pipeline and no test instantiates is never checked.
 
 ### FIR filter
 FirFilter is in the prototype (see **FirFilter** in spec.md). Still to come:
@@ -119,7 +114,7 @@ The prototype uses float32 (see **Sample type** in spec.md). Processors load and
 ### Feedback connections
 Decided:
 - Feedback is mostly a state (e.g. an adaptive threshold, "a stimulation is ongoing", the last stimulation's sample number), passed by reference like any state (see **Buffers** in spec.md). A state keeps its value, so its reader sees it whenever it runs.
-- Across cores, a feedback connection is an ordinary ring.
+- Across cores, a feedback connection is an ordinary ring, or for a state a cross-core state value (see **State values** under **Buffers** in spec.md).
 - Within a chain, feedback through a buffer (events or samples) is a known weakness of the engine, not worth more engine work:
   - The reader sees the producer's output from the previous pass (see **`Out` clears an output buffer** under **pipeline.cpp** in spec.md), so it has seen the result for sample N before it processes N+1.
   - It sees that output during one pass only, and live that pass is usually an empty one. So the reader must read its feedback input even when its other inputs are empty, and copy what it needs (the rule for several inputs, see **Processors** in spec.md).
@@ -134,7 +129,9 @@ Planned once several output processors need pulses (see **Trigger and outputs** 
 - Growth path: one output mapping each kind of event to an action per line (high, low, toggle, pulse), as Falcon 1's DigitalOutput did, which also covers a line that stays high as long as something lasts (start and stop events).
 
 ### State values across cores
-Open: in the prototype, a state value connects processors on the same core as a plain value (see **State values** under **Buffers** in spec.md). One whose producer and reader are on different cores needs a ring, like a feedback connection across cores (see **Feedback connections**), or an atomic value.
+Moved into the prototype and decided: a reader on another core gets the latest value (see **Across cores a reader gets the latest value, without waiting** under **Buffers** in spec.md). What is still open is under **State values across cores** in the open questions of spec.md.
+- Later optimisation, of doubtful gain: pack the cross-core state values that one core produces into one cache line, where the prototype gives each a line of its own. It saves lines in the reading cores' caches, and moves one line instead of several when several values change in the same pass. But a reader then fetches the line for changes to values it doesn't read, and one value that changes often makes every reader of the line fetch it on every pass.
+- Ruled out: one line holding values that different cores produce. Each write would take the line from every other writer and reader.
 
 ### Runtime control
 Open: Falcon 1 let clients such as the UI read and write a processor's states while the graph ran (its `external` state permissions), e.g. to watch a value or to switch stimulation on and off during a session. Here every option is a compile-time constant and changing one restarts the engine program (see **Every option is a compile-time constant** in spec.md). Decided: it is needed, and it goes through state values: whatever the UI changes during a run is a state input of the processor that reads it (see **Parameters changed during a run** in the open questions of spec.md). Open: how the UI's write reaches the realtime cores.
@@ -167,7 +164,8 @@ In all of them, `sample` is the sample number of the threshold crossing, so ever
 
 ### Slow readers
 - **Slow readers** (viewer, recorder, audio) subscribe to what the hot loop publishes and never slow down the hot cores. The viewer is just another processor in the graph.
-- A slow reader that falls behind (formerly part of the rings question in spec.md): the viewer can skip data, but the recorder must not lose any. Is falling behind a failure for every reader, or only for some?
+- A slow reader that falls behind: decided, for every reader alike, the recorder included (see **The same for a ring to a slow reader** under **Rings** in spec.md).
+- **The end of a recording**: every loop stops at once when the run ends, so what a slow reader hadn't yet read from its rings never reaches its file: the last few ms of a run that lasts hours. Parked as too little to matter. A way to close it, inside `next_pass()` alone: realtime cores end their loops at once, so no pulse follows a stop, and a core that isn't realtime keeps running passes until every realtime core's loop has ended and one of its own passes then brought it nothing through a ring. It doesn't cover a core that isn't realtime feeding another such core through a ring, or a realtime core that never ends its loop.
 
 ### Recording formats
 Recordings need proper file formats, such as NWB. Decided: later, since supporting NWB isn't affordable now. Until then Recorder writes a format of its own, one file for all its connections, as a session in NWB is one file (see **Recorder** in spec.md). Not designed yet: which formats, and how Recorder writes them.
@@ -213,6 +211,8 @@ The prototype puts each sample's header in its ring slot, in front of the sample
 ### Hardware wait
 - **hardware wait** (MWAITX on AMD, UMWAIT on Intel): the core sleeps until the ring's write-position cache line is written. No OS involved, caches kept, low power. Added only if a diagnostic on the target machine shows its wake-up time is close to spin.
 - A hardware wait watches a single memory address range (one cache line) per core. A core whose loop reads several rings (e.g. one per chain) can sleep on only one of them; data arriving in another ring does not wake the core.
+- A state value written by another core doesn't wake it either (see **Across cores a reader gets the latest value, without waiting** under **Buffers** in spec.md). Its processors copy the new value on its next pass, so when its next sample arrives: harmless for a processor that acts on samples, too late for one that must act on the state alone, e.g. stopping a stimulation that the UI switched off while the input is silent.
+- A hardware wait doesn't make the option not chosen there, the reading core waiting for the producer's core, any cheaper: the reader still waits for the slower core, only without spinning.
 - For warnings (see **Logging** in spec.md): every core's `warn()` also bumps one shared "warning posted" counter, and the main thread sleeps on its cache line instead of polling every 100 ms, so a warning shows within microseconds and the writing core makes no system call. Catches: the OS sees the waiting thread as running, so it holds an OS core while it waits; it still needs a timeout, for stop signals and the data rings' drop counts, and wakes at every timer interrupt anyway; and the code differs between AMD and Intel and must check that the CPU and kernel allow it from user space.
 
 ### Huge pages
@@ -241,7 +241,7 @@ Once a core's `process()` calls are inlined into one loop (see **Inlining every 
 - An exact alternative is fusion by the generator: it could merge consecutive linear processors (e.g. two gains, or a gain into an IirFilter's gain) into one before compiling, as long as the merged form gives the same results within the tolerance agreed for that processor.
 
 ### False sharing
-- `alignas(64)` is not enough. Switch `alignas(64)` → `alignas(128)` on data written by different threads (counters, filter state) to stop neighbor-line prefetch interference; verify with perf c2c.
+- Done in the engine: what one core writes is kept 128 bytes apart from what another core touches (see **Per-core loop** in spec.md). What is still open is under **128 bytes between cores** in the open questions of spec.md.
 
 ### Exact replay
 Not a goal: a replay should give about the same triggers as the live run (99% matching is enough), and for the same input most processors give exactly the same output anyway (see **Principles** in spec.md). If exact replays are ever needed, e.g. for regression tests, these break exactness:
@@ -319,9 +319,11 @@ Ways to catch bugs that the current build setup (`CMakeLists.txt`, `.clang-tidy`
   - `concurrency-*`: C library functions that aren't thread-safe, which matters with one thread per core.
 - **Sanitizer builds**, for testing only, never the realtime build: ASan + UBSan (memory errors and undefined behaviour, including misaligned SIMD loads and signed overflow), and TSan (data races between cores, e.g. in rings).
 - **libc++ bounds checks**, once the macro is fixed: `_LIBCPP_HARDENING_MODE_DEBUG` in Debug builds. Open: whether Release keeps any (e.g. `_LIBCPP_HARDENING_MODE_FAST`), since every check costs time in the loop.
+  - The fast mode checks what takes constant time, among it an index into an array, vector or span and the use of an empty optional, so it would catch an optional connection used without its check (see **Required and optional connections** in spec.md). Each check is a compare and a branch never taken, which the compiler removes where it can prove the index valid. To measure before deciding: one pipeline built both ways, compared by its assembly and by LatencyBenchmark.
+  - Open with any mode: what a failed check does. It ends the program on the spot, and the library's handler can't throw, so the check can't become an exception: no destructor runs and no output is set safe, unlike a failure of Falcon's own (see **An error is an exception** in spec.md).
 
 ## Documentation
-Once Falcon is a usable product. The website is generated by Doxygen from two sources only, both kept minimal: doc comments in the code, and Markdown pages, such as tutorials on using Falcon. Until then it holds one page, `docs/getting_started.md`: what Falcon is, that the new engine is in development and nothing can be installed yet, and the two papers. The engine's docs in `src/core` and the brochure's notes in `docs/poster` are kept off it (`EXCLUDE_PATTERNS` in `docs/doxygen/Doxyfile`). A push to `main` or `develop` deploys the website (`.github/workflows/deploy_website.yml`); this page and the README without its install command are not on `develop` yet, so the live website still shows the old ones. Doc comments then also describe for users what each processor, option and connection does, a kind of comment beside the ones for what the code can't say.
+Once Falcon is a usable product. The website is generated by Doxygen from two sources only, both kept minimal: doc comments in the code, and Markdown pages, such as tutorials on using Falcon. Until then its pages follow `docs/website_plan.md`: the full page structure, with "coming soon" on what isn't built yet. The engine's docs in `src/core`, the brochure's notes in `docs/poster` and that plan are kept off it (`EXCLUDE_PATTERNS` in `docs/doxygen/Doxyfile`). A push to `main` or `develop` deploys the website (`.github/workflows/deploy_website.yml`); these pages and the README without its install command are not on `develop` yet, so the live website still shows the old ones. Doc comments then also describe for users what each processor, option and connection does, a kind of comment beside the ones for what the code can't say.
 - For processor authors: when an event is a channel mask (it says which channels did something on one sample, with no value per channel, e.g. spikes, level crossings) and when a sparse event (it carries a value per channel or per group, e.g. an amplitude, a tetrode's marks, a waveform, or isn't about channels, e.g. a trigger, a timer, a decoder result). See **Detection events are channel masks** in spec.md.
 
 ## Tasks

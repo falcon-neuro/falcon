@@ -438,10 +438,10 @@ struct MessageChannel {
     static constexpr std::size_t record_count = 64;
     static constexpr std::size_t kind_capacity = 64;
 
-    // Each position on its own cache line, so the two threads share only the line they must.
-    alignas(64) std::atomic<u64> write_position = 0;
-    alignas(64) std::atomic<u64> read_position = 0;
-    alignas(64) std::atomic<std::size_t> kind_count = 0;
+    // Each position apart from the others, so the two threads share only the lines they must.
+    alignas(BYTES_BETWEEN_CORES) std::atomic<u64> write_position = 0;
+    alignas(BYTES_BETWEEN_CORES) std::atomic<u64> read_position = 0;
+    alignas(BYTES_BETWEEN_CORES) std::atomic<std::size_t> kind_count = 0;
     std::atomic<u64> dropped_record_count = 0;      // the ring was full
     std::atomic<u64> dropped_occurrence_count = 0;  // the core had more kinds than it holds
     std::array<MessageRecord, record_count> records{};

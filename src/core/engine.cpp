@@ -390,6 +390,22 @@ struct StateValue {
     StateType value = initial_value;
 };
 
+// A state value whose producer and readers are on different cores.
+template <StateValueType StateType, StateType initial_value>
+struct CrossCoreStateValue {
+    static_assert(std::atomic<StateType>::is_always_lock_free);
+
+    alignas(BYTES_BETWEEN_CORES) std::atomic<StateType> value = initial_value;
+};
+
+// Whether two state values hold the same bits. Unlike ==, it tells 0.0 from -0.0 and finds a NaN
+// equal to itself.
+template <StateValueType StateType>
+[[nodiscard]] bool is_bitwise_equal(StateType first_value, StateType second_value) {
+    using Bytes = std::array<std::byte, sizeof(StateType)>;
+    return std::bit_cast<Bytes>(first_value) == std::bit_cast<Bytes>(second_value);
+}
+
 // What a processor initializes a state input with, so pipeline.cpp may leave it out of the call:
 // the build rejects a call that leaves out a member without an initializer of its own.
 struct Unconnected {};
@@ -575,22 +591,53 @@ private:
 // state value with any initial value: its producer picks that one.
 template <StateValueType StateType, StateType default_value>
 struct In<StateValue<StateType, default_value>> {
-    In(Unconnected /*marker*/) : value_(unconnected_value) {}
+    In(Unconnected /*marker*/) : value_(default_value) {}
     template <StateType initial_value>
     In(const StateValue<StateType, initial_value>& state) : value_(state.value) {}
+
+    // A connection from another core: its latest value, read once, so it can't change during the
+    // call. Relaxed, since nothing else is read on the strength of this value.
+    template <StateType initial_value>
+    In(const CrossCoreStateValue<StateType, initial_value>& state)
+        : value_(state.value.load(std::memory_order_relaxed)) {}
 
     operator StateType() const { return value_; }
 
 private:
-    // default_value itself has no address for value_ to refer to.
-    static constexpr StateType unconnected_value = default_value;
-    const StateType& value_;
+    StateType value_;
 };
 
 // Never clears its state value, which keeps its value until the producer changes it.
 template <StateValueType StateType, StateType initial_value>
 struct Out<StateValue<StateType, initial_value>> {
-    Out(StateValue<StateType, initial_value>& state) : value_(state.value) {}
+    Out(StateValue<StateType, initial_value>& state)
+        : value_(state.value), plain_value_(&state.value) {}
+
+    // A connection to other cores. Only the producer's core writes the value, so the relaxed
+    // load reads that core's own latest value.
+    Out(CrossCoreStateValue<StateType, initial_value>& state)
+        : value_(state.value.load(std::memory_order_relaxed)),
+          cross_core_value_(&state.value),
+          previous_value_(value_) {}
+
+    // Runs when the producer's call returns. A cross-core value that didn't change is not written,
+    // so the cores that read it keep its cache line.
+    ~Out() {
+        if (plain_value_ != nullptr) {
+            *plain_value_ = value_;
+            return;
+        }
+        if (is_failing_of_this_thread) {
+            return;
+        }
+        if (!is_bitwise_equal(value_, previous_value_)) {
+            cross_core_value_->store(value_, std::memory_order_relaxed);
+        }
+    }
+
+    // A copy would write its state value a second time.
+    Out(const Out&) = delete;
+    Out& operator=(const Out&) = delete;
 
     Out& operator=(StateType new_value) {
         value_ = new_value;
@@ -598,7 +645,13 @@ struct Out<StateValue<StateType, initial_value>> {
     }
 
 private:
-    StateType& value_;
+    // The value itself, not a reference to a state value's: with a reference that could point at
+    // a member of this output, the compiler keeps the whole output in memory.
+    StateType value_;
+    // One of these two is set: where the value goes when the call returns.
+    StateType* plain_value_ = nullptr;
+    std::atomic<StateType>* cross_core_value_ = nullptr;
+    StateType previous_value_ = initial_value;
 };
 
 template <typename StreamInfoType>
@@ -712,8 +765,8 @@ private:
     template <typename RingStreamInfoType, int slot_count>
     friend struct SampleRing;
 
-    // On its own cache line, so the two cores share only the lines they must.
-    alignas(64) std::atomic<u64> write_position_ = 0;
+    // Apart from the other members, so the two cores share only the lines they must.
+    alignas(BYTES_BETWEEN_CORES) std::atomic<u64> write_position_ = 0;
     SampleBuffer<StreamInfoType> writer_buffer_;  // writer core only; its storage is the spare
     RingDropCounter drop_counter_;
 
@@ -804,11 +857,12 @@ private:
         ring.publish();
     }
 
-    alignas(64) std::atomic<u64> read_position_ = 0;
-    alignas(64) bool is_holding_slot_ = false;  // reader core only, as the two members after it
+    alignas(BYTES_BETWEEN_CORES) std::atomic<u64> read_position_ = 0;
+    // Reader core only, as the two members after it.
+    alignas(BYTES_BETWEEN_CORES) bool is_holding_slot_ = false;
     u64 last_read_pass_ = NO_PASS;
     SampleBuffer<StreamInfoType> reader_buffer_;
-    std::array<SampleWithHeader<StreamInfoType>, slot_count> slots_{};
+    alignas(BYTES_BETWEEN_CORES) std::array<SampleWithHeader<StreamInfoType>, slot_count> slots_{};
 };
 
 // The writer's side of an event ring, without the slot count in its type, so an output and an
@@ -838,8 +892,8 @@ private:
     template <std::derived_from<Event> RingEventType, int RingCapacity, int slot_count>
     friend struct EventRing;
 
-    // On its own cache line, so the two cores share only the lines they must.
-    alignas(64) std::atomic<u64> write_position_ = 0;
+    // Apart from the other members, so the two cores share only the lines they must.
+    alignas(BYTES_BETWEEN_CORES) std::atomic<u64> write_position_ = 0;
     RingDropCounter drop_counter_;
 
     // Writer core: copies the events their producer pushed on this pass into the ring.
@@ -928,12 +982,13 @@ private:
         ring.write_position_.store(write_position, std::memory_order_release);
     }
 
-    alignas(64) std::atomic<u64> read_position_ = 0;
-    alignas(64) u64 last_read_pass_ = NO_PASS;  // reader core only, as the buffer after it
+    alignas(BYTES_BETWEEN_CORES) std::atomic<u64> read_position_ = 0;
+    // Reader core only, as the buffer after it.
+    alignas(BYTES_BETWEEN_CORES) u64 last_read_pass_ = NO_PASS;
     EventBuffer<EventType, Capacity> reader_buffer_;
     // Writer core only: what a producer pushes into when this ring is its output.
-    alignas(64) EventBuffer<EventType, Capacity> writer_buffer_;
-    alignas(64) std::array<EventType, slot_count> slots_{};
+    alignas(BYTES_BETWEEN_CORES) EventBuffer<EventType, Capacity> writer_buffer_;
+    alignas(BYTES_BETWEEN_CORES) std::array<EventType, slot_count> slots_{};
 };
 
 // --- Waiting for data ---

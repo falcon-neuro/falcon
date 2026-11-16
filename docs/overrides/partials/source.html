@@ -1,0 +1,14 @@
+{#-
+  The theme's own version marks this link data-md-component="source", which makes its script ask
+  GitHub's server for the repository's release, stars and forks. Without the mark, the link stays
+  and nothing is asked.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source">
+  <div class="md-source__icon md-icon">
+    {% set icon = config.theme.icon.repo or "fontawesome/brands/git-alt" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+  </div>
+</a>

@@ -13,6 +13,12 @@
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 
+// --- Memory that cores share ---
+
+// The alignment that keeps what one core writes apart from what another core reads or writes. Two
+// cache lines, not one: the CPU may fetch the line next to the one it touches along with it.
+inline constexpr std::size_t BYTES_BETWEEN_CORES = 128;
+
 // --- Run state ---
 
 // Every core's loop runs while it is set. Cleared by run_on_cores() on a stop signal, or by a core

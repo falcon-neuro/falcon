@@ -84,6 +84,10 @@ target_link_libraries(imgui PUBLIC
 #     src/pipelines/ripple_bursts_recording_pipeline.cpp
 # )
 
+# add_executable(falcon
+#     src/tests/state_values/state_values_closed_loop_test.cpp
+# )
+
 add_executable(falcon
     src/pipelines/ripple_detector_pipeline.cpp
 )
