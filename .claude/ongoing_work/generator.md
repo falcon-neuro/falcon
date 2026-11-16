@@ -3,7 +3,7 @@
 The part of Falcon that turns a graph into `pipeline.cpp`, the file an engine program is compiled from. This file is the generator's spec followed by its open questions: a question that is settled moves up into the spec. A section named here without a file, and not found in this one, is in [engine.md](engine.md). The node editor that hands it the graph is in [pipeline_designer.md](pipeline_designer.md).
 
 ## Decided
-- **Where it is built**: in `src/core`, designed by Claude, with no UI yet: C++ that turns a graph held in memory into `pipeline.cpp`.
+- **Where it is built** (decided by the user): in `src/ui/pipeline_designer/`, with the pipeline designer, the graph, the list of processors and its script. `src/core` holds the engine and nothing else: the engine runs without a designer or a generator, on a `pipeline.cpp` written by hand, so neither belongs to it. It is built first with no editor around it: C++ that turns a graph held in memory into `pipeline.cpp`.
 - **What it writes** is the engine's `pipeline.cpp` (see **pipeline.cpp** in engine.md, for its layout, its loops and its names). Until it exists, `pipeline.cpp` is written by hand (see **Prototype plan** in engine.md).
 - **UI and engine are separate programs** (see **Boundaries** in engine.md). The UI is the frontend. It generates `pipeline.cpp`, compiles it with the bundled clang into an engine executable, and runs that as a child process.
 - **Graph definition** is a generated .cpp file (`pipeline.cpp`), compiled with the bundled clang (JIT plan).
@@ -28,11 +28,12 @@ The part of Falcon that turns a graph into `pipeline.cpp`, the file an engine pr
 
 ## Done
 - **The texts.** Every processor in `src/processors/` and the two under `custom/` has its description, and each of its options and connections a doc comment to the standard; every check about an option in its struct has a message. EventGenerator got a check it lacked, that its rate is above 0. The wording is for the user to review.
-- **The script**, `src/core/list_processors.py`: it asks clang for the syntax tree of each processor's file and writes `all_processors.cpp`. It stops the build, naming file and line, for a processor, option or connection without a doc comment, a check about an option without a message, a member of `Connections` of a type it doesn't know, and a file clang can't compile. A file with no processor in it is left out with a note (the Neuropixels input).
-- **What it writes**: one `ProcessorDescription` per processor (`src/core/processor_list.cpp`): its name, its file, its description, its template parameters as written, its options (name, type, default as written, description) and its ports (name, direction, kind, whether optional, whether it has slots, type as written, description).
+- **The script**, `src/ui/pipeline_designer/list_processors.py`: it asks clang for the syntax tree of each processor's file and writes `all_processors.cpp`. It stops the build, naming file and line, for a processor, option or connection without a doc comment, a check about an option without a message, a member of `Connections` of a type it doesn't know, and a file clang can't compile. A file with no processor in it is left out with a note (the Neuropixels input).
+- **What it writes**: one `ProcessorDescription` per processor (`src/ui/pipeline_designer/processor_list.cpp`): its name, its file, its description, its template parameters as written, its options (name, type, default as written, description) and its ports (name, direction, kind, whether optional, whether it has slots, type as written, description).
 - **Two things it got wrong at first**, now right and noted in its code: an option's default is taken from the source's text, since rebuilding it from the tree's nodes lost the minus of SpikeDetector's `-50`; and a position in the tree counts bytes, not characters, since a `µ` in a comment shifted every position after it.
 - **The build step**: `CMakeLists.txt` runs the script before the program is compiled and again when a file in `src/processors/` or `src/core/` is added or changed; the file goes to `build/generated/`. It takes about 8 s for the 12 processors.
 - **A first panel in the UI** lists them (see **Done** in pipeline_designer.md).
+- **The graph as code**, `src/ui/pipeline_designer/pipeline_graph.cpp`: a pipeline holds its cores, its processors and its connections. A processor has an id, its type, its name, its core and its options' values; a connection names a processor's output and another's input; a core keeps its processors in a list whose order gives its chains' places from left to right. It can add a processor to a core, with a name from its type's file (`ripple_detector`, then `ripple_detector_2`), and connect an output to an input, whose two ends are two types so they can't be given the wrong way round. The editor uses it. It has no streams: see **Types across the graph**.
 
 ## Tasks
 From the former TODO.md:
@@ -41,14 +42,15 @@ From the former TODO.md:
 3. Generate one loop per core in `pipeline.cpp` (see **Per-core loop** in engine.md).
 
 ## Open questions
-In the order they block the work: the first three are the generator itself and are not designed.
-- **What a graph is while held in memory**, next to design, shared with the pipeline designer: the node editor fills it and the generator reads it. A rough list of its components, proposed and to confirm. The old Dart GUI (`falcon_gui/lib/model/falcon_graph.dart`) had the first five in some form; what it lacked is marked new.
+In the order they block the work: the first three are the generator itself and are not designed. What is being built first is the editor: see **Next** in pipeline_designer.md.
+- **What a graph is while held in memory**, shared with the pipeline designer: the node editor fills it and the generator reads it. Its first form is in code (see **The graph as code** under **Done**), without streams. The list of its components it grew from, proposed and not confirmed as a whole: The old Dart GUI (`falcon_gui/lib/model/falcon_graph.dart`) had the first five in some form; what it lacked is marked new.
   - **Processor type**: what a kind of processor is, apart from any graph: its C++ name and file, its template parameters, its options and its ports. The old GUI kept these as templates written by hand in Dart, a second copy of the C++ that could drift from it.
   - **Option**: a name, a type (whole number, number, yes or no, one of a list, text, file) and a value, written into `pipeline.cpp` as a compile-time constant. As in the old GUI, without its YAML kinds. A file is only a way to fill an option (see **A file is only imported from**).
   - **Port**: one member of a processor's `Connections`: its name, its direction, and its kind. New: the kind is samples, events or a state value, where the old GUI had one kind of port plus a flag for states, never validated, so it had no live change of a state either. New too: whether the port must be connected, and whether it has slots, so takes several connections.
   - **Processor**: one node of a graph: its name, which is its variable's name in `pipeline.cpp`, its type and its options' values. New: the core it sits on and its place in that core's order, which is also where it is drawn, so it has no position of its own.
   - **Connection**: from one processor's output port to another's input port, of the kind its ports have. New, and worked out, not set by the user: whether it stays on a core (a buffer or a state value) or crosses cores (a ring or a cross-core state value), and its name. New, set by the user: a ring's number of slots.
-  - **Core**, new: its number, whether it is realtime, and its processors in order. The old GUI had none, since Falcon 1 ran a thread per processor.
+  - **Chain**, new, and worked out, never built by the user: processors of one core that feed one another in a row, drawn one under the other (see **The layout follows the connections** in pipeline_designer.md).
+  - **Core**, new: its number, whether it is realtime, the processors dropped into it, and the order of its chains from left to right, which the user sets and which is their order in the core's loop. The old GUI had none, since Falcon 1 ran a thread per processor.
   - **Stream**, new: what a sample connection carries, a channel count, a rate and a sample type. It starts at an input processor and follows the connections, so that only matching ports connect and the types can be written. The old GUI compared two type names as text.
   - **Pipeline**: the whole graph and its name, which names its runs' directories.
   - Later, with the bridge to the UI (see **Order of work** in beyond_prototype.md): a state input that the UI writes during a run.
@@ -68,7 +70,7 @@ In the order they block the work: the first three are the generator itself and a
   - The processors under `custom/` are not listed: the script is given `src/processors/*.cpp` only, and an extension's file needs that extension's include paths.
   - It finds the structs to ask clang about by a search of the file's text, and asks once for each, which is most of its 8 s. A struct declared in a way that search misses is left out of the list, not misread.
   - An enum option's values, for a control that offers them, and what a struct inside an option holds (an IIR filter's section) are not listed.
-  - To confirm, since they were Claude's choices: that it stays Python (the generator is C++, so the list crosses from one language to the other, as C++ the script writes); where it lives, `src/core/`, which otherwise holds only C++; and the name `all_processors.cpp`, which could be read as the processors themselves when it holds their descriptions.
+  - To confirm, since they were Claude's choices: that it stays Python (the generator is C++, so the list crosses from one language to the other, as C++ the script writes); and the name `all_processors.cpp`, which could be read as the processors themselves when it holds their descriptions.
   - A lab's own processor (see **Extensions** in engine.md) shows in the UI only after the UI is built again, so that lab needs Falcon's source and build tools, not only the installed program.
 - **Doc comments**, what the rule under **Decided** leaves open:
   - How much of the standard the script can enforce beyond a doc comment being there.

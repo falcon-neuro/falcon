@@ -228,11 +228,12 @@ def literal(text):
 
 
 def write_output(output, processors):
-    lines = ["// Written by src/core/list_processors.py from the processors' source when Falcon is built.",
+    lines = ["// Written by src/ui/pipeline_designer/list_processors.py from the processors' source when Falcon is",
+             "// built.",
              "// Not to be edited: change the processor, and build again.",
              "#pragma once",
              "#include <array>",
-             '#include "core/processor_list.cpp"',
+             '#include "ui/pipeline_designer/processor_list.cpp"',
              "",
              "namespace all_processors_detail {",
              ""]
