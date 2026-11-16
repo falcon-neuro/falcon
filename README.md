@@ -2,7 +2,7 @@
 
 Falcon is a modular and extensible software framework for soft real-time signal processing, originally designed for short-latency closed-loop neural applications. Its new engine extends this to high channel counts at high data rates: hundreds of channels sampled at 30 kHz, processed sample by sample on a standard CPU.
 
-Documentation: <https://falcon-neuro.org/docs>
+Documentation: <https://falcon-neuro.org>
 
 ## Status
 

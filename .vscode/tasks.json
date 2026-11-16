@@ -52,5 +52,15 @@
 				}
 			}
 		},
+		{
+			"label": "serve docs",
+			"type": "shell",
+			"command": "sh",
+			"args": [
+				"${workspaceFolder}/scripts/doc_serve.sh"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		},
 	]
 }
