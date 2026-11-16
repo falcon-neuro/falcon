@@ -36,6 +36,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Reply to a new topic in seconds, from what is already known. Read code, think long or run tools at length only once we have agreed to go deep on it, and then work in very small steps, one change at a time. Run several agents or a workflow only when I explicitly unleash you.
 - Give a short status update every few steps while working. Never think silently for minutes: if something needs long thought, say so first and split it into smaller steps.
 - We are dealing with complex software architecture: there are no easy solutions, only trade-offs. If the answers were easy, I wouldn't brainstorm with you, so don't present a choice as obvious; work through the trade-offs with me.
+- In chat, always write "Ripple Neuromed" for the acquisition system, never "Ripple" alone: I mix it up with ripple detection.
 - One question or topic per message, never several. Queue the other pending points in the open questions of spec.md and raise them one per turn.
 
 ## Spec sessions
