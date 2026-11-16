@@ -1,0 +1,79 @@
+[project]
+site_name = "Falcon"
+site_url = "https://falcon-neuro.org/"
+site_description = "Falcon is open-source software for closed-loop neuroscience: it processes neural signals during recording and triggers an output when a pattern of interest appears."
+docs_dir = "pages"
+site_dir = "build"
+repo_url = "https://github.com/falcon-neuro/falcon"
+repo_name = "falcon-neuro/falcon"
+extra_css = ["stylesheets/extra.css"]
+
+nav = [
+  { "Home" = "index.md" },
+  { "Documentation" = [
+    "overview.md",
+    { "Processors" = [
+      "processor_reference.md",
+      "processors/iir_filter.md",
+      "processors/spike_detector.md",
+    ] },
+    "glossary.md",
+  ] },
+  { "API" = "api/index.html" },
+]
+
+[project.extra]
+generator = false
+tagline = "open-source software for closed-loop neuroscience"
+repository = "https://github.com/falcon-neuro/falcon"
+
+[project.plugins.macros]
+on_error_fail = true
+include_dir = "../src/core"
+
+[project.theme]
+language = "en"
+custom_dir = "overrides"
+favicon = "assets/favicon.svg"
+font = false
+features = [
+  "content.code.copy",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.tabs",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[project.theme.icon]
+logo = "falcon/logo"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+footnotes = {}
+md_in_html = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+"l2m4m:LaTeX2MathMLExtension" = {}

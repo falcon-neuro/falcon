@@ -1,0 +1,14 @@
+/* The logo file is used as a mask over a colour, not shown as an image: an image could not turn
+   white in dark mode. */
+#projectlogo .falcon-logo {
+  display: block;
+  width: 56px;
+  height: 32px;
+  background-color: currentColor;
+  -webkit-mask: url("logo.svg") center / contain no-repeat;
+  mask: url("logo.svg") center / contain no-repeat;
+}
+
+html.dark-mode #projectlogo .falcon-logo {
+  background-color: #ffffff;
+}

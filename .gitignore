@@ -44,8 +44,12 @@ build/
 Build/
 build-*/
 
+# API pages that Doxygen writes into the website's source
+docs/pages/api/
+
 # Python environments (uv)
 .venv/
+__pycache__/
 
 # Extensions: each is its own (often private) git repository; only the template is tracked
 src/processors/custom/*

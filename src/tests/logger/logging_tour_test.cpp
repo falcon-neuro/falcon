@@ -33,14 +33,11 @@ void core1() {
         return;
     }
 
-    while (is_pipeline_running) {
+    while (next_pass()) {
         lifetime_reporter.process({});
         first_warner.process({});
         second_warner.process({});
-        SampleBuffer<TestStream>& slot =
-            sample_source_to_slow_sample_counter_sample_ring.next_slot();
-        sample_source.process({.output = slot});
-        sample_source_to_slow_sample_counter_sample_ring.publish();
+        sample_source.process({.output = sample_source_to_slow_sample_counter_sample_ring});
     }
 }
 
@@ -49,18 +46,13 @@ void core2() {
     ArgumentLogger argument_logger{"argument_logger"};
     SlowSampleCounter<TestStream> slow_sample_counter{"slow_sample_counter"};
 
-    // Connections
-    SampleBuffer<TestStream> sample_source_to_slow_sample_counter_sample_buffer;
-
     if (!wait_at_start_barrier()) {
         return;
     }
 
-    while (is_pipeline_running) {
+    while (next_pass()) {
         argument_logger.process({});
-        sample_source_to_slow_sample_counter_sample_ring.read(
-            sample_source_to_slow_sample_counter_sample_buffer);
-        slow_sample_counter.process({.input = sample_source_to_slow_sample_counter_sample_buffer});
+        slow_sample_counter.process({.input = sample_source_to_slow_sample_counter_sample_ring});
     }
 }
 

@@ -15,7 +15,7 @@ void core1() {
         return;
     }
 
-    while (is_pipeline_running) {
+    while (next_pass()) {
         same_core_neighbour.process({});
         throwing_processor.process({});
     }
@@ -29,7 +29,7 @@ void core2() {
         return;
     }
 
-    while (is_pipeline_running) {
+    while (next_pass()) {
         other_core_processor.process({});
     }
 }

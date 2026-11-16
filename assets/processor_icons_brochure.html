@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Falcon processor icons</title>
+<style>
+@font-face {
+  font-family: "Inter";
+  src: url("Inter-VariableFont_opsz,wght.ttf") format("truetype");
+  font-weight: 100 900;
+}
+:root {
+  --page: #f6fbf3;
+  --card: #ffffff;
+  --ink: #0d1a12;
+  --muted: #5a665d;
+  --line: #d5ddd3;
+  --accent: #145431;
+  --accent-ink: #ffffff;
+  --icon-stroke: 2;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --page: #0f1511;
+  --card: #161d18;
+  --ink: #e3ebe2;
+  --muted: #93a096;
+  --line: #2a342c;
+  --accent: #95d5a7;
+  --accent-ink: #00341a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.45 Inter, system-ui, sans-serif;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+.icon { stroke-width: var(--icon-stroke); display: block; }
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  padding: 12px 24px;
+  background: var(--page);
+  border-bottom: 1px solid var(--line);
+}
+.top h1 { margin: 0; font-size: 16px; font-weight: 700; }
+.top p { margin: 0; color: var(--muted); }
+.controls { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.control { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.segmented button { border: 0; background: var(--card); padding: 5px 10px; font-size: 12px; }
+.segmented button + button { border-left: 1px solid var(--line); }
+.segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+main { max-width: 1120px; margin: 0 auto; padding: 0 24px 110px; }
+.processor { padding: 26px 0; border-bottom: 1px solid var(--line); }
+.processor h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.processor .what { margin: 2px 0 14px; color: var(--muted); }
+.processor .note { color: var(--accent); font-weight: 600; }
+.candidates { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 780px) { .candidates { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.candidate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.candidate:hover { border-color: var(--muted); }
+.candidate[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.sizes { display: flex; align-items: center; gap: 10px; }
+.inverted { display: inline-flex; padding: 6px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); }
+.caption { font-size: 12px; color: var(--muted); text-align: center; }
+.caption b { color: var(--ink); margin-right: 4px; }
+
+.picks {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 24px;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.picks .count { font-weight: 700; white-space: nowrap; }
+.picks output { flex: 1; color: var(--muted); font-size: 12px; user-select: all; }
+.picks button { border: 1px solid var(--line); border-radius: 8px; background: var(--page); padding: 6px 12px; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div>
+    <h1>Falcon processor icons</h1>
+    <p>Five candidates per processor. Click one per row, then copy the picks from the bar below.</p>
+  </div>
+  <div class="controls">
+    <div class="control">Stroke
+      <div class="segmented" data-control="stroke">
+        <button type="button" data-value="1.5" aria-pressed="false">1.5</button>
+        <button type="button" data-value="1.75" aria-pressed="false">1.75</button>
+        <button type="button" data-value="2" aria-pressed="true">2</button>
+      </div>
+    </div>
+    <div class="control">Theme
+      <div class="segmented" data-control="theme">
+        <button type="button" data-value="light" aria-pressed="false">Light</button>
+        <button type="button" data-value="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="brochure"></main>
+
+<footer class="picks">
+  <span class="count" id="pick-count"></span>
+  <output id="pick-summary"></output>
+  <button type="button" id="copy-picks">Copy picks</button>
+</footer>
+
+<script type="application/json" id="icon-data">
+[
+  {
+    "name": "EventGenerator",
+    "what": "Emits an event at a fixed rate.",
+    "icons": [
+      { "label": "Metronome", "svg": "<path d='M9 3h6l3 18H6z'/><path d='M6.7 17h10.6'/><path d='M12 17l5.5-11'/>" },
+      { "label": "Ticks on a time axis", "svg": "<path d='M5 4v8M12 4v8M19 4v8'/><path d='M2 18h19M18 15l3 3-3 3'/>" },
+      { "label": "Repeating bolt", "svg": "<path d='M21 12a9 9 0 1 1-2.64-6.36L21 8'/><path d='M21 3v5h-5'/><path d='M12.5 7.5l-3 5h5l-3 4.5'/>" },
+      { "label": "Emitter", "svg": "<circle cx='12' cy='12' r='2' fill='currentColor' stroke='none'/><path d='M15.54 8.46a5 5 0 0 1 0 7.08M8.46 8.46a5 5 0 0 0 0 7.08M18.36 5.64a9 9 0 0 1 0 12.72M5.64 5.64a9 9 0 0 0 0 12.72'/>" },
+      { "label": "Alarm clock", "svg": "<circle cx='12' cy='13' r='8'/><path d='M12 9v4l2.5 2'/><path d='M5 3L2 6M19 3l3 3'/>" }
+    ]
+  },
+  {
+    "name": "EventLogger",
+    "what": "Logs the events it receives, or how many arrived in each second.",
+    "icons": [
+      { "label": "Terminal", "svg": "<rect x='2' y='4' width='20' height='16' rx='2'/><path d='M6 9l3 3-3 3M12 15h5'/>" },
+      { "label": "Bolt and lines", "svg": "<path d='M8.5 3L3 12.5h5.5L5 21'/><path d='M13 6h8M13 12h8M13 18h5'/>" },
+      { "label": "Tally marks", "svg": "<path d='M5 5v14M9.5 5v14M14 5v14M18.5 5v14'/><path d='M2.5 16.5l19-9'/>" },
+      { "label": "Paper tape", "svg": "<path d='M5 21V3h14v18l-2.33-2-2.34 2L12 19l-2.33 2-2.34-2z'/><path d='M9 8h6M9 12h6'/>" },
+      { "label": "Logbook", "svg": "<rect x='4' y='3' width='16' height='18' rx='2'/><path d='M8 3v18M12 8h4M12 12h4'/>" }
+    ]
+  },
+  {
+    "name": "FirFilter",
+    "what": "An FIR filter on every channel.",
+    "icons": [
+      { "label": "Windowed taps", "svg": "<path d='M2 20h20'/><path d='M4 20v-4M8 20v-9M12 20V5M16 20v-9M20 20v-4'/>" },
+      { "label": "Sinc taps", "svg": "<path d='M2 14h20'/><path d='M12 14V3M8.5 14V8.5M15.5 14V8.5M5 14v4.5M19 14v4.5'/>" },
+      { "label": "Funnel", "svg": "<path d='M3 4h18l-7 8v7l-4 2v-9z'/>" },
+      { "label": "Response with side lobes", "svg": "<path d='M2 6h5c3 0 4 6 5 13 .8-5 1.6-7 2.5-7s1.7 2 2.5 7c.8-3.5 1.6-5 2.5-5s1.7 1.5 2.5 5'/>" },
+      { "label": "Feed-forward path", "svg": "<path d='M2 17h20M19 14l3 3-3 3'/><path d='M4 17V9.5a4.5 4.5 0 0 1 9 0V16M10.5 13.5L13 16l2.5-2.5'/>" }
+    ]
+  },
+  {
+    "name": "IirFilter",
+    "what": "An IIR filter on every channel, a cascade of biquad sections.",
+    "icons": [
+      { "label": "Feedback path", "svg": "<path d='M2 17h20M19 14l3 3-3 3'/><path d='M14 17V9.5a4.5 4.5 0 0 0-9 0V16M2.5 13.5L5 16l2.5-2.5'/>" },
+      { "label": "Ringing response", "svg": "<path d='M2 12c1.3-12 2.7-12 4 0 1.3 8 2.7 8 4 0 1.3-5.3 2.7-5.3 4 0 1.3 3.3 2.7 3.3 4 0 1.3-1.6 2.7-1.6 4 0'/>" },
+      { "label": "Poles in the unit circle", "svg": "<circle cx='12' cy='12' r='9'/><path d='M1.5 12h21'/><path d='M8 6l3 3M11 6L8 9M8 15l3 3M11 15l-3 3'/>" },
+      { "label": "Funnel with feedback", "svg": "<path d='M2 4h14l-5 6.5V19l-4 2V10.5z'/><path d='M14 20h2a4 4 0 0 0 4-4V8.5M17.5 11L20 8.5l2.5 2.5'/>" },
+      { "label": "Decaying taps", "svg": "<path d='M2 20h20'/><path d='M4 20V5M8 20V10M12 20v-6.5M16 20v-4M20 20v-2.5'/>" }
+    ]
+  },
+  {
+    "name": "LatencyBenchmark",
+    "what": "Logs, for each event, the time from its sample's arrival to when this processor runs.",
+    "icons": [
+      { "label": "Stopwatch", "svg": "<circle cx='12' cy='14' r='8'/><path d='M10 2h4M12 2v4M12 14l3-3M18.4 7.6L20 6'/>" },
+      { "label": "Gauge", "svg": "<path d='M3.84 17.8a9 9 0 1 1 16.32 0'/><path d='M12 14l3.5-5'/><circle cx='12' cy='14' r='1.5' fill='currentColor' stroke='none'/>" },
+      { "label": "Interval", "svg": "<path d='M3 5v14M21 5v14'/><path d='M7 12h10M10 9l-3 3 3 3M14 9l3 3-3 3'/>" },
+      { "label": "Latency distribution", "svg": "<path d='M2 19c3 0 3.5-14 6.5-14 4 0 4 14 13.5 14'/><path d='M17 8v11'/>" },
+      { "label": "Hourglass", "svg": "<path d='M5 2h14M5 22h14'/><path d='M7 2v4l5 6 5-6V2M7 22v-4l5-6 5 6v4'/>" }
+    ]
+  },
+  {
+    "name": "LevelCrossingDetector",
+    "what": "Emits an event on each sample where channels cross the level.",
+    "icons": [
+      { "label": "Crossing point", "svg": "<path d='M3 20C10 20 14 4 21 4'/><path d='M2 12h2M6.5 12h1.5M16 12h1.5M20 12h2'/><circle cx='12' cy='12' r='2.5' fill='currentColor' stroke='none'/>" },
+      { "label": "Arrow through the level", "svg": "<path d='M2 12h20'/><path d='M12 20V4M7 9l5-5 5 5'/>" },
+      { "label": "Wave over the level", "svg": "<path d='M2 13c1.7-9.3 3.3-9.3 5 0s3.3 9.3 5 0 3.3-9.3 5 0 3.3 9.3 5 0'/><path d='M2 9h20'/>" },
+      { "label": "Comparator", "svg": "<path d='M7 4v16l13-8z'/><path d='M2 8h5M2 16h5M20 12h2'/>" },
+      { "label": "Step at the level", "svg": "<path d='M2 19h9V5h11'/><path d='M2 12h2M6 12h2M14 12h2M18 12h2'/>" }
+    ]
+  },
+  {
+    "name": "SpikeDetector",
+    "what": "Emits an event on each sample where channels cross the spike threshold.",
+    "icons": [
+      { "label": "Spike at the threshold", "svg": "<path d='M2 7h6l3.5 13 3-17 2 4H22'/><path d='M2 11.5L5.5 14 2 16.5z' fill='currentColor' stroke='none'/><circle cx='9.9' cy='14' r='2.25' fill='currentColor' stroke='none'/>" },
+      { "label": "Action potential", "svg": "<path d='M2 15h5c2 0 2.5-11 4-11s2 14 4 14 2-3 4-3h3'/>" },
+      { "label": "Raster", "svg": "<path d='M4 4v3M9 4v3M17 4v3M7 10.5v3M13 10.5v3M20 10.5v3M5 17v3M11 17v3M16.5 17v3'/>" },
+      { "label": "Magnified spike", "svg": "<circle cx='10.5' cy='10.5' r='7.5'/><path d='M16 16l5.5 5.5'/><path d='M6 12h2.5l2-6 2 8 1-2H15'/>" },
+      { "label": "Pyramidal neuron", "svg": "<path d='M12 11l4 6H8z'/><path d='M12 11V6M12 6L9 2.5M12 6l3-3.5'/><path d='M8 17l-4.5 2.5M16 17l4.5 2.5M12 17v5'/>" }
+    ]
+  },
+  {
+    "name": "RippleDetector",
+    "what": "Emits an event when the envelope of a ripple-band stream rises above its threshold.",
+    "icons": [
+      { "label": "Ripple burst", "svg": "<path d='M2 12h3l1.5-2.5L9 17l2-13 2 16 2-13 2.5 7.5L19 12h3'/>" },
+      { "label": "Sharp wave and ripple", "svg": "<path d='M2 7h3l1.5 1.5L8 4.5l2 6 2-8 2 8 2-6 1.5 4L19 7h3'/><path d='M2 16h5c2.5 0 3.5 5 5 5s2.5-5 5-5h5'/>" },
+      { "label": "Water ripple", "svg": "<path d='M12 1.5c-1.5 2.1-2.25 3.2-2.25 4.25a2.25 2.25 0 0 0 4.5 0c0-1.05-.75-2.15-2.25-4.25z' fill='currentColor' stroke='none'/><ellipse cx='12' cy='15.5' rx='4.5' ry='2'/><ellipse cx='12' cy='15.5' rx='10' ry='5.5'/>" },
+      { "label": "Magnified ripple", "svg": "<circle cx='10.5' cy='10.5' r='7.5'/><path d='M16 16l5.5 5.5'/><path d='M6.5 11L8 8l2.5 5.5L13 8l1.5 3'/>" },
+      { "label": "Burst with event marker", "svg": "<path d='M9 2h6l-3 4.5z' fill='currentColor' stroke='none'/><path d='M2 15h3.5L7 13l2 5.5 2-8.5 2 10 2-8.5 2 5.5 1.5-2H22'/>" }
+    ]
+  },
+  {
+    "name": "Trigger",
+    "what": "Emits an event once every channel has had an event since its previous one.",
+    "icons": [
+      { "label": "AND gate", "svg": "<path d='M7 5h5a7 7 0 0 1 0 14H7z'/><path d='M2 9h5M2 15h5M19 12h3'/>" },
+      { "label": "Bolt", "svg": "<path d='M13.5 2L4 13.5h7.5l-1 8.5L20 10.5h-7.5z'/>" },
+      { "label": "Crosshair", "svg": "<circle cx='12' cy='12' r='7'/><path d='M12 2v6M12 16v6M2 12h6M16 12h6'/>" },
+      { "label": "Channels merging", "svg": "<path d='M2 5h3c5 0 5 7 10 7M2 19h3c5 0 5-7 10-7M2 12h19M18 9l3 3-3 3'/>" },
+      { "label": "Scope trigger edge", "svg": "<path d='M3 19h9V5h9'/><path d='M8.5 13.5L12 10l3.5 3.5'/>" }
+    ]
+  },
+  {
+    "name": "SignalGenerator",
+    "what": "Stands in for acquisition hardware: a sine, a square wave, spike pulses or ripple bursts.",
+    "icons": [
+      { "label": "Source symbol", "svg": "<circle cx='12' cy='12' r='9'/><path d='M7 12c1.25-4.5 3.75-4.5 5 0s3.75 4.5 5 0'/>" },
+      { "label": "Sine", "svg": "<path d='M2 12c1.7-10 3.3-10 5 0s3.3 10 5 0 3.3-10 5 0 3.3 10 5 0'/>" },
+      { "label": "Sine and square", "svg": "<path d='M2 7c1.7-5 3.3-5 5 0s3.3 5 5 0 3.3-5 5 0 3.3 5 5 0'/><path d='M2 20v-6h5v6h5v-6h5v6h5v-6'/>" },
+      { "label": "Bench instrument", "svg": "<rect x='2' y='5' width='20' height='14' rx='2'/><path d='M5.5 12c.8-3.2 1.7-3.2 2.5 0s1.7 3.2 2.5 0'/><circle cx='16.5' cy='12' r='2.5'/>" },
+      { "label": "Sine turning square", "svg": "<path d='M2 12c1.5-8 3-8 4.5 0s3 8 4.5 0V6h5.5v12H22'/>" }
+    ]
+  },
+  {
+    "name": "Recorder",
+    "what": "Writes what all its connections bring, samples and events, into one file.",
+    "icons": [
+      { "label": "Record dot", "svg": "<circle cx='12' cy='12' r='9'/><circle cx='12' cy='12' r='4' fill='currentColor' stroke='none'/>" },
+      { "label": "Floppy disk", "svg": "<path d='M4 3h12l5 5v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z'/><path d='M8 3v5h7M7 21v-7h10v7'/>" },
+      { "label": "Disk stack", "svg": "<ellipse cx='12' cy='6' rx='8' ry='3'/><path d='M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6'/><path d='M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3'/>" },
+      { "label": "File with record dot", "svg": "<path d='M14 2H6a1 1 0 0 0-1 1v18a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7z'/><path d='M14 2v5h5'/><circle cx='12' cy='15' r='3' fill='currentColor' stroke='none'/>" },
+      { "label": "Tape reels", "svg": "<circle cx='6.5' cy='12' r='4.5'/><circle cx='17.5' cy='12' r='4.5'/><path d='M6.5 16.5h11'/>" }
+    ]
+  },
+  {
+    "name": "PCIeParallelOutput",
+    "what": "An event sets one data pin of a PCIe parallel port card high for the pulse width.",
+    "icons": [
+      { "label": "D-sub connector", "svg": "<path d='M3 7h18l-2 10H5z'/><circle cx='8' cy='10.5' r='1.1' fill='currentColor' stroke='none'/><circle cx='12' cy='10.5' r='1.1' fill='currentColor' stroke='none'/><circle cx='16' cy='10.5' r='1.1' fill='currentColor' stroke='none'/><circle cx='10' cy='13.5' r='1.1' fill='currentColor' stroke='none'/><circle cx='14' cy='13.5' r='1.1' fill='currentColor' stroke='none'/>" },
+      { "label": "Single pulse", "svg": "<path d='M2 18h6V6h8v12h6'/>" },
+      { "label": "PCIe card", "svg": "<path d='M2 5h20v9h-3v4h-8v-4H8v4H5v-4H2z'/><rect x='6' y='7.5' width='5' height='4' rx='.5' fill='currentColor' stroke='none'/>" },
+      { "label": "Pulse going out", "svg": "<path d='M2 16h4V8h6v8h9M18 13l3 3-3 3'/>" },
+      { "label": "One line of a parallel bus", "svg": "<path d='M2 5h20M2 19h20'/><path d='M2 15h7V9h6v6h7'/>" }
+    ]
+  },
+  {
+    "name": "Gain",
+    "what": "The template processor: multiplies every channel by a constant factor.",
+    "icons": [
+      { "label": "Amplifier", "svg": "<path d='M7 4v16l13-8z'/><path d='M2 12h5M20 12h2'/>" },
+      { "label": "Amplitude stretch", "svg": "<path d='M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4'/>" },
+      { "label": "Knob", "svg": "<circle cx='12' cy='11.5' r='6.5'/><path d='M12 11.5l3-4'/><circle cx='4.5' cy='19.5' r='1' fill='currentColor' stroke='none'/><circle cx='19.5' cy='19.5' r='1' fill='currentColor' stroke='none'/>" },
+      { "label": "Growing wave", "svg": "<path d='M2 12c.7-2.5 1.3-2.5 2 0s1.3 2.5 2 0c1-5 2-5 3 0s2 5 3 0c1.7-10 3.3-10 5 0s3.3 10 5 0'/>" },
+      { "label": "Fader", "svg": "<path d='M12 3v4M12 13v8'/><rect x='8' y='7' width='8' height='6' rx='1.5'/><path d='M3 6h2M3 12h2M3 18h2M19 6h2M19 12h2M19 18h2'/>" }
+    ]
+  },
+  {
+    "name": "RippleNeuromedInput",
+    "what": "Reads Ripple's raw stream from micro electrodes over UDP.",
+    "icons": [
+      { "label": "Grapes (Grapevine)", "svg": "<path d='M12 7V4.5l3-1.5'/><circle cx='7' cy='9.5' r='2.5'/><circle cx='12' cy='9.5' r='2.5'/><circle cx='17' cy='9.5' r='2.5'/><circle cx='9.5' cy='13.83' r='2.5'/><circle cx='14.5' cy='13.83' r='2.5'/><circle cx='12' cy='18.16' r='2.5'/>" },
+      { "label": "Ethernet port", "svg": "<path d='M4 5h16v11h-4v3H8v-3H4z'/><path d='M8.5 9v2.5M12 9v2.5M15.5 9v2.5'/>" },
+      { "label": "Electrode grid", "svg": "<rect x='3' y='3' width='18' height='18' rx='3'/><circle cx='8' cy='8' r='1.1' fill='currentColor' stroke='none'/><circle cx='12' cy='8' r='1.1' fill='currentColor' stroke='none'/><circle cx='16' cy='8' r='1.1' fill='currentColor' stroke='none'/><circle cx='8' cy='12' r='1.1' fill='currentColor' stroke='none'/><circle cx='12' cy='12' r='1.1' fill='currentColor' stroke='none'/><circle cx='16' cy='12' r='1.1' fill='currentColor' stroke='none'/><circle cx='8' cy='16' r='1.1' fill='currentColor' stroke='none'/><circle cx='12' cy='16' r='1.1' fill='currentColor' stroke='none'/><circle cx='16' cy='16' r='1.1' fill='currentColor' stroke='none'/>" },
+      { "label": "Acquisition box", "svg": "<rect x='2' y='6' width='11' height='12' rx='2'/><path d='M5 12c.8-3 1.7-3 2.5 0s1.7 3 2.5 0'/><path d='M13 12h9M19 9l3 3-3 3'/>" },
+      { "label": "Network", "svg": "<rect x='9' y='2' width='6' height='6' rx='1'/><rect x='2' y='16' width='6' height='6' rx='1'/><rect x='16' y='16' width='6' height='6' rx='1'/><path d='M12 8v4M5 16v-4h14v4'/>" }
+    ]
+  },
+  {
+    "name": "NeuropixelsInput",
+    "what": "Reads a Neuropixels probe.",
+    "note": "Not ported to the new engine yet.",
+    "icons": [
+      { "label": "Probe", "svg": "<g transform='rotate(45 12 12)'><path d='M9 2.5h6v5l-2 3h-2l-2-3z'/><path d='M12 10.5v14'/></g>" },
+      { "label": "Shank with staggered sites", "svg": "<path d='M7 2v13l5 7 5-7V2'/><circle cx='10.5' cy='5' r='1.25' fill='currentColor' stroke='none'/><circle cx='13.5' cy='8' r='1.25' fill='currentColor' stroke='none'/><circle cx='10.5' cy='11' r='1.25' fill='currentColor' stroke='none'/><circle cx='13.5' cy='14' r='1.25' fill='currentColor' stroke='none'/>" },
+      { "label": "Probe and signal", "svg": "<path d='M3 2h5v5H3zM5.5 7v15'/><path d='M11 13h2.5l2-6 2.5 11 1.5-5H22'/>" },
+      { "label": "Checkerboard sites", "svg": "<rect x='8' y='2' width='4' height='4' rx='.5' fill='currentColor' stroke='none'/><rect x='12' y='6' width='4' height='4' rx='.5' fill='currentColor' stroke='none'/><rect x='8' y='10' width='4' height='4' rx='.5' fill='currentColor' stroke='none'/><rect x='12' y='14' width='4' height='4' rx='.5' fill='currentColor' stroke='none'/><rect x='8' y='18' width='4' height='4' rx='.5' fill='currentColor' stroke='none'/>" },
+      { "label": "Four shanks", "svg": "<rect x='3' y='2' width='18' height='6' rx='1'/><path d='M6 8v13M10 8v13M14 8v13M18 8v13'/>" }
+    ]
+  }
+]
+</script>
+
+<script>
+const processors = JSON.parse(document.getElementById('icon-data').textContent);
+const brochure = document.getElementById('brochure');
+const pickCount = document.getElementById('pick-count');
+const pickSummary = document.getElementById('pick-summary');
+const storageKey = 'falcon-processor-icon-picks';
+
+let picks = {};
+try {
+  picks = JSON.parse(localStorage.getItem(storageKey)) || {};
+} catch (error) {
+  picks = {};
+}
+
+function iconSvg(body, size) {
+  return `<svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}" ` +
+    `fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ` +
+    `aria-hidden="true">${body}</svg>`;
+}
+
+function candidateHtml(processor, icon, iconIndex) {
+  const number = iconIndex + 1;
+  return `<button type="button" class="candidate" data-processor="${processor.name}" data-number="${number}" aria-pressed="false">
+    ${iconSvg(icon.svg, 64)}
+    <span class="sizes">
+      ${iconSvg(icon.svg, 32)}${iconSvg(icon.svg, 24)}${iconSvg(icon.svg, 16)}
+      <span class="inverted">${iconSvg(icon.svg, 24)}</span>
+    </span>
+    <span class="caption"><b>${number}</b>${icon.label}</span>
+  </button>`;
+}
+
+function processorHtml(processor) {
+  const note = processor.note ? ` <span class="note">${processor.note}</span>` : '';
+  return `<section class="processor">
+    <h2>${processor.name}</h2>
+    <p class="what">${processor.what}${note}</p>
+    <div class="candidates">${processor.icons.map((icon, iconIndex) => candidateHtml(processor, icon, iconIndex)).join('')}</div>
+  </section>`;
+}
+
+function picksText() {
+  return processors
+    .filter((processor) => picks[processor.name])
+    .map((processor) => `${processor.name} ${picks[processor.name]}`)
+    .join(', ');
+}
+
+function showPicks() {
+  for (const candidate of brochure.querySelectorAll('.candidate')) {
+    const isPicked = picks[candidate.dataset.processor] === Number(candidate.dataset.number);
+    candidate.setAttribute('aria-pressed', String(isPicked));
+  }
+  const pickedCount = processors.filter((processor) => picks[processor.name]).length;
+  pickCount.textContent = `${pickedCount} of ${processors.length} picked`;
+  pickSummary.textContent = picksText() || 'Nothing picked yet.';
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(picks));
+  } catch (error) {
+    // Picks then last only until the page closes.
+  }
+}
+
+function setSegment(control, value) {
+  for (const button of control.querySelectorAll('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.value === value));
+  }
+}
+
+brochure.innerHTML = processors.map(processorHtml).join('');
+
+brochure.addEventListener('click', (event) => {
+  const candidate = event.target.closest('.candidate');
+  if (!candidate) {
+    return;
+  }
+  const processorName = candidate.dataset.processor;
+  const number = Number(candidate.dataset.number);
+  if (picks[processorName] === number) {
+    delete picks[processorName];
+  } else {
+    picks[processorName] = number;
+  }
+  showPicks();
+});
+
+document.querySelector('[data-control="stroke"]').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) {
+    return;
+  }
+  document.documentElement.style.setProperty('--icon-stroke', button.dataset.value);
+  setSegment(event.currentTarget, button.dataset.value);
+});
+
+const themeControl = document.querySelector('[data-control="theme"]');
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  setSegment(themeControl, theme);
+}
+themeControl.addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (button) {
+    setTheme(button.dataset.value);
+  }
+});
+setTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+document.getElementById('copy-picks').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText(picksText());
+    button.textContent = 'Copied';
+  } catch (error) {
+    window.getSelection().selectAllChildren(pickSummary);
+    button.textContent = 'Selected, press Ctrl+C';
+  }
+  setTimeout(() => {
+    button.textContent = 'Copy picks';
+  }, 2000);
+});
+
+showPicks();
+</script>
+</body>
+</html>

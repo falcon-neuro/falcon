@@ -1,70 +1,61 @@
 #!/bin/sh
+# Builds the three websites into docs/build: the main website and the documentation with Zensical,
+# and the API, under api/, with Doxygen. Everything it downloads stays in build/.
+set -e
+cd "$(dirname "$0")/.."
 
-THEME_VERSION="v2.5.0"
-THEME_NUM=$(echo "$THEME_VERSION" | sed 's/^v//')
-TARGET_DIR="build/doxygen-awesome-css"
-PKG_JSON="$TARGET_DIR/package.json"
-SHOULD_DOWNLOAD=1
-DOXY_VERSION="1.18.0"
-INITIAL_DIR=$(pwd)
+DOXYGEN_VERSION="1.18.0"
+THEME_VERSION="2.5.0"
 
-CURRENT_DOXY_VER=$(doxygen --version 2>/dev/null | awk '{print $1}')
-
-mkdir -p build
-
-sudo apt-get update
-sudo apt-get install -y doxygen graphviz
-
-if [ "$CURRENT_DOXY_VER" != "1.18.0" ]; then
-    echo "Doxygen 1.18.0 not found (Found: ${CURRENT_DOXY_VER:-none}). Installing..."
-
-    TMP_SETUP="/tmp/doxygen-setup-$$"
-    rm -rf "$TMP_SETUP"
-    mkdir -p "$TMP_SETUP"
-
-    wget -P "$TMP_SETUP"/ https://github.com/doxygen/doxygen/releases/download/Release_1_18_0/doxygen-1.18.0.linux.bin.tar.gz
-    if [ $? -ne 0 ]; then
-        echo "Error: Doxygen download failed."
-        exit 1
-    fi
-
-    cd "$TMP_SETUP"
-    tar -xf doxygen-1.18.0.linux.bin.tar.gz
-    cd doxygen-1.18.0
-    sudo make install
-
-    cd "$INITIAL_DIR"
-    rm -rf "$TMP_SETUP"
-else
-    echo "Doxygen 1.18.0 is already installed."
-fi
-
-if [ -f "$PKG_JSON" ]; then
-    CURRENT_VERSION=$(grep '"version"' "$PKG_JSON" | cut -d'"' -f4)
-    if [ "$CURRENT_VERSION" = "$THEME_NUM" ]; then
-        echo "Theme version ${THEME_VERSION} already installed. Skipping download."
-        SHOULD_DOWNLOAD=0
-    fi
-fi
-
-if [ "$SHOULD_DOWNLOAD" -eq 1 ]; then
-    echo "Downloading Doxygen Awesome Theme ${THEME_VERSION}..."
-    rm -rf "$TARGET_DIR" build/html
-
-    wget -P build/ https://github.com/jothepro/doxygen-awesome-css/archive/refs/tags/${THEME_VERSION}.zip
-    if [ $? -ne 0 ]; then
-        echo "Error: Download failed."
-        exit 1
-    fi
-
-    unzip -q build/${THEME_VERSION}.zip -d build/
-    mv build/doxygen-awesome-css-${THEME_NUM} "$TARGET_DIR"
-
-    rm build/${THEME_VERSION}.zip
-fi
+DOXYGEN_ARCHIVE="doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
+DOXYGEN="build/doxygen-${DOXYGEN_VERSION}/bin/doxygen"
+THEME_DIR="build/doxygen-awesome-css"
+ZENSICAL_ENV="build/website_env"
+ZENSICAL="${ZENSICAL_ENV}/bin/zensical"
+PYTHON_PACKAGES="docs/requirements.txt"
+# A copy of the list the environment was installed from: when the list changes, the environment
+# is installed again.
+INSTALLED_PYTHON_PACKAGES="${ZENSICAL_ENV}/installed_requirements.txt"
 
 mkdir -p build
 
-echo "Running Doxygen..."
+if [ ! -x "$DOXYGEN" ]; then
+    echo "Downloading Doxygen ${DOXYGEN_VERSION}..."
+    DOXYGEN_RELEASE="Release_$(echo "$DOXYGEN_VERSION" | tr . _)"
+    wget -q -P build/ "https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_RELEASE}/${DOXYGEN_ARCHIVE}"
+    tar -xf "build/${DOXYGEN_ARCHIVE}" -C build/
+    rm "build/${DOXYGEN_ARCHIVE}"
+fi
 
-doxygen -q docs/doxygen/Doxyfile
+if ! grep -q "\"version\": \"${THEME_VERSION}\"" "${THEME_DIR}/package.json" 2>/dev/null; then
+    echo "Downloading the Doxygen Awesome theme ${THEME_VERSION}..."
+    rm -rf "$THEME_DIR"
+    wget -q -P build/ "https://github.com/jothepro/doxygen-awesome-css/archive/refs/tags/v${THEME_VERSION}.zip"
+    unzip -q "build/v${THEME_VERSION}.zip" -d build/
+    mv "build/doxygen-awesome-css-${THEME_VERSION}" "$THEME_DIR"
+    rm "build/v${THEME_VERSION}.zip"
+fi
+
+if ! cmp -s "$PYTHON_PACKAGES" "$INSTALLED_PYTHON_PACKAGES"; then
+    echo "Installing Zensical and the website's other Python packages..."
+    rm -rf "$ZENSICAL_ENV"
+    if command -v uv >/dev/null 2>&1; then
+        uv venv "$ZENSICAL_ENV"
+        uv pip install --python "${ZENSICAL_ENV}/bin/python" -r "$PYTHON_PACKAGES"
+    else
+        python3 -m venv "$ZENSICAL_ENV"
+        "${ZENSICAL_ENV}/bin/pip" install -r "$PYTHON_PACKAGES"
+    fi
+    cp "$PYTHON_PACKAGES" "$INSTALLED_PYTHON_PACKAGES"
+fi
+
+# Doxygen writes the API's pages into Zensical's source folder, which Zensical copies to the output
+# unchanged, and the tag file in which the documentation's class links are looked up. So the API
+# is built first.
+echo "Building the API..."
+rm -rf docs/pages/api
+"$DOXYGEN" -q docs/doxygen/Doxyfile
+
+echo "Building the main website and the documentation..."
+"$ZENSICAL" build --clean --strict -f docs/zensical.toml
+echo "The websites are in docs/build."

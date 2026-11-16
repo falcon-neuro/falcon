@@ -1,0 +1,38 @@
+/* The strip under the previous and next links holds only the copyright line and the social links.
+   Neither is set, so it would show empty. Remove this rule before setting either. */
+.md-footer-meta {
+  display: none;
+}
+
+/* The logo is drawn in the text's colour, which the dark scheme keeps slightly grey. */
+[data-md-color-scheme="slate"] .md-logo {
+  color: #ffffff;
+}
+
+/* Inter is served from the website itself, cut down to Latin text, so no outside server is asked
+   for fonts. Code uses the visitor's own monospace font. */
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/inter_latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --md-text-font: "Inter";
+}
+
+/* An option's or a connection's name stays whole in a narrow table column. */
+.md-typeset table code {
+  white-space: nowrap;
+}
+
+/* A formula on its own line: room above and below, and a scrollbar rather than a page that
+   scrolls sideways when the formula is wider than a phone's screen. */
+math[display="block"] {
+  margin: 1.2em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-size: 1.1em;
+}

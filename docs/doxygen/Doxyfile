@@ -1,13 +1,16 @@
-PROJECT_NAME           = "Falcon"
-PROJECT_LOGO           = docs/doxygen/logo.svg
-PROJECT_ICON           = docs/doxygen/favicon.ico
-OUTPUT_DIRECTORY       = build
+PROJECT_NAME           = "Falcon API"
+PROJECT_LOGO           = docs/overrides/.icons/falcon/logo.svg
+PROJECT_ICON           = docs/pages/assets/favicon.svg
+OUTPUT_DIRECTORY       = docs/pages
+HTML_OUTPUT            = api
+GENERATE_TAGFILE       = build/falcon_api.tag
 
-INPUT                  = docs/ src/
-# Internal notes that must stay off the website: the engine's design docs (src/core) and the
-# brochure's working notes (docs/poster).
+INPUT                  = src/ docs/doxygen/api_main.md
+USE_MDFILE_AS_MAINPAGE = docs/doxygen/api_main.md
+# Internal notes that must stay off the website: the engine's design docs (src/core) and the test
+# plan (src/tests).
 EXCLUDE_PATTERNS       = falcon_gui/** **/README.md extensions/falcon-fklab-extensions/lib/** \
-                            */docs/poster/* */src/core/*.md
+                            */src/core/*.md */src/tests/*.md
 
 FILE_PATTERNS          = *.hpp *.cpp *.h *.md
 RECURSIVE              = YES
@@ -20,7 +23,8 @@ HTML_HEADER            = docs/doxygen/header.html
 
 HTML_EXTRA_STYLESHEET  = build/doxygen-awesome-css/doxygen-awesome.css \
                             build/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
-                            build/doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css
+                            build/doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css \
+                            docs/doxygen/falcon_api.css
 HTML_EXTRA_FILES       = build/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \
                             build/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
                             build/doxygen-awesome-css/doxygen-awesome-fragment-copy-button.js \
