@@ -1,22 +1,33 @@
 #pragma once
 #include <imgui.h>
 #include <algorithm>
+#include <cfloat>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <format>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
+#include "../common/fonts.cpp"
+#include "../ui_driver/ui_driver_targets.cpp"
 #include "all_processors.cpp"
 #include "core_layout.cpp"
 #include "cpu_cores.cpp"
+#include "designer_state_json.cpp"
 #include "pipeline_graph.cpp"
 #include "processors_panel.cpp"
 #include "tooltip.cpp"
+
+// What a processor of the graph carries while it is dragged by its block: its ProcessorId.
+inline constexpr const char* PROCESSOR_MOVE_PAYLOAD = "falcon_processor_move";
 
 // The pipeline designer: the panel of processors at the left, and a box for each CPU core in use,
 // into which a processor is dragged from the panel. A connection is made by a click on an output
@@ -26,8 +37,23 @@
 // from the graph.
 class PipelineDesigner {
 public:
+    // The environment variable FALCON_EXAMPLE_PIPELINE fills the designer with a small pipeline at
+    // its start, so that a picture of the window (see FALCON_SCREENSHOT in falcon_ui.cpp) shows
+    // more than an empty box. Its value "selected" also opens the options of one processor.
+    PipelineDesigner() {
+        if (const char* example = std::getenv("FALCON_EXAMPLE_PIPELINE")) {
+            add_example_pipeline(std::string_view(example) == "selected");
+        }
+    }
+
     void render() {
         const ImVec2 space = ImGui::GetContentRegionAvail();
+        if (selected_processor_.has_value() &&
+            std::as_const(graph_).find_processor(*selected_processor_) == nullptr) {
+            selected_processor_.reset();
+        }
+        const float options_panel_width_now =
+            selected_processor_.has_value() ? options_panel_width : 0.0f;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
         // ImGui's flags are signed ints by its API
@@ -40,14 +66,17 @@ public:
 
         // ImGui's flags are signed ints by its API
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
-        ImGui::BeginChild("Cores", ImVec2(space.x - processors_panel_width, space.y),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-                          ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::BeginChild(
+            "Cores", ImVec2(space.x - processors_panel_width - options_panel_width_now, space.y),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+            ImGuiWindowFlags_HorizontalScrollbar);
         render_isolation_note();
+        core_under_drag_ = core_under_dragged_processor();
+        core_rectangles_.clear();
         block_rectangles_.clear();
         is_mouse_over_picked_or_fitting_port_ = false;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            forget_picked_port();
+            leave_on_escape();
         }
         for (const int core_number : shown_core_numbers()) {
             render_core(core_number);
@@ -57,24 +86,51 @@ public:
         render_connections();
         scroll_while_dragging_at_an_edge();
         ImGui::EndChild();
+
+        // The panel's width was settled before the cores were drawn, so a processor picked in
+        // this frame gets its panel in the next one.
+        if (options_panel_width_now > 0.0f) {
+            ImGui::SameLine(0.0f, 0.0f);
+            // ImGui's flags are signed ints by its API
+            // NOLINTNEXTLINE(bugprone-signed-bitwise)
+            ImGui::BeginChild("OptionsPanel", ImVec2(options_panel_width_now, space.y),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+            render_options_panel();
+            ImGui::EndChild();
+            name_last_item_for_ui_driver({"options_panel"});
+        }
         ImGui::PopStyleVar();
+        remove_requested_processor();
+        hand_state_to_ui_driver();
     }
 
 private:
     static constexpr float processors_panel_width = 380.0f;
+    static constexpr float options_panel_width = 360.0f;
     static constexpr float padding = 10.0f;
     static constexpr float block_width = 220.0f;
     static constexpr float gap_between_rows = 40.0f;
-    static constexpr ImVec4 core_colour{0.95f, 0.95f, 0.96f, 1.0f};
+    static constexpr float core_rounding = 12.0f;
+    static constexpr float block_rounding = 8.0f;
+    static constexpr ImVec4 core_colour{0.949f, 0.949f, 0.953f, 1.0f};
     static constexpr ImVec4 not_isolated_core_colour{1.0f, 0.90f, 0.72f, 1.0f};
     static constexpr ImVec4 warning_colour{0.78f, 0.30f, 0.0f, 1.0f};
-    static constexpr ImVec4 block_colour{0.82f, 0.90f, 1.0f, 1.0f};
+    static constexpr ImVec4 block_colour{1.0f, 1.0f, 1.0f, 1.0f};
+    static constexpr ImVec4 block_border_colour{0.84f, 0.84f, 0.86f, 1.0f};
+    static constexpr ImVec4 block_separator_colour{0.90f, 0.90f, 0.92f, 1.0f};
+    static constexpr ImVec4 hovered_row_colour{0.93f, 0.94f, 0.96f, 1.0f};
+    static constexpr ImVec4 pressed_row_colour{0.88f, 0.90f, 0.94f, 1.0f};
     static constexpr ImVec4 faint_colour{0.45f, 0.45f, 0.45f, 1.0f};
-    static constexpr ImVec4 samples_colour{0.10f, 0.40f, 0.85f, 1.0f};
-    static constexpr ImVec4 events_colour{0.90f, 0.45f, 0.05f, 1.0f};
+    static constexpr ImVec4 samples_colour{0.18f, 0.49f, 0.88f, 1.0f};
+    static constexpr ImVec4 events_colour{0.85f, 0.33f, 0.17f, 1.0f};
     static constexpr ImVec4 state_colour{0.10f, 0.58f, 0.28f, 1.0f};
     static constexpr ImVec4 any_kind_colour{0.40f, 0.40f, 0.40f, 1.0f};
-    static constexpr ImVec4 marked_port_colour{0.60f, 0.90f, 0.60f, 1.0f};
+    static constexpr ImVec4 marked_port_colour{0.78f, 0.93f, 0.78f, 1.0f};
+    static constexpr ImVec4 drop_place_colour{0.10f, 0.58f, 0.28f, 1.0f};
+    static constexpr ImVec4 selected_block_colour{0.12f, 0.31f, 0.63f, 1.0f};
+    static constexpr ImVec4 input_colour{0.92f, 0.92f, 0.94f, 1.0f};
+    static constexpr ImVec4 input_hovered_colour{0.88f, 0.88f, 0.91f, 1.0f};
+    static constexpr ImVec4 input_active_colour{0.84f, 0.86f, 0.92f, 1.0f};
 
     // Where a block was drawn in this frame, on the screen.
     struct BlockRectangle {
@@ -83,12 +139,27 @@ private:
         ImVec2 bottom_right;
     };
 
+    // Where a core's box was drawn, on the screen.
+    struct CoreRectangle {
+        int core_number = 0;
+        ImVec2 top_left;
+        ImVec2 bottom_right;
+    };
+
     PipelineGraph graph_;
     CpuCores cpu_cores_;
+    // The boxes of the frame before, until this frame's are drawn.
+    std::vector<CoreRectangle> core_rectangles_;
+    // The core over whose box a processor is dragged, which shows its drop places.
+    std::optional<int> core_under_drag_;
     // The port clicked first, an output or an input, while its connection waits for the click on a
     // port of the other direction.
     std::variant<std::monostate, OutputReference, InputReference> picked_port_;
     std::vector<BlockRectangle> block_rectangles_;
+    // The processor whose remove icon was clicked in this frame, if any.
+    std::optional<ProcessorId> processor_to_remove_;
+    // The processor whose block was clicked last, whose options the panel at the right edits.
+    std::optional<ProcessorId> selected_processor_;
     // Whether, in this frame, the mouse is over the picked port or over one that fits it: the
     // ports whose row handles a click itself while a port is picked.
     bool is_mouse_over_picked_or_fitting_port_ = false;
@@ -108,6 +179,105 @@ private:
     }
 
     void forget_picked_port() { picked_port_ = std::monostate{}; }
+
+    // For a test that drives the UI (see ../ui_driver/ui_driver.cpp); nothing unless one does.
+    void hand_state_to_ui_driver() const {
+        if (!ui_driver_targets().is_on()) {
+            return;
+        }
+        ui_driver_targets().set_state(
+            designer_state_as_json(graph_, {
+                                               .selected_processor = selected_processor_,
+                                               .picked_output = picked_output(),
+                                               .picked_input = picked_input(),
+                                               .shown_core_numbers = shown_core_numbers(),
+                                               .offered_core_numbers = cpu_cores_.offered(),
+                                           }));
+    }
+
+    // A generator on one core, a chain that fans out on a second, and a recorder on a third.
+    void add_example_pipeline(bool is_one_selected) {
+        const auto add = [this](std::string_view type_name,
+                                int core_number) -> std::optional<ProcessorId> {
+            const auto* const type = std::ranges::find_if(
+                ALL_PROCESSORS, [type_name](const ProcessorDescription& processor) {
+                    return type_name == processor.name;
+                });
+            if (type == ALL_PROCESSORS.end()) {
+                return std::nullopt;
+            }
+            return graph_.add_processor(
+                *type, {.core_number = core_number, .next_processor = std::nullopt});
+        };
+        const std::optional<ProcessorId> generator = add("SignalGenerator", 0);
+        const std::optional<ProcessorId> detector = add("SpikeDetector", 1);
+        const std::optional<ProcessorId> trigger = add("Trigger", 1);
+        const std::optional<ProcessorId> parallel_output = add("PCIeParallelOutput", 1);
+        const std::optional<ProcessorId> recorder = add("Recorder", 2);
+        if (!generator || !detector || !trigger || !parallel_output || !recorder) {
+            return;
+        }
+        graph_.connect({.processor = *generator, .port = "output"},
+                       {.processor = *detector, .port = "input"});
+        graph_.connect({.processor = *detector, .port = "output"},
+                       {.processor = *trigger, .port = "input"});
+        graph_.connect({.processor = *trigger, .port = "output"},
+                       {.processor = *parallel_output, .port = "input"});
+        graph_.connect({.processor = *trigger, .port = "output"},
+                       {.processor = *recorder, .port = "inputs"});
+        if (is_one_selected) {
+            selected_processor_ = *detector;
+        }
+    }
+
+    // Escape lets a picked port go, or else closes the options panel. While a text field is
+    // being typed in, Escape is that field's, which takes back what was typed.
+    void leave_on_escape() {
+        if (is_port_picked()) {
+            forget_picked_port();
+        } else if (!ImGui::IsAnyItemActive()) {
+            selected_processor_.reset();
+        }
+    }
+
+    // Called inside the cores' area, before its boxes are drawn.
+    [[nodiscard]] std::optional<int> core_under_dragged_processor() const {
+        if (!is_any_processor_dragged()) {
+            return std::nullopt;
+        }
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const ImVec2 area_top_left = ImGui::GetWindowPos();
+        const ImVec2 area_size = ImGui::GetWindowSize();
+        const bool is_in_area =
+            mouse.x >= area_top_left.x && mouse.x < area_top_left.x + area_size.x &&
+            mouse.y >= area_top_left.y && mouse.y < area_top_left.y + area_size.y;
+        if (!is_in_area) {
+            return std::nullopt;
+        }
+        for (const CoreRectangle& rectangle : core_rectangles_) {
+            const bool is_in_box =
+                mouse.x >= rectangle.top_left.x && mouse.x < rectangle.bottom_right.x &&
+                mouse.y >= rectangle.top_left.y && mouse.y < rectangle.bottom_right.y;
+            if (is_in_box) {
+                return rectangle.core_number;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Called once the frame is drawn: a block is drawn from its processor in the graph, so the
+    // processor whose remove icon was clicked is taken out only after every block is drawn.
+    void remove_requested_processor() {
+        if (!processor_to_remove_.has_value()) {
+            return;
+        }
+        graph_.remove_processor(*processor_to_remove_);
+        if (selected_processor_ == processor_to_remove_) {
+            selected_processor_.reset();
+        }
+        processor_to_remove_.reset();
+        forget_picked_port();
+    }
 
     // Called after this frame's ports are drawn. A right click anywhere, or a click anywhere but
     // on the picked port or on one that fits it, lets the picked port go.
@@ -152,7 +322,7 @@ private:
     // Called inside the cores' area. While a processor is dragged, the area scrolls sideways when
     // the mouse is near its left or right edge, so a core beyond the window's width can be reached.
     static void scroll_while_dragging_at_an_edge() {
-        if (!is_processor_dragged()) {
+        if (!is_any_processor_dragged()) {
             return;
         }
         constexpr float edge_width = 60.0f;
@@ -176,21 +346,21 @@ private:
         const float box_height = ImGui::GetContentRegionAvail().y;
         const bool is_isolated = cpu_cores_.is_isolated(core_number);
         const CoreLayout layout = layout_of_core(graph_, core_number);
-        const bool is_drop_place_shown = is_processor_dragged();
-        const std::size_t width_in_blocks =
-            std::max<std::size_t>(1, layout.width_in_blocks + (is_drop_place_shown ? 1 : 0));
         const float box_width =
-            (static_cast<float>(width_in_blocks) * (block_width + padding)) + padding;
+            (std::max(1.0f, layout.width_in_blocks) * (block_width + padding)) + padding;
 
         ImGui::PushID(core_number);
         ImGui::PushStyleColor(ImGuiCol_ChildBg,
                               is_isolated ? core_colour : not_isolated_core_colour);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, core_rounding);
         // ImGui's flags are signed ints by its API
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
         ImGui::BeginChild("Core", ImVec2(box_width, box_height),
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
         const std::string title = std::format("Core {}", core_number);
+        push_bold_font();
         ImGui::TextUnformatted(title.c_str());
+        ImGui::PopFont();
         if (!is_isolated) {
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, warning_colour);
@@ -201,20 +371,32 @@ private:
                 "at any moment. Keep realtime processors on isolated cores. A processor that "
                 "isn't realtime, such as a recorder, is fine here.");
         }
-        ImGui::Separator();
         ImGui::Spacing();
-        render_rows(layout, is_drop_place_shown);
+        ImGui::Spacing();
+        const std::optional<ProcessorId> next_processor_at_drop =
+            render_rows(layout, core_under_drag_ == core_number);
         ImGui::EndChild();
+        ImGui::PopStyleVar();
         ImGui::PopStyleColor();
-        accept_dropped_processor(core_number);
+        core_rectangles_.push_back({
+            .core_number = core_number,
+            .top_left = ImGui::GetItemRectMin(),
+            .bottom_right = ImGui::GetItemRectMax(),
+        });
+        name_last_item_for_ui_driver({"core", std::to_string(core_number)});
+        accept_dropped_processor(
+            {.core_number = core_number, .next_processor = next_processor_at_drop});
         ImGui::PopID();
     }
 
     // Called inside a core's box: its rows of blocks from top to bottom and, while a processor is
-    // dragged from the panel, the place it would be dropped at.
-    void render_rows(const CoreLayout& layout, bool is_drop_place_shown) {
+    // dragged over the box, its drop places. Returns the processor in front of which a processor
+    // dropped into the box goes in the core's list, which is that of the drop place nearest the
+    // mouse; none for the end of the list.
+    [[nodiscard]] std::optional<ProcessorId> render_rows(const CoreLayout& layout,
+                                                         bool has_drop_places) {
         const float left_edge = ImGui::GetCursorPosX();
-        bool is_top_row = true;
+        const ImVec2 rows_top_left_on_screen = ImGui::GetCursorScreenPos();
         for (const std::vector<PlacedProcessor>& row : layout.rows) {
             bool is_first_of_row = true;
             for (const PlacedProcessor& placed : row) {
@@ -226,18 +408,17 @@ private:
                 render_block(*processor);
                 is_first_of_row = false;
             }
-            if (is_top_row && is_drop_place_shown) {
-                move_to_column(left_edge, static_cast<float>(layout.width_in_blocks),
-                               is_first_of_row);
-                render_drop_place();
-            }
-            is_top_row = false;
             // Room for the connections' lines to bend between two rows.
             ImGui::Dummy(ImVec2(0.0f, gap_between_rows));
         }
-        if (layout.rows.empty() && is_drop_place_shown) {
-            render_drop_place();
+        if (!has_drop_places) {
+            return std::nullopt;
         }
+        if (layout.rows.empty()) {
+            render_drop_place_of_empty_core();
+            return std::nullopt;
+        }
+        return render_drop_bars(layout, rows_top_left_on_screen);
     }
 
     // Moves to where a block of this column starts, on the line of the block drawn before it
@@ -250,8 +431,9 @@ private:
     }
 
     // Called right after a core's box, which it makes a place to drop a processor dragged from the
-    // panel; ImGui marks the box while one is dragged over it.
-    void accept_dropped_processor(int core_number) {
+    // panel or by its block; ImGui marks the box while one is dragged over it. The processor goes
+    // to the given place of the core's list.
+    void accept_dropped_processor(const CoreListPlace& place) {
         if (!ImGui::BeginDragDropTarget()) {
             return;
         }
@@ -260,25 +442,102 @@ private:
             if (std::cmp_equal(payload->DataSize, sizeof(processor_index))) {
                 std::memcpy(&processor_index, payload->Data, sizeof(processor_index));
                 if (processor_index < ALL_PROCESSORS.size()) {
-                    graph_.add_processor(ALL_PROCESSORS.at(processor_index), core_number);
+                    graph_.add_processor(ALL_PROCESSORS.at(processor_index), place);
                 }
+            }
+        }
+        if (ImGui::AcceptDragDropPayload(PROCESSOR_MOVE_PAYLOAD) != nullptr) {
+            if (const std::optional<ProcessorId> moved = moved_processor_id()) {
+                place_moved_processor(*moved, place);
             }
         }
         ImGui::EndDragDropTarget();
     }
 
-    // Where a processor dragged from the panel is drawn once dropped into this core: an empty
-    // place with a dashed outline, at the end of the core's top row.
-    static void render_drop_place() {
+    // A processor dropped into another core's box goes there alone. One dropped into its own
+    // core's box takes its whole chain along: the chain's place among the core's chains is that
+    // of its top in the core's list, so it is the top that is placed.
+    void place_moved_processor(ProcessorId processor_id, const CoreListPlace& place) {
+        const GraphProcessor* processor = graph_.find_processor(processor_id);
+        if (processor == nullptr) {
+            return;
+        }
+        const ProcessorId placed_processor_id = processor->core_number == place.core_number
+                                                    ? chain_top_of(graph_, processor_id)
+                                                    : processor_id;
+        graph_.place_processor(placed_processor_id, place);
+    }
+
+    // The drop places of a core that holds processors: a bar in the gap left of each chain and
+    // one right of the last chain, from the top row down to the bottom of the box. They are drawn
+    // in gaps that are there anyway, so that nothing moves while a processor is dragged. The one
+    // nearest the mouse is marked, and a processor dropped anywhere in the box goes there.
+    // Returns the processor that one stands in front of; none for the end of the core's list.
+    [[nodiscard]] static std::optional<ProcessorId> render_drop_bars(
+        const CoreLayout& layout, ImVec2 rows_top_left_on_screen) {
+        if (layout.drop_places.empty()) {
+            return std::nullopt;
+        }
+        constexpr float half = 0.5f;
+        constexpr float marked_bar_width = 4.0f;
+        const ImVec2 box_top_left = ImGui::GetWindowPos();
+        const ImVec2 box_size = ImGui::GetWindowSize();
+        const ImVec2 box_bottom_right(box_top_left.x + box_size.x, box_top_left.y + box_size.y);
+        const float bottom_on_screen = box_bottom_right.y - padding;
+        const float mouse_x = ImGui::GetMousePos().x;
+        const float top_on_screen = rows_top_left_on_screen.y;
+        const auto bar_centre_on_screen = [&](const DropPlace& drop_place) {
+            return rows_top_left_on_screen.x + (drop_place.column * (block_width + padding)) -
+                   (padding * half);
+        };
+        const auto nearest =
+            std::ranges::min_element(layout.drop_places, {}, [&](const DropPlace& drop_place) {
+                return std::abs(bar_centre_on_screen(drop_place) - mouse_x);
+            });
+
+        // The bars at the two ends lie in the box's padding, which the box doesn't draw into
+        // otherwise.
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->PushClipRect(box_top_left, box_bottom_right, false);
+        for (auto drop_place = layout.drop_places.begin(); drop_place != layout.drop_places.end();
+             ++drop_place) {
+            const float bar_centre = bar_centre_on_screen(*drop_place);
+            const std::string place_number =
+                std::to_string(std::ranges::distance(layout.drop_places.begin(), drop_place));
+            const ScreenRectangle bar{
+                .top_left = ImVec2(bar_centre - (marked_bar_width * half), top_on_screen),
+                .bottom_right = ImVec2(bar_centre + (marked_bar_width * half), bottom_on_screen),
+            };
+            name_rectangle_for_ui_driver({"drop", place_number}, bar,
+                                         drop_place == nearest ? "marked" : "");
+            if (drop_place == nearest) {
+                draw_list->AddRectFilled(
+                    ImVec2(bar_centre - (marked_bar_width * half), top_on_screen),
+                    ImVec2(bar_centre + (marked_bar_width * half), bottom_on_screen),
+                    ImGui::GetColorU32(drop_place_colour));
+            } else {
+                add_dashed_line(draw_list, ImVec2(bar_centre, top_on_screen),
+                                ImVec2(bar_centre, bottom_on_screen),
+                                ImGui::GetColorU32(faint_colour));
+            }
+        }
+        draw_list->PopClipRect();
+        return nearest->next_processor;
+    }
+
+    // The one drop place of a core that holds no processor, whose box has the room for it: an
+    // empty place with a dashed outline, where the processor is drawn once dropped.
+    static void render_drop_place_of_empty_core() {
         constexpr float height_in_text_lines = 4.0f;
         constexpr float half = 0.5f;
         constexpr const char* label = "Drop here";
         const ImVec2 size(block_width,
                           ImGui::GetTextLineHeightWithSpacing() * height_in_text_lines);
         ImGui::Dummy(size);
+        name_last_item_for_ui_driver({"drop", "0"}, "marked");
         const ImVec2 top_left = ImGui::GetItemRectMin();
         const ImVec2 bottom_right = ImGui::GetItemRectMax();
-        const ImU32 colour = ImGui::GetColorU32(faint_colour);
+        const ImU32 colour = ImGui::GetColorU32(drop_place_colour);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         add_dashed_line(draw_list, top_left, ImVec2(bottom_right.x, top_left.y), colour);
         add_dashed_line(draw_list, ImVec2(bottom_right.x, top_left.y), bottom_right, colour);
@@ -315,9 +574,18 @@ private:
 
     // A block: its inputs on top, its name and type, its outputs at the bottom, as data flows.
     void render_block(const GraphProcessor& processor) {
+        constexpr float border_thickness = 1.0f;
+        constexpr float selected_border_thickness = 2.0f;
+        const bool is_selected = selected_processor_ == processor.id;
         ImGui::PushID(static_cast<int>(processor.id));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, block_colour);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border,
+                              is_selected ? selected_block_colour : block_border_colour);
+        ImGui::PushStyleColor(ImGuiCol_Separator, block_separator_colour);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, block_rounding);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize,
+                            is_selected ? selected_border_thickness : border_thickness);
         // ImGui's flags are signed ints by its API
         // NOLINTBEGIN(bugprone-signed-bitwise)
         const ImGuiChildFlags block_flags = ImGuiChildFlags_Borders |
@@ -329,10 +597,8 @@ private:
             render_ports(processor, PortDirection::Input);
             ImGui::Separator();
         }
-        ImGui::TextUnformatted(processor.name.c_str());
-        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-        ImGui::TextUnformatted(processor.type->name);
-        ImGui::PopStyleColor();
+        render_block_handle(processor);
+        render_block_options(processor);
         if (has_port(*processor.type, PortDirection::Output)) {
             ImGui::Separator();
             render_ports(processor, PortDirection::Output);
@@ -343,9 +609,329 @@ private:
             .top_left = ImGui::GetItemRectMin(),
             .bottom_right = ImGui::GetItemRectMax(),
         });
+        name_last_item_for_ui_driver({"block", processor.name});
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(3);
+        ImGui::PopID();
+    }
+
+    // The bold face of the text around it, or that text's own face when Falcon has no bold one.
+    // To be followed by ImGui::PopFont().
+    static void push_bold_font() {
+        constexpr int text_size = 16;
+        const auto bold_font = ui_fonts.find({.size = text_size, .style = FontStyle::Bold});
+        ImGui::PushFont(bold_font == ui_fonts.end() ? nullptr : bold_font->second, 0.0f);
+    }
+
+    // The block's name and type, which are also the handle it is dragged by into another core's
+    // box, with the remove icon at their right. The dragged processor's name follows the mouse in
+    // a tooltip of ImGui's own.
+    void render_block_handle(const GraphProcessor& processor) {
+        const ImVec2 handle_position = ImGui::GetCursorPos();
+        const float handle_height =
+            (ImGui::GetTextLineHeight() * 2.0f) + ImGui::GetStyle().ItemSpacing.y;
+        const float icon_size = ImGui::GetTextLineHeight();
+        const float gap_before_icon = ImGui::GetStyle().ItemSpacing.x;
+        const float handle_width = ImGui::GetContentRegionAvail().x - icon_size - gap_before_icon;
+        if (ImGui::InvisibleButton("handle", ImVec2(handle_width, handle_height))) {
+            selected_processor_ = processor.id;
+        }
+        const ImVec2 handle_top_left = ImGui::GetItemRectMin();
+        const ImVec2 handle_bottom_right = ImGui::GetItemRectMax();
+        name_last_item_for_ui_driver({"block", processor.name, "handle"});
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, TOOLTIP_BACKGROUND);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, TOOLTIP_PADDING);
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(PROCESSOR_MOVE_PAYLOAD, &processor.id, sizeof(processor.id));
+            ImGui::TextUnformatted(processor.name.c_str());
+            ImGui::EndDragDropSource();
+        }
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
-        ImGui::PopID();
+
+        ImGui::SameLine(0.0f, gap_before_icon);
+        if (render_remove_icon(icon_size)) {
+            processor_to_remove_ = processor.id;
+        }
+        name_last_item_for_ui_driver({"block", processor.name, "remove"});
+
+        // The name and the type are drawn over the handle, which is as high as the two, and not
+        // beyond it, where the remove icon is.
+        ImGui::SetCursorPos(handle_position);
+        ImGui::PushClipRect(handle_top_left, handle_bottom_right, true);
+        push_bold_font();
+        ImGui::TextUnformatted(processor.name.c_str());
+        ImGui::PopFont();
+        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+        ImGui::TextUnformatted(processor.type->name);
+        ImGui::PopStyleColor();
+        ImGui::PopClipRect();
+    }
+
+    // The block's options in short: a line for each, its name and its value as written, cut where
+    // the block ends. The tooltip of a line says the rest, and a click on one opens the panel
+    // that edits them.
+    void render_block_options(const GraphProcessor& processor) {
+        std::size_t option_index = 0;
+        for (const OptionDescription& option : processor.type->options) {
+            const std::string value = option_index < processor.option_values.size()
+                                          ? processor.option_values.at(option_index)
+                                          : std::string(option.default_value);
+            ++option_index;
+
+            // The name has the room that the value leaves, and half the line at least.
+            constexpr float half = 0.5f;
+            const float line_width = ImGui::GetContentRegionAvail().x;
+            const float name_width =
+                std::max(line_width * half, line_width - ImGui::CalcTextSize(value.c_str()).x);
+            ImGui::BeginGroup();
+            ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+            constexpr const char* after_name = ": ";
+            const std::string name_shown =
+                text_cut_to_width(option.name, name_width - ImGui::CalcTextSize(after_name).x) +
+                after_name;
+            ImGui::TextUnformatted(name_shown.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, 0.0f);
+            const std::string value_shown =
+                text_cut_to_width(value, ImGui::GetContentRegionAvail().x);
+            ImGui::TextUnformatted(value_shown.c_str());
+            ImGui::EndGroup();
+            name_last_item_for_ui_driver({"block", processor.name, "option", option.name});
+            if (ImGui::IsItemClicked()) {
+                selected_processor_ = processor.id;
+            }
+
+            const std::string explanation =
+                std::format("{}: {}\n\n{}, {} by default\n\n{}", option.name, value, option.type,
+                            option.default_value, option.description);
+            render_item_tooltip(explanation.c_str());
+        }
+    }
+
+    // The text itself when it is no wider than max_width, or else its longest start that fits
+    // with "..." after it.
+    [[nodiscard]] static std::string text_cut_to_width(std::string_view text, float max_width) {
+        constexpr std::string_view ellipsis = "...";
+        const auto width_of = [](const std::string& shown) {
+            return ImGui::CalcTextSize(shown.c_str()).x;
+        };
+        std::string cut(text);
+        if (width_of(cut) <= max_width) {
+            return cut;
+        }
+        while (!cut.empty()) {
+            remove_last_character(cut);
+            std::string shown = cut;
+            shown += ellipsis;
+            if (width_of(shown) <= max_width) {
+                return shown;
+            }
+        }
+        return std::string(ellipsis);
+    }
+
+    // Removes the last character of UTF-8 text, which can be several bytes long.
+    static void remove_last_character(std::string& text) {
+        constexpr unsigned continuation_mask = 0xC0U;
+        constexpr unsigned continuation_bits = 0x80U;
+        const auto is_last_byte_a_continuation = [&text] {
+            const auto last_byte = static_cast<unsigned>(static_cast<unsigned char>(text.back()));
+            return (last_byte & continuation_mask) == continuation_bits;
+        };
+        while (!text.empty() && is_last_byte_a_continuation()) {
+            text.pop_back();
+        }
+        if (!text.empty()) {
+            text.pop_back();
+        }
+    }
+
+    // A cross at the right of a block's name, which can't be clicked while a port is picked.
+    // Returns whether it was clicked.
+    [[nodiscard]] bool render_remove_icon(float icon_size) const {
+        ImGui::BeginDisabled(is_port_picked());
+        const bool is_clicked =
+            render_cross_button("remove", icon_size, "Remove this processor and its connections.");
+        ImGui::EndDisabled();
+        return is_clicked;
+    }
+
+    // A cross to click, with a tooltip. Returns whether it was clicked.
+    [[nodiscard]] static bool render_cross_button(const char* button_id, float icon_size,
+                                                  const char* tooltip) {
+        constexpr float inset_in_icon_sizes = 0.25f;
+        constexpr float thickness = 2.0f;
+        const bool is_clicked = ImGui::InvisibleButton(button_id, ImVec2(icon_size, icon_size));
+        const bool is_hovered = ImGui::IsItemHovered();
+        const ImVec2 top_left = ImGui::GetItemRectMin();
+        const ImVec2 bottom_right = ImGui::GetItemRectMax();
+        render_item_tooltip(tooltip);
+        const float inset = icon_size * inset_in_icon_sizes;
+        const ImU32 colour = ImGui::GetColorU32(is_hovered ? warning_colour : faint_colour);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddLine(ImVec2(top_left.x + inset, top_left.y + inset),
+                           ImVec2(bottom_right.x - inset, bottom_right.y - inset), colour,
+                           thickness);
+        draw_list->AddLine(ImVec2(bottom_right.x - inset, top_left.y + inset),
+                           ImVec2(top_left.x + inset, bottom_right.y - inset), colour, thickness);
+        return is_clicked;
+    }
+
+    // Called inside the options panel: the selected processor's name and type, then each of its
+    // options with its description and a text field that holds its value as written in
+    // pipeline.cpp.
+    void render_options_panel() {
+        GraphProcessor* processor =
+            selected_processor_.has_value() ? graph_.find_processor(*selected_processor_) : nullptr;
+        if (processor == nullptr) {
+            return;
+        }
+        const float icon_size = ImGui::GetTextLineHeight();
+        ImGui::TextUnformatted(processor->name.c_str());
+        ImGui::SameLine(ImGui::GetWindowWidth() - padding - icon_size);
+        if (render_cross_button("close", icon_size, "Close this panel.")) {
+            selected_processor_.reset();
+        }
+        name_last_item_for_ui_driver({"options_panel", "close"});
+        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+        ImGui::TextUnformatted(processor->type->name);
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (processor->type->options.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+            ImGui::TextUnformatted("This processor has no options.");
+            ImGui::PopStyleColor();
+            return;
+        }
+        std::size_t option_index = 0;
+        for (const OptionDescription& option : processor->type->options) {
+            if (option_index < processor->option_values.size()) {
+                ImGui::PushID(option.name);
+                render_option_input(option, processor->option_values.at(option_index));
+                ImGui::PopID();
+            }
+            ++option_index;
+        }
+    }
+
+    // A text field that edits a string of any length: ImGui asks through the callback for a
+    // larger buffer when the text outgrows the string's.
+    static void render_text_field(const char* label, std::string& text) {
+        const auto grow_buffer = [](ImGuiInputTextCallbackData* data) -> int {
+            if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+                auto* edited_text = static_cast<std::string*>(data->UserData);
+                edited_text->resize(static_cast<std::size_t>(data->BufTextLen));
+                data->Buf = edited_text->data();
+            }
+            return 0;
+        };
+        ImGui::InputText(label, text.data(), text.capacity() + 1,
+                         ImGuiInputTextFlags_CallbackResize, grow_buffer, &text);
+    }
+
+    // The number that a text is, or none when the text is anything but one plain number.
+    template <typename Number>
+    [[nodiscard]] static std::optional<Number> number_written_as(std::string_view text) {
+        Number number{};
+        const char* const text_begin = std::to_address(text.begin());
+        const char* const text_end = std::to_address(text.end());
+        const std::from_chars_result result = std::from_chars(text_begin, text_end, number);
+        if (result.ec != std::errc{} || result.ptr != text_end) {
+            return std::nullopt;
+        }
+        return number;
+    }
+
+    [[nodiscard]] static bool is_decimal_option(const OptionDescription& option) {
+        const std::string_view type = option.type;
+        return type == "double" || type == "float";
+    }
+
+    [[nodiscard]] static bool is_whole_number_option(const OptionDescription& option) {
+        return std::string_view(option.type) == "int";
+    }
+
+    // The input for an option's value. An option that is a number has a box that takes a number
+    // only, so nothing else can be typed into it. Every other option has a text field, and so
+    // has a number whose value isn't written as one plain number, e.g. a default that the
+    // processor's source writes as a calculation.
+    static void render_value_input(const OptionDescription& option, std::string& value) {
+        constexpr double step = 1.0;
+        constexpr double fast_step = 10.0;
+        if (is_decimal_option(option)) {
+            if (std::optional<double> number = number_written_as<double>(value)) {
+                if (ImGui::InputDouble("##value", &*number, step, fast_step, "%.10g")) {
+                    value = std::format("{}", *number);
+                }
+                return;
+            }
+        }
+        if (is_whole_number_option(option)) {
+            if (std::optional<int> number = number_written_as<int>(value)) {
+                if (ImGui::InputInt("##value", &*number)) {
+                    value = std::format("{}", *number);
+                }
+                return;
+            }
+        }
+        render_text_field("##value", value);
+    }
+
+    // Whether a value is the option's default. Two numbers are compared as numbers, so that 1 and
+    // 1.0 are the same.
+    [[nodiscard]] static bool is_default_value(const OptionDescription& option,
+                                               const std::string& value) {
+        if (is_decimal_option(option) || is_whole_number_option(option)) {
+            const std::optional<double> number = number_written_as<double>(value);
+            const std::optional<double> default_number =
+                number_written_as<double>(option.default_value);
+            if (number.has_value() && default_number.has_value()) {
+                return *number == *default_number;
+            }
+        }
+        return value == option.default_value;
+    }
+
+    // One option in the options panel: its name, what it is, the input for its value, and its
+    // type and default with a button that puts the default back.
+    static void render_option_input(const OptionDescription& option, std::string& value) {
+        ImGui::TextUnformatted(option.name);
+        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(option.description);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, input_active_colour);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        render_value_input(option, value);
+        name_last_item_for_ui_driver({"options_panel", "input", option.name});
+        ImGui::PopStyleColor(3);
+
+        const std::string type_and_default =
+            std::format("{}, {} by default", option.type, option.default_value);
+        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(type_and_default.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        if (!is_default_value(option, value)) {
+            const bool is_default_asked_for = ImGui::SmallButton("Put the default back");
+            name_last_item_for_ui_driver({"options_panel", "default", option.name});
+            if (is_default_asked_for) {
+                value = option.default_value;
+            }
+        }
+        ImGui::Spacing();
+        ImGui::Spacing();
     }
 
     [[nodiscard]] static bool has_port(const ProcessorDescription& type, PortDirection direction) {
@@ -377,8 +963,16 @@ private:
         const bool is_fitting =
             waiting_input != nullptr && graph_.can_connect(output, *waiting_input);
         const bool is_picked_or_fitting = is_picked || is_fitting;
-        ImGui::BeginDisabled(is_port_picked() && !is_picked_or_fitting);
-        const bool is_clicked = render_port_row(port, is_picked_or_fitting);
+        const bool is_greyed = is_port_picked() && !is_picked_or_fitting;
+        std::string rejection;
+        if (is_greyed) {
+            rejection = waiting_input != nullptr
+                            ? rejection_message(output, *waiting_input, PortDirection::Output)
+                            : "An output connects to an input, not to another output.";
+        }
+        ImGui::BeginDisabled(is_greyed);
+        const bool is_clicked = render_port_row(port, is_picked_or_fitting, rejection);
+        name_last_item_for_ui_driver({"port", processor.name, "output", port.name}, rejection);
         if (is_picked_or_fitting && ImGui::IsItemHovered()) {
             is_mouse_over_picked_or_fitting_port_ = true;
         }
@@ -405,8 +999,16 @@ private:
         const bool is_fitting =
             waiting_output != nullptr && graph_.can_connect(*waiting_output, input);
         const bool is_picked_or_fitting = is_picked || is_fitting;
-        ImGui::BeginDisabled(is_port_picked() && !is_picked_or_fitting);
-        const bool is_clicked = render_port_row(port, is_picked_or_fitting);
+        const bool is_greyed = is_port_picked() && !is_picked_or_fitting;
+        std::string rejection;
+        if (is_greyed) {
+            rejection = waiting_output != nullptr
+                            ? rejection_message(*waiting_output, input, PortDirection::Input)
+                            : "An input connects to an output, not to another input.";
+        }
+        ImGui::BeginDisabled(is_greyed);
+        const bool is_clicked = render_port_row(port, is_picked_or_fitting, rejection);
+        name_last_item_for_ui_driver({"port", processor.name, "input", port.name}, rejection);
         if (is_picked_or_fitting && ImGui::IsItemHovered()) {
             is_mouse_over_picked_or_fitting_port_ = true;
         }
@@ -429,9 +1031,55 @@ private:
         }
     }
 
-    // A dot in the colour of what the port carries, then its name; the tooltip says the rest. The
-    // dot and the name are one place to click. Returns whether it was clicked.
-    static bool render_port_row(const PortDescription& port, bool is_marked) {
+    // Why an output and an input can't be connected, said of the one of the two that the mouse is
+    // over while the other is picked. Empty when they can.
+    [[nodiscard]] std::string rejection_message(const OutputReference& output,
+                                                const InputReference& input,
+                                                PortDirection hovered_direction) const {
+        const bool is_input_hovered = hovered_direction == PortDirection::Input;
+        switch (graph_.connection_verdict(output, input)) {
+            case ConnectionVerdict::Fits:
+                return {};
+            case ConnectionVerdict::UnknownPort:
+                return "These two can't be connected.";
+            case ConnectionVerdict::SameProcessor:
+                return "A processor's output can't be connected to its own input.";
+            case ConnectionVerdict::DifferentKind:
+                return different_kind_message(output, input, is_input_hovered);
+            case ConnectionVerdict::AlreadyConnected:
+                return is_input_hovered ? "This input is already connected to the picked output."
+                                        : "This output is already connected to the picked input.";
+            case ConnectionVerdict::InputTaken:
+                return is_input_hovered
+                           ? "This input takes one connection and already has one."
+                           : "The picked input takes one connection and already has one.";
+        }
+        return {};
+    }
+
+    [[nodiscard]] std::string different_kind_message(const OutputReference& output,
+                                                     const InputReference& input,
+                                                     bool is_input_hovered) const {
+        const PortDescription* output_port =
+            graph_.find_port(output.processor, output.port, PortDirection::Output);
+        const PortDescription* input_port =
+            graph_.find_port(input.processor, input.port, PortDirection::Input);
+        if (output_port == nullptr || input_port == nullptr) {
+            return "These two can't be connected.";
+        }
+        if (is_input_hovered) {
+            return std::format("This input takes {}, and the picked output gives {}.",
+                               port_kind_name(input_port->kind), port_kind_name(output_port->kind));
+        }
+        return std::format("This output gives {}, and the picked input takes {}.",
+                           port_kind_name(output_port->kind), port_kind_name(input_port->kind));
+    }
+
+    // A dot in the colour of what the port carries, then its name. The tooltip says the rest, or,
+    // for a port that can't be connected to the picked one, why not: `rejection`, empty otherwise.
+    // The dot and the name are one place to click. Returns whether it was clicked.
+    static bool render_port_row(const PortDescription& port, bool is_marked,
+                                const std::string& rejection) {
         constexpr float dot_radius_in_line_heights = 0.7f;
         constexpr float half = 0.5f;
         constexpr float gap_after_dot = 8.0f;
@@ -441,21 +1089,31 @@ private:
         const ImVec2 row_top_left = ImGui::GetCursorScreenPos();
 
         ImGui::PushStyleColor(ImGuiCol_Header, marked_port_colour);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hovered_row_colour);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, pressed_row_colour);
         ImGui::PushID(port.direction == PortDirection::Input ? "input" : "output");
         ImGui::PushID(port.name);
         const bool is_clicked = ImGui::Selectable("##port", is_marked, ImGuiSelectableFlags_None,
                                                   ImVec2(0.0f, row_height));
         ImGui::PopID();
         ImGui::PopID();
-        ImGui::PopStyleColor();
-        const std::string explanation =
-            std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
-        render_item_tooltip(explanation.c_str());
+        ImGui::PopStyleColor(3);
+        if (rejection.empty()) {
+            const std::string explanation =
+                std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
+            render_item_tooltip(explanation.c_str());
+        } else {
+            render_item_tooltip(rejection.c_str());
+        }
 
         // Drawn after the row so that they lie over its highlight.
+        constexpr float ring_thickness = 2.5f;
+        const ImVec2 dot_centre(row_top_left.x + dot_radius, row_top_left.y + dot_radius);
+        const float ring_radius = dot_radius - (ring_thickness * half);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        draw_list->AddCircleFilled(ImVec2(row_top_left.x + dot_radius, row_top_left.y + dot_radius),
-                                   dot_radius, ImGui::GetColorU32(kind_colour(port.kind)));
+        draw_list->AddCircleFilled(dot_centre, ring_radius, ImGui::GetColorU32(block_colour));
+        draw_list->AddCircle(dot_centre, ring_radius, ImGui::GetColorU32(kind_colour(port.kind)), 0,
+                             ring_thickness);
         const ImVec4 name_colour =
             port.is_optional ? faint_colour : ImGui::GetStyleColorVec4(ImGuiCol_Text);
         draw_list->AddText(ImVec2(row_top_left.x + row_height + gap_after_dot,
@@ -575,21 +1233,26 @@ private:
         return any_kind_colour;
     }
 
-    // The cores that hold a processor, or the first core offered while none does. While a
-    // processor is dragged from the panel, the next free core is shown too, as a place to drop it.
+    // Every core from 0 up to the highest one that holds a processor, those between that hold none
+    // included, each as a box; while the pipeline is empty, up to the first core offered. While a
+    // processor is dragged, from the panel or by its block, the next core after them is shown too,
+    // as a place to drop it.
     [[nodiscard]] std::vector<int> shown_core_numbers() const {
-        std::vector<int> core_numbers;
+        const std::vector<int>& offered = cpu_cores_.offered();
+        int highest_core_number = -1;
         for (const GraphCore& core : graph_.cores) {
             if (!core.processors.empty()) {
-                core_numbers.push_back(core.number);
+                highest_core_number = std::max(highest_core_number, core.number);
             }
         }
-        std::ranges::sort(core_numbers);
-        const std::vector<int>& offered = cpu_cores_.offered();
-        if (core_numbers.empty() && !offered.empty()) {
-            core_numbers.push_back(offered.front());
+        if (highest_core_number < 0) {
+            highest_core_number = offered.empty() ? 0 : offered.front();
         }
-        if (is_processor_dragged()) {
+        std::vector<int> core_numbers;
+        for (int core_number = 0; core_number <= highest_core_number; ++core_number) {
+            core_numbers.push_back(core_number);
+        }
+        if (is_any_processor_dragged()) {
             const auto next_free = std::ranges::find_if(offered, [&core_numbers](int core_number) {
                 return !std::ranges::contains(core_numbers, core_number);
             });
@@ -600,8 +1263,25 @@ private:
         return core_numbers;
     }
 
-    [[nodiscard]] static bool is_processor_dragged() {
+    // Whether a processor is being dragged from the panel.
+    [[nodiscard]] static bool is_new_processor_dragged() {
         const ImGuiPayload* payload = ImGui::GetDragDropPayload();
         return payload != nullptr && payload->IsDataType(PROCESSOR_TYPE_PAYLOAD);
+    }
+
+    // The processor of the graph that is being dragged by its block, if one is.
+    [[nodiscard]] static std::optional<ProcessorId> moved_processor_id() {
+        const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+        ProcessorId processor_id = 0;
+        if (payload == nullptr || !payload->IsDataType(PROCESSOR_MOVE_PAYLOAD) ||
+            !std::cmp_equal(payload->DataSize, sizeof(processor_id))) {
+            return std::nullopt;
+        }
+        std::memcpy(&processor_id, payload->Data, sizeof(processor_id));
+        return processor_id;
+    }
+
+    [[nodiscard]] static bool is_any_processor_dragged() {
+        return is_new_processor_dragged() || moved_processor_id().has_value();
     }
 };

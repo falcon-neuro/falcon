@@ -2,8 +2,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 #include "processor_list.cpp"
 
@@ -41,6 +43,23 @@ struct GraphConnection {
     InputReference input;
 };
 
+// A place in a core's list: in front of next_processor, or at the end of the list when that is
+// none.
+struct CoreListPlace {
+    int core_number = 0;
+    std::optional<ProcessorId> next_processor;
+};
+
+// Whether an output may be connected to an input, and if not, why.
+enum class ConnectionVerdict : std::uint8_t {
+    Fits,
+    UnknownPort,       // one of the two isn't a port of a processor in the graph
+    SameProcessor,     // both are ports of one processor
+    DifferentKind,     // they don't carry the same kind
+    AlreadyConnected,  // these two are connected already
+    InputTaken,        // the input takes one connection and has one
+};
+
 struct GraphCore {
     int number = 0;
     bool is_realtime = true;
@@ -56,21 +75,57 @@ public:
     std::vector<GraphProcessor> processors;
     std::vector<GraphConnection> connections;
 
-    // A new processor of this type on this core, unconnected, with its type's default options.
-    ProcessorId add_processor(const ProcessorDescription& type, int core_number) {
+    // A new processor of this type at this place of a core's list, unconnected, with its type's
+    // default options.
+    ProcessorId add_processor(const ProcessorDescription& type, const CoreListPlace& place) {
         GraphProcessor processor{
             .id = next_processor_id_++,
             .type = &type,
             .name = unused_name(type),
-            .core_number = core_number,
+            .core_number = place.core_number,
             .option_values = {},
         };
         for (const OptionDescription& option : type.options) {
             processor.option_values.emplace_back(option.default_value);
         }
-        core(core_number).processors.push_back(processor.id);
+        std::vector<ProcessorId>& core_list = core(place.core_number).processors;
+        core_list.insert(position_in_front_of(core_list, place.next_processor), processor.id);
         processors.push_back(std::move(processor));
         return processors.back().id;
+    }
+
+    // Puts a processor at this place of a core's list. The core may be its own, which changes
+    // only its place in the list. Its connections stay as they are. Returns whether it was placed.
+    bool place_processor(ProcessorId processor_id, const CoreListPlace& place) {
+        const auto processor = std::ranges::find(processors, processor_id, &GraphProcessor::id);
+        if (processor == processors.end() || place.next_processor == processor_id) {
+            return false;
+        }
+        std::erase(core(processor->core_number).processors, processor_id);
+        std::vector<ProcessorId>& core_list = core(place.core_number).processors;
+        core_list.insert(position_in_front_of(core_list, place.next_processor), processor_id);
+        processor->core_number = place.core_number;
+        return true;
+    }
+
+    // Removes a processor and every connection of its ports. Returns whether there was one.
+    bool remove_processor(ProcessorId processor_id) {
+        const auto processor = std::ranges::find(processors, processor_id, &GraphProcessor::id);
+        if (processor == processors.end()) {
+            return false;
+        }
+        std::erase(core(processor->core_number).processors, processor_id);
+        std::erase_if(connections, [processor_id](const GraphConnection& connection) {
+            return connection.output.processor == processor_id ||
+                   connection.input.processor == processor_id;
+        });
+        processors.erase(processor);
+        return true;
+    }
+
+    [[nodiscard]] GraphProcessor* find_processor(ProcessorId processor_id) {
+        const auto found = std::ranges::find(processors, processor_id, &GraphProcessor::id);
+        return found == processors.end() ? nullptr : &*found;
     }
 
     [[nodiscard]] const GraphProcessor* find_processor(ProcessorId processor_id) const {
@@ -93,30 +148,46 @@ public:
         return found == processor->type->ports.end() ? nullptr : &*found;
     }
 
-    // Whether this output may be connected to this input: they are ports of two processors, they
-    // carry the same kind, the connection isn't there yet, and the input is free or has slots.
-    // It compares kinds only, not yet a stream's channels and rate or an event's type.
-    [[nodiscard]] bool can_connect(const OutputReference& output,
-                                   const InputReference& input) const {
+    // Whether this output may be connected to this input, and if not, the first of the reasons in
+    // ConnectionVerdict's order that holds. It compares kinds only, not yet a stream's channels
+    // and rate or an event's type.
+    [[nodiscard]] ConnectionVerdict connection_verdict(const OutputReference& output,
+                                                       const InputReference& input) const {
         const PortDescription* output_port =
             find_port(output.processor, output.port, PortDirection::Output);
         const PortDescription* input_port =
             find_port(input.processor, input.port, PortDirection::Input);
-        if (output_port == nullptr || input_port == nullptr ||
-            output.processor == input.processor) {
-            return false;
+        if (output_port == nullptr || input_port == nullptr) {
+            return ConnectionVerdict::UnknownPort;
+        }
+        if (output.processor == input.processor) {
+            return ConnectionVerdict::SameProcessor;
         }
         const bool is_same_kind =
             output_port->kind == input_port->kind ||
             (input_port->kind == PortKind::Any && output_port->kind != PortKind::State);
-        const bool is_input_taken = std::ranges::any_of(
-            connections,
-            [&input](const GraphConnection& connection) { return connection.input == input; });
+        if (!is_same_kind) {
+            return ConnectionVerdict::DifferentKind;
+        }
         const bool is_already_there =
             std::ranges::any_of(connections, [&output, &input](const GraphConnection& connection) {
                 return connection.output == output && connection.input == input;
             });
-        return is_same_kind && !is_already_there && (!is_input_taken || input_port->has_slots);
+        if (is_already_there) {
+            return ConnectionVerdict::AlreadyConnected;
+        }
+        const bool is_input_taken = std::ranges::any_of(
+            connections,
+            [&input](const GraphConnection& connection) { return connection.input == input; });
+        if (is_input_taken && !input_port->has_slots) {
+            return ConnectionVerdict::InputTaken;
+        }
+        return ConnectionVerdict::Fits;
+    }
+
+    [[nodiscard]] bool can_connect(const OutputReference& output,
+                                   const InputReference& input) const {
+        return connection_verdict(output, input) == ConnectionVerdict::Fits;
     }
 
     // Returns whether the connection was made.
@@ -136,6 +207,14 @@ public:
 
 private:
     ProcessorId next_processor_id_ = 1;
+
+    // Where in a core's list a processor goes that is to stand in front of next_processor: the
+    // end of the list when that is none or isn't in the list.
+    [[nodiscard]] static std::vector<ProcessorId>::iterator position_in_front_of(
+        std::vector<ProcessorId>& core_list, std::optional<ProcessorId> next_processor) {
+        return next_processor.has_value() ? std::ranges::find(core_list, *next_processor)
+                                          : core_list.end();
+    }
 
     // The core with this number, added if the pipeline has none yet.
     GraphCore& core(int core_number) {
