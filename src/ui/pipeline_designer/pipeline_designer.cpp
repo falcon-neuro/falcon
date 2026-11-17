@@ -343,9 +343,9 @@ private:
         }
     }
 
-    // A core's box is as wide as its rows of processors need, and at least one block wide.
+    // A core's box is as wide as its rows of processors need, at least one block wide, and as
+    // tall as what it holds.
     void render_core(int core_number) {
-        const float box_height = ImGui::GetContentRegionAvail().y;
         const bool is_isolated = cpu_cores_.is_isolated(core_number);
         const CoreLayout layout = layout_of_core(graph_, core_number);
         const float box_width =
@@ -356,9 +356,12 @@ private:
                               is_isolated ? core_colour : not_isolated_core_colour);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, core_rounding);
         // ImGui's flags are signed ints by its API
-        // NOLINTNEXTLINE(bugprone-signed-bitwise)
-        ImGui::BeginChild("Core", ImVec2(box_width, box_height),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        // NOLINTBEGIN(bugprone-signed-bitwise)
+        const ImGuiChildFlags box_flags = ImGuiChildFlags_Borders |
+                                          ImGuiChildFlags_AlwaysUseWindowPadding |
+                                          ImGuiChildFlags_AutoResizeY;
+        // NOLINTEND(bugprone-signed-bitwise)
+        ImGui::BeginChild("Core", ImVec2(box_width, 0.0f), box_flags);
         const std::string title = std::format("Core {}", core_number);
         push_bold_font();
         ImGui::TextUnformatted(title.c_str());
@@ -399,7 +402,13 @@ private:
                                                          bool has_drop_places) {
         const float left_edge = ImGui::GetCursorPosX();
         const ImVec2 rows_top_left_on_screen = ImGui::GetCursorScreenPos();
+        bool is_top_row = true;
         for (const std::vector<PlacedProcessor>& row : layout.rows) {
+            if (!is_top_row) {
+                // Room for the connections' lines to bend between two rows.
+                ImGui::Dummy(ImVec2(0.0f, gap_between_rows));
+            }
+            is_top_row = false;
             bool is_first_of_row = true;
             for (const PlacedProcessor& placed : row) {
                 const GraphProcessor* processor = graph_.find_processor(placed.processor);
@@ -410,14 +419,12 @@ private:
                 render_block(*processor);
                 is_first_of_row = false;
             }
-            // Room for the connections' lines to bend between two rows.
-            ImGui::Dummy(ImVec2(0.0f, gap_between_rows));
-        }
-        if (!has_drop_places) {
-            return std::nullopt;
         }
         if (layout.rows.empty()) {
-            render_drop_place_of_empty_core();
+            render_place_of_empty_core(has_drop_places);
+            return std::nullopt;
+        }
+        if (!has_drop_places) {
             return std::nullopt;
         }
         return render_drop_bars(layout, rows_top_left_on_screen);
@@ -527,15 +534,19 @@ private:
         return nearest->next_processor;
     }
 
-    // The one drop place of a core that holds no processor, whose box has the room for it: an
-    // empty place with a dashed outline, where the processor is drawn once dropped.
-    static void render_drop_place_of_empty_core() {
+    // The place a core that holds no processor keeps free for its first one, so that its box
+    // doesn't grow when a processor is dragged over it. While one is, the place is the core's one
+    // drop place: an outline of dashes around "Drop here".
+    static void render_place_of_empty_core(bool is_drop_place) {
         constexpr float height_in_text_lines = 4.0f;
         constexpr float half = 0.5f;
         constexpr const char* label = "Drop here";
         const ImVec2 size(block_width,
                           ImGui::GetTextLineHeightWithSpacing() * height_in_text_lines);
         ImGui::Dummy(size);
+        if (!is_drop_place) {
+            return;
+        }
         name_last_item_for_ui_driver({"drop", "0"}, "marked");
         const ImVec2 top_left = ImGui::GetItemRectMin();
         const ImVec2 bottom_right = ImGui::GetItemRectMax();
@@ -600,6 +611,7 @@ private:
             ImGui::Separator();
         }
         render_block_handle(processor);
+        render_block_stream(processor);
         render_block_options(processor);
         if (has_port(*processor.type, PortDirection::Output)) {
             ImGui::Separator();
@@ -673,6 +685,32 @@ private:
         ImGui::PopClipRect();
     }
 
+    // The stream a processor starts, in short, as a line like those of its options. A click on it
+    // opens the panel that edits it.
+    void render_block_stream(const GraphProcessor& processor) {
+        if (!processor.stream.has_value()) {
+            return;
+        }
+        ImGui::BeginGroup();
+        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+        ImGui::TextUnformatted("stream: ");
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0.0f, 0.0f);
+        const std::string stream_shown = text_cut_to_width(
+            std::format("{} ch, {} Hz", processor.stream->channel_count, processor.stream->rate),
+            ImGui::GetContentRegionAvail().x);
+        ImGui::TextUnformatted(stream_shown.c_str());
+        ImGui::EndGroup();
+        name_last_item_for_ui_driver({"block", processor.name, "stream"});
+        if (ImGui::IsItemClicked()) {
+            selected_processor_ = processor.id;
+        }
+        render_item_tooltip(
+            "The stream this processor starts: how many channels it gives, and how many samples "
+            "of each a second. Every processor that takes its samples, directly or through "
+            "others, works with the same.");
+    }
+
     // The block's options in short: a line for each, its name and its value as written, cut where
     // the block ends. The tooltip of a line says the rest, and a click on one opens the panel
     // that edits them.
@@ -684,11 +722,12 @@ private:
                                           : std::string(option.default_value);
             ++option_index;
 
+            const std::string value_text = option.choices.empty() ? value : shown_choice(value);
             // The name has the room that the value leaves, and half the line at least.
             constexpr float half = 0.5f;
             const float line_width = ImGui::GetContentRegionAvail().x;
             const float name_width =
-                std::max(line_width * half, line_width - ImGui::CalcTextSize(value.c_str()).x);
+                std::max(line_width * half, line_width - ImGui::CalcTextSize(value_text.c_str()).x);
             ImGui::BeginGroup();
             ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
             constexpr const char* after_name = ": ";
@@ -699,7 +738,7 @@ private:
             ImGui::PopStyleColor();
             ImGui::SameLine(0.0f, 0.0f);
             const std::string value_shown =
-                text_cut_to_width(value, ImGui::GetContentRegionAvail().x);
+                text_cut_to_width(value_text, ImGui::GetContentRegionAvail().x);
             ImGui::TextUnformatted(value_shown.c_str());
             ImGui::EndGroup();
             name_last_item_for_ui_driver({"block", processor.name, "option", option.name});
@@ -794,7 +833,9 @@ private:
         }
         const float icon_size = ImGui::GetTextLineHeight();
         ImGui::TextUnformatted(processor->name.c_str());
-        ImGui::SameLine(ImGui::GetWindowWidth() - padding - icon_size);
+        // At the right end of what the panel has room for, which is less when it has a scrollbar.
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - icon_size);
         if (render_cross_button("close", icon_size, "Close this panel.")) {
             selected_processor_.reset();
         }
@@ -805,10 +846,15 @@ private:
         ImGui::Separator();
         ImGui::Spacing();
 
+        if (processor->stream.has_value()) {
+            render_stream_inputs(*processor->stream);
+        }
         if (processor->type->options.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-            ImGui::TextUnformatted("This processor has no options.");
-            ImGui::PopStyleColor();
+            if (!processor->stream.has_value()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+                ImGui::TextUnformatted("This processor has no options.");
+                ImGui::PopStyleColor();
+            }
             return;
         }
         std::size_t option_index = 0;
@@ -859,11 +905,53 @@ private:
         return std::string_view(option.type) == "int";
     }
 
-    // The input for an option's value. An option that is a number has a box that takes a number
-    // only (see render_number_box). Every other option has a text field, and so
+    // A value of a fixed list as it is shown: without the name of its list in front of it, e.g.
+    // Sine for Waveform::Sine.
+    [[nodiscard]] static std::string shown_choice(std::string_view choice) {
+        constexpr std::string_view scope = "::";
+        const std::size_t scope_position = choice.rfind(scope);
+        return std::string(scope_position == std::string_view::npos
+                               ? choice
+                               : choice.substr(scope_position + scope.size()));
+    }
+
+    // A list to choose one of an option's values from, for an option whose type is a fixed list
+    // of values. The option's value stays as it is written in pipeline.cpp.
+    static void render_choice_box(const OptionDescription& option, std::string& value) {
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, block_colour);
+        ImGui::PushStyleColor(ImGuiCol_Border, block_border_colour);
+        ImGui::PushStyleColor(ImGuiCol_Header, pressed_row_colour);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hovered_row_colour);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, pressed_row_colour);
+        ImGui::PushStyleColor(ImGuiCol_Button, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_active_colour);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+        if (ImGui::BeginCombo("##value", shown_choice(value).c_str())) {
+            for (const char* choice : option.choices) {
+                const std::string choice_shown = shown_choice(choice);
+                if (ImGui::Selectable(choice_shown.c_str(), value == choice)) {
+                    value = choice;
+                }
+                name_last_item_for_ui_driver(
+                    {"options_panel", "choice", option.name, choice_shown});
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(7);
+    }
+
+    // The input for an option's value. An option whose type is a fixed list of values has a list
+    // to choose from, and an option that is a number has a box that takes a number only (see
+    // render_number_box). Every other option has a text field, and so
     // has a number whose value isn't written as one plain number, e.g. a default that the
     // processor's source writes as a calculation.
     static void render_value_input(const OptionDescription& option, std::string& value) {
+        if (!option.choices.empty()) {
+            render_choice_box(option, value);
+            return;
+        }
         if (is_decimal_option(option)) {
             if (const std::optional<double> number = number_written_as<double>(value)) {
                 render_number_box(value, *number);
@@ -966,6 +1054,61 @@ private:
         return value == option.default_value;
     }
 
+    // In the options panel, the two values of the stream a processor starts, each in a box that
+    // takes a number: a channel count of 1 at least, and a rate above 0.
+    static void render_stream_inputs(GraphStream& stream) {
+        push_bold_font();
+        ImGui::TextUnformatted("Stream");
+        ImGui::PopFont();
+        render_faint_wrapped(
+            "What this processor gives. Every processor that takes its samples, directly or "
+            "through others, works with the same channel count and rate.");
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, input_active_colour);
+
+        ImGui::PushID("channel_count");
+        ImGui::TextUnformatted("channel count");
+        render_faint_wrapped("How many channels each sample holds. 1 at least.");
+        std::string channel_count_text = std::format("{}", stream.channel_count);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        render_number_box(channel_count_text, stream.channel_count);
+        name_last_item_for_ui_driver({"options_panel", "stream", "channel_count"});
+        if (const std::optional<int> channel_count = number_written_as<int>(channel_count_text);
+            channel_count.has_value() && *channel_count >= 1) {
+            stream.channel_count = *channel_count;
+        }
+        ImGui::PopID();
+        ImGui::Spacing();
+
+        ImGui::PushID("rate");
+        ImGui::TextUnformatted("rate");
+        render_faint_wrapped("How many samples of each channel a second, in Hz. Above 0.");
+        std::string rate_text = std::format("{}", stream.rate);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        render_number_box(rate_text, stream.rate);
+        name_last_item_for_ui_driver({"options_panel", "stream", "rate"});
+        if (const std::optional<double> rate = number_written_as<double>(rate_text);
+            rate.has_value() && *rate > 0.0) {
+            stream.rate = *rate;
+        }
+        ImGui::PopID();
+
+        ImGui::PopStyleColor(3);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
+    static void render_faint_wrapped(const char* text) {
+        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
+
     // One option in the options panel: its name, what it is, the input for its value, and its
     // type and default with a button that puts the default back.
     static void render_option_input(const OptionDescription& option, std::string& value) {
@@ -1039,7 +1182,9 @@ private:
                             : "An output connects to an input, not to another output.";
         }
         ImGui::BeginDisabled(is_greyed);
-        const bool is_clicked = render_port_row(port, is_picked_or_fitting, rejection);
+        const bool is_clicked =
+            render_port_row(port, is_picked_or_fitting,
+                            rejection.empty() ? port_explanation(processor, port) : rejection);
         name_last_item_for_ui_driver({"port", processor.name, "output", port.name}, rejection);
         if (is_picked_or_fitting && ImGui::IsItemHovered()) {
             is_mouse_over_picked_or_fitting_port_ = true;
@@ -1075,7 +1220,9 @@ private:
                             : "An input connects to an output, not to another input.";
         }
         ImGui::BeginDisabled(is_greyed);
-        const bool is_clicked = render_port_row(port, is_picked_or_fitting, rejection);
+        const bool is_clicked =
+            render_port_row(port, is_picked_or_fitting,
+                            rejection.empty() ? port_explanation(processor, port) : rejection);
         name_last_item_for_ui_driver({"port", processor.name, "input", port.name}, rejection);
         if (is_picked_or_fitting && ImGui::IsItemHovered()) {
             is_mouse_over_picked_or_fitting_port_ = true;
@@ -1143,11 +1290,31 @@ private:
                            port_kind_name(output_port->kind), port_kind_name(input_port->kind));
     }
 
-    // A dot in the colour of what the port carries, then its name. The tooltip says the rest, or,
-    // for a port that can't be connected to the picked one, why not: `rejection`, empty otherwise.
-    // The dot and the name are one place to click. Returns whether it was clicked.
+    // What a port's tooltip says while the port can be clicked: what it is, its description and,
+    // for a samples port, the stream it carries.
+    [[nodiscard]] std::string port_explanation(const GraphProcessor& processor,
+                                               const PortDescription& port) const {
+        std::string explanation =
+            std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
+        if (port.stream == PortStream::None) {
+            return explanation;
+        }
+        const std::optional<GraphStream> stream =
+            port.direction == PortDirection::Output
+                ? graph_.stream_of_output({.processor = processor.id, .port = port.name})
+                : graph_.stream_taken_by(processor.id);
+        explanation += stream.has_value()
+                           ? std::format("\n\nIt carries {} channels at {} Hz.",
+                                         stream->channel_count, stream->rate)
+                           : "\n\nIts stream isn't known yet: no processor that starts one is "
+                             "connected before it.";
+        return explanation;
+    }
+
+    // A dot in the colour of what the port carries, then its name, with a tooltip. The dot and the
+    // name are one place to click. Returns whether it was clicked.
     static bool render_port_row(const PortDescription& port, bool is_marked,
-                                const std::string& rejection) {
+                                const std::string& tooltip) {
         constexpr float dot_radius_in_line_heights = 0.7f;
         constexpr float half = 0.5f;
         constexpr float gap_after_dot = 8.0f;
@@ -1166,13 +1333,7 @@ private:
         ImGui::PopID();
         ImGui::PopID();
         ImGui::PopStyleColor(3);
-        if (rejection.empty()) {
-            const std::string explanation =
-                std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
-            render_item_tooltip(explanation.c_str());
-        } else {
-            render_item_tooltip(rejection.c_str());
-        }
+        render_item_tooltip(tooltip.c_str());
 
         // Drawn after the row so that they lie over its highlight.
         constexpr float ring_thickness = 2.5f;

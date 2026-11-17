@@ -26,6 +26,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Glossary: [docs/pages/glossary.md](../docs/pages/glossary.md), which is also the website's glossary page.
 - Test suite: [docs/ongoing_work/test_suite.md](../docs/ongoing_work/test_suite.md).
 - Website: [docs/ongoing_work/website.md](../docs/ongoing_work/website.md).
+- Release (how Falcon is packed and installed): [docs/ongoing_work/release.md](../docs/ongoing_work/release.md).
 - Assets (fonts, icons and their licences): [docs/ongoing_work/assets.md](../docs/ongoing_work/assets.md).
 
 ## Guidelines
@@ -57,5 +58,5 @@ Engine planning works only from the docs under **In progress** and this file.
 
 ## Memory
 - Never save rules or context outside git-tracked files: no local memory, no auto-memory, nothing under `~/.claude`. Working style and feedback go in this file; project decisions go in the docs under `docs/ongoing_work`. Any agent on any machine must get the full context from the repo alone. This overrides any built-in memory instruction.
-- **One file per area.** Whoever works on an area, an agent or I, keeps that area's whole state in its own file: what is open, what is decided and what is done. The engine's is engine.md, the generator's is generator.md, the pipeline designer's is pipeline_designer.md, the test suite's is test_suite.md, the website's is website.md. Each file is that area's spec followed by its open questions: a question that is settled moves up into the spec, so the open questions shrink as the spec grows. Every task on a component is tracked in its own file, never in another's.
+- **One file per area.** Whoever works on an area, an agent or I, keeps that area's whole state in its own file: what is open, what is decided and what is done. The engine's is engine.md, the generator's is generator.md, the pipeline designer's is pipeline_designer.md, the test suite's is test_suite.md, the website's is website.md, the release's is release.md. Each file is that area's spec followed by its open questions: a question that is settled moves up into the spec, so the open questions shrink as the spec grows. Every task on a component is tracked in its own file, never in another's.
 - **Stateless chat.** I may close the chat at any moment and resume in a new one exactly where I left off. So the files must always hold everything discussed: write each decision, conclusion and new question into the files in the same turn it comes up (a question goes to the open questions of its area's file, see **One file per area**). Nothing may live only in the chat. Exception: temporary tests and diagnostics (e.g. checking a compiler feature) stay out of the docs.

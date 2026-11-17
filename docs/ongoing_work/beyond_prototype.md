@@ -275,6 +275,7 @@ Tracked in test_suite.md (**Latency tests for the paper** under **Latency measur
 
 ## UI
 - **Ring fill levels**: the UI shows each ring's peak fill while the graph runs, so the user sees that the pipeline is healthy before a ring overflows (the prototype only warns once samples are dropped, see **Rings** in engine.md). Cheap to track: the ring's writer already reads both positions for every sample, so it can keep the highest fill level since the last report, read by a non-realtime thread like the drop count. Related: task A.3.
+- **Switch to realtime kernel**: a setting of the UI that installs the realtime kernel for the user (see **Decided** in release.md).
 - **Log view**: the UI collects a run's log lines and shows them with colours, filtering and search. Headless, the console styles them itself (see **A line** under **Logging** in engine.md).
 - **Live viewer**: the viewer is a processor in the engine and the UI is a separate program, so the viewer's data has to cross from the engine process to the UI process. Not designed yet, and not part of the prototype.
 - The UI shows a cache view with per-core L1/L2/L3 usage, so the user sees when the graph is about to spill out of cache (see **Principles** in engine.md, and **Cache view** in pipeline_designer.md).

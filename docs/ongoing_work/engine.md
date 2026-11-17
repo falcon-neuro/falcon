@@ -470,6 +470,7 @@ Processors that can't be public, such as an input built on a vendor's SDK, live 
 - **The template** holds a small processor (Gain, which multiplies every channel by a constant), a `CMakeLists.txt` showing where a library goes, and a pipeline that runs Gain.
 
 ## Open questions
+- **Recorder's names for its connections**, parked by the user on 17 November 2026: its option `slot_names` is to go (see **One file that describes itself** under **Recorder**). It asks the user for what the graph already knows, it is hard to fill, and the pipeline designer shows it as `std::array<Str, SlotCount>`. Each connection is to be named after the processor that feeds it and that processor's output, e.g. `spike_detector` and `output`. Not designed: who writes those names, the generator into the option or the engine without one.
 The processor interface as actual C++ types, since it is what's expensive to change (see **How to prioritise** under **Agreed**). All settled: the sample's header, the buffer types `SampleBuffer<StreamInfoType>` and `EventBuffer<EventType, Capacity>` and the operations a processor uses on them (see **Buffers**), the event bases `Event` and `StreamEvent` (see **Events**), the processor's form with its `Options`, constructor, destructor and `process()` signature, and the names of connections and template parameters (see **Processors**).
 
 **How to measure the round trip.** See **Latency measurement** in test_suite.md.

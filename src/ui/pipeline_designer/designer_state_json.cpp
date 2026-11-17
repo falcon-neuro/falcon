@@ -58,7 +58,16 @@ struct DesignerStateBesidesGraph {
                        processor_name_as_json(graph, processor_id), json_text(port_name));
 }
 
-[[nodiscard]] inline std::string processor_as_json(const GraphProcessor& processor) {
+// A stream as JSON, or null for none.
+[[nodiscard]] inline std::string stream_as_json(const std::optional<GraphStream>& stream) {
+    return stream.has_value() ? std::format(R"({{"channel_count":{},"rate":{}}})",
+                                            stream->channel_count, stream->rate)
+                              : "null";
+}
+
+// A processor with the stream it starts and the stream it takes at its samples input.
+[[nodiscard]] inline std::string processor_as_json(const PipelineGraph& graph,
+                                                   const GraphProcessor& processor) {
     std::string options = "{";
     std::size_t option_index = 0;
     for (const OptionDescription& option : processor.type->options) {
@@ -72,9 +81,10 @@ struct DesignerStateBesidesGraph {
         ++option_index;
     }
     options += '}';
-    return std::format(R"({{"name":{},"type":{},"core":{},"options":{}}})",
-                       json_text(processor.name), json_text(processor.type->name),
-                       processor.core_number, options);
+    return std::format(
+        R"({{"name":{},"type":{},"core":{},"options":{},"stream":{},"takes_stream":{}}})",
+        json_text(processor.name), json_text(processor.type->name), processor.core_number, options,
+        stream_as_json(processor.stream), stream_as_json(graph.stream_taken_by(processor.id)));
 }
 
 // A core's list, and its rows as the layout places them.
@@ -121,7 +131,7 @@ struct DesignerStateBesidesGraph {
     std::vector<std::string> processors;
     processors.reserve(graph.processors.size());
     for (const GraphProcessor& processor : graph.processors) {
-        processors.push_back(processor_as_json(processor));
+        processors.push_back(processor_as_json(graph, processor));
     }
     std::vector<std::string> cores;
     cores.reserve(graph.cores.size());

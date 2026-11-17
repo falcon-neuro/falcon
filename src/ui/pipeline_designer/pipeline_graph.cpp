@@ -14,12 +14,23 @@
 
 using ProcessorId = std::uint32_t;
 
+// What a samples connection carries besides its samples, which are float32: how many channels,
+// and how many samples of each a second. A processor that starts a stream begins with these values.
+struct GraphStream {
+    int channel_count = 32;
+    double rate = 30000.0;  // in Hz
+
+    [[nodiscard]] bool operator==(const GraphStream&) const = default;
+};
+
 struct GraphProcessor {
     ProcessorId id = 0;
     const ProcessorDescription* type = nullptr;
     std::string name;  // its variable's name in pipeline.cpp, unique in the pipeline
     int core_number = 0;
     std::vector<std::string> option_values;  // one per option of its type, as written
+    // The stream it starts, which the user sets; none for a processor that starts no stream.
+    std::optional<GraphStream> stream;
 };
 
 // An output or an input of a processor in the graph, named as in its Connections. They are two
@@ -84,6 +95,7 @@ public:
             .name = unused_name(type),
             .core_number = place.core_number,
             .option_values = {},
+            .stream = type.starts_stream ? std::optional<GraphStream>(GraphStream{}) : std::nullopt,
         };
         for (const OptionDescription& option : type.options) {
             processor.option_values.emplace_back(option.default_value);
@@ -148,6 +160,37 @@ public:
         return found == processor->type->ports.end() ? nullptr : &*found;
     }
 
+    // The stream an output carries: the one its processor starts, or the one its processor takes
+    // at its input, followed back through the processors that pass their input's stream on. None
+    // for an output without samples, and while no processor that starts a stream is connected
+    // before it, which is also so for processors that feed each other in a circle.
+    [[nodiscard]] std::optional<GraphStream> stream_of_output(OutputReference output) const {
+        for (std::size_t step = 0; step <= processors.size(); ++step) {
+            const GraphProcessor* processor = find_processor(output.processor);
+            const PortDescription* port =
+                find_port(output.processor, output.port, PortDirection::Output);
+            if (processor == nullptr || port == nullptr) {
+                return std::nullopt;
+            }
+            if (port->stream == PortStream::Output) {
+                return processor->stream;
+            }
+            const GraphConnection* feeding = samples_connection_into(output.processor);
+            if (port->stream != PortStream::Input || feeding == nullptr) {
+                return std::nullopt;
+            }
+            output = feeding->output;
+        }
+        return std::nullopt;
+    }
+
+    // The stream a processor takes at its samples input, or none while it isn't known (see
+    // stream_of_output).
+    [[nodiscard]] std::optional<GraphStream> stream_taken_by(ProcessorId processor_id) const {
+        const GraphConnection* feeding = samples_connection_into(processor_id);
+        return feeding == nullptr ? std::nullopt : stream_of_output(feeding->output);
+    }
+
     // Whether this output may be connected to this input, and if not, the first of the reasons in
     // ConnectionVerdict's order that holds. It compares kinds only, not yet a stream's channels
     // and rate or an event's type.
@@ -207,6 +250,19 @@ public:
 
 private:
     ProcessorId next_processor_id_ = 1;
+
+    // The connection into a processor's samples input, by which it takes its stream, or nullptr
+    // while none is connected.
+    [[nodiscard]] const GraphConnection* samples_connection_into(ProcessorId processor_id) const {
+        const auto feeding = std::ranges::find_if(
+            connections, [this, processor_id](const GraphConnection& connection) {
+                const PortDescription* input_port = find_port(
+                    connection.input.processor, connection.input.port, PortDirection::Input);
+                return connection.input.processor == processor_id && input_port != nullptr &&
+                       input_port->stream == PortStream::Input;
+            });
+        return feeding == connections.end() ? nullptr : &*feeding;
+    }
 
     // Where in a core's list a processor goes that is to stand in front of next_processor: the
     // end of the list when that is none or isn't in the list.
