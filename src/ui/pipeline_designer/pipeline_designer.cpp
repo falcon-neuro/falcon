@@ -8,11 +8,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -858,29 +860,95 @@ private:
     }
 
     // The input for an option's value. An option that is a number has a box that takes a number
-    // only, so nothing else can be typed into it. Every other option has a text field, and so
+    // only (see render_number_box). Every other option has a text field, and so
     // has a number whose value isn't written as one plain number, e.g. a default that the
     // processor's source writes as a calculation.
     static void render_value_input(const OptionDescription& option, std::string& value) {
-        constexpr double step = 1.0;
-        constexpr double fast_step = 10.0;
         if (is_decimal_option(option)) {
-            if (std::optional<double> number = number_written_as<double>(value)) {
-                if (ImGui::InputDouble("##value", &*number, step, fast_step, "%.10g")) {
-                    value = std::format("{}", *number);
-                }
+            if (const std::optional<double> number = number_written_as<double>(value)) {
+                render_number_box(value, *number);
                 return;
             }
         }
         if (is_whole_number_option(option)) {
-            if (std::optional<int> number = number_written_as<int>(value)) {
-                if (ImGui::InputInt("##value", &*number)) {
-                    value = std::format("{}", *number);
-                }
+            if (const std::optional<int> number = number_written_as<int>(value)) {
+                render_number_box(value, *number);
                 return;
             }
         }
         render_text_field("##value", value);
+    }
+
+    // What a filtered field's callback needs: the text it edits and the characters it takes.
+    struct FilteredField {
+        std::string* text = nullptr;
+        std::string_view allowed_characters;
+    };
+
+    // A text field that takes only the given characters, typed or pasted. Returns whether its
+    // text was changed.
+    static bool render_filtered_field(const char* label, std::string& text,
+                                      std::string_view allowed_characters) {
+        constexpr unsigned highest_plain_character = 127;
+        FilteredField field{.text = &text, .allowed_characters = allowed_characters};
+        const auto callback = [](ImGuiInputTextCallbackData* data) -> int {
+            const auto* edited_field = static_cast<const FilteredField*>(data->UserData);
+            if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+                edited_field->text->resize(static_cast<std::size_t>(data->BufTextLen));
+                data->Buf = edited_field->text->data();
+                return 0;
+            }
+            if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter) {
+                const bool is_allowed =
+                    data->EventChar <= highest_plain_character &&
+                    edited_field->allowed_characters.contains(static_cast<char>(data->EventChar));
+                return is_allowed ? 0 : 1;
+            }
+            return 0;
+        };
+        // ImGui's flags are signed ints by its API
+        // NOLINTNEXTLINE(bugprone-signed-bitwise)
+        return ImGui::InputText(
+            label, text.data(), text.capacity() + 1,
+            ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackCharFilter, callback,
+            &field);
+    }
+
+    // A box for one plain number, with two buttons at its right that step it by one. It takes
+    // digits, a minus and, for a number with decimals, a point, and nothing else: neither a letter
+    // nor a calculation can be typed. What is typed becomes the value as soon as it is a number;
+    // until then, e.g. after a lone minus, the value stays what it was.
+    template <typename Number>
+    static void render_number_box(std::string& value, Number number) {
+        const float button_size = ImGui::GetFrameHeight();
+        const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+        const float field_width = ImGui::CalcItemWidth() - (2.0f * (button_size + gap));
+        const std::string_view allowed_characters =
+            std::is_floating_point_v<Number> ? "0123456789.-" : "0123456789-";
+
+        ImGui::BeginGroup();
+        std::string typed = value;
+        ImGui::SetNextItemWidth(std::max(1.0f, field_width));
+        if (render_filtered_field("##value", typed, allowed_characters)) {
+            if (const std::optional<Number> typed_number = number_written_as<Number>(typed)) {
+                value = std::format("{}", *typed_number);
+            }
+        }
+        ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
+        ImGui::SameLine(0.0f, gap);
+        if (ImGui::Button("-", ImVec2(button_size, button_size)) &&
+            number > std::numeric_limits<Number>::lowest()) {
+            value = std::format("{}", number - Number{1});
+        }
+        ImGui::SameLine(0.0f, gap);
+        if (ImGui::Button("+", ImVec2(button_size, button_size)) &&
+            number < std::numeric_limits<Number>::max()) {
+            value = std::format("{}", number + Number{1});
+        }
+        ImGui::PopStyleColor(3);
+        ImGui::EndGroup();
     }
 
     // Whether a value is the option's default. Two numbers are compared as numbers, so that 1 and

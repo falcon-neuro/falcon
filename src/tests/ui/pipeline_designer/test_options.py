@@ -1,6 +1,5 @@
 """A processor's options: in short on its block, and edited in the panel at the right."""
 from designer_driver import Designer, port
-from known_failures import known_failure
 
 
 def option_of(designer, processor, option):
@@ -160,8 +159,6 @@ def test_step_buttons_of_a_number_box_change_the_number_by_one():
         assert option_of(designer, detector, "threshold") == "-48"
 
 
-@known_failure("a number box takes every character, since Dear ImGui's number input refuses none "
-               "by itself: 12x4 can be typed and becomes 12")
 def test_number_box_takes_no_letters():
     with Designer() as designer:
         detector = designer.add_processor("SpikeDetector", core=0)
@@ -170,8 +167,6 @@ def test_number_box_takes_no_letters():
         assert option_of(designer, detector, "threshold") == "124"
 
 
-@known_failure("a number box lets a calculation be typed and keeps its first number: 1000/30 "
-               "becomes 1000 without a word")
 def test_number_box_takes_no_calculation():
     with Designer() as designer:
         detector = designer.add_processor("SpikeDetector", core=0)
