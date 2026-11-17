@@ -1,6 +1,7 @@
 #pragma once
 #include <imgui.h>
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <format>
@@ -8,8 +9,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 #include "all_processors.cpp"
+#include "core_layout.cpp"
 #include "cpu_cores.cpp"
 #include "pipeline_graph.cpp"
 #include "processors_panel.cpp"
@@ -17,9 +20,10 @@
 
 // The pipeline designer: the panel of processors at the left, and a box for each CPU core in use,
 // into which a processor is dragged from the panel. A connection is made by a click on an output
-// and then on an input; Escape forgets the output, and a right click on an input removes its
-// connections. Nothing here has coordinates of its own: where a processor is drawn follows from
-// the graph.
+// and one on an input, in either order; Escape, a right click, or a click anywhere but on a port
+// that fits forgets the first click. While no port is picked, a right click on an input removes
+// its connections. Nothing here has coordinates of its own: where a processor is drawn follows
+// from the graph.
 class PipelineDesigner {
 public:
     void render() {
@@ -41,13 +45,15 @@ public:
                           ImGuiWindowFlags_HorizontalScrollbar);
         render_isolation_note();
         block_rectangles_.clear();
+        is_mouse_over_picked_or_fitting_port_ = false;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            picked_output_.reset();
+            forget_picked_port();
         }
         for (const int core_number : shown_core_numbers()) {
             render_core(core_number);
             ImGui::SameLine(0.0f, padding);
         }
+        forget_picked_port_on_click_elsewhere();
         render_connections();
         scroll_while_dragging_at_an_edge();
         ImGui::EndChild();
@@ -58,6 +64,7 @@ private:
     static constexpr float processors_panel_width = 380.0f;
     static constexpr float padding = 10.0f;
     static constexpr float block_width = 220.0f;
+    static constexpr float gap_between_rows = 40.0f;
     static constexpr ImVec4 core_colour{0.95f, 0.95f, 0.96f, 1.0f};
     static constexpr ImVec4 not_isolated_core_colour{1.0f, 0.90f, 0.72f, 1.0f};
     static constexpr ImVec4 warning_colour{0.78f, 0.30f, 0.0f, 1.0f};
@@ -78,9 +85,42 @@ private:
 
     PipelineGraph graph_;
     CpuCores cpu_cores_;
-    // The output clicked first, while its connection waits for the click on an input.
-    std::optional<OutputReference> picked_output_;
+    // The port clicked first, an output or an input, while its connection waits for the click on a
+    // port of the other direction.
+    std::variant<std::monostate, OutputReference, InputReference> picked_port_;
     std::vector<BlockRectangle> block_rectangles_;
+    // Whether, in this frame, the mouse is over the picked port or over one that fits it: the
+    // ports whose row handles a click itself while a port is picked.
+    bool is_mouse_over_picked_or_fitting_port_ = false;
+
+    [[nodiscard]] bool is_port_picked() const {
+        return !std::holds_alternative<std::monostate>(picked_port_);
+    }
+
+    // The picked port if it is an output, or nullptr.
+    [[nodiscard]] const OutputReference* picked_output() const {
+        return std::get_if<OutputReference>(&picked_port_);
+    }
+
+    // The picked port if it is an input, or nullptr.
+    [[nodiscard]] const InputReference* picked_input() const {
+        return std::get_if<InputReference>(&picked_port_);
+    }
+
+    void forget_picked_port() { picked_port_ = std::monostate{}; }
+
+    // Called after this frame's ports are drawn. A right click anywhere, or a click anywhere but
+    // on the picked port or on one that fits it, lets the picked port go.
+    void forget_picked_port_on_click_elsewhere() {
+        if (!is_port_picked()) {
+            return;
+        }
+        const bool is_clicked_elsewhere =
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !is_mouse_over_picked_or_fitting_port_;
+        if (is_clicked_elsewhere || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            forget_picked_port();
+        }
+    }
 
     // One line above the cores saying which are isolated, with the others named in its tooltip.
     void render_isolation_note() const {
@@ -131,13 +171,16 @@ private:
         }
     }
 
-    // A core's box is as wide as the processors on its top row need, and at least one block wide.
+    // A core's box is as wide as its rows of processors need, and at least one block wide.
     void render_core(int core_number) {
         const float box_height = ImGui::GetContentRegionAvail().y;
         const bool is_isolated = cpu_cores_.is_isolated(core_number);
-        const std::vector<ProcessorId> processor_ids = processors_on(core_number);
-        const auto block_count = static_cast<float>(std::max<std::size_t>(1, processor_ids.size()));
-        const float box_width = (block_count * (block_width + padding)) + padding;
+        const CoreLayout layout = layout_of_core(graph_, core_number);
+        const bool is_drop_place_shown = is_processor_dragged();
+        const std::size_t width_in_blocks =
+            std::max<std::size_t>(1, layout.width_in_blocks + (is_drop_place_shown ? 1 : 0));
+        const float box_width =
+            (static_cast<float>(width_in_blocks) * (block_width + padding)) + padding;
 
         ImGui::PushID(core_number);
         ImGui::PushStyleColor(ImGuiCol_ChildBg,
@@ -160,30 +203,114 @@ private:
         }
         ImGui::Separator();
         ImGui::Spacing();
-        for (const ProcessorId processor_id : processor_ids) {
-            if (const GraphProcessor* processor = graph_.find_processor(processor_id)) {
-                render_block(*processor);
-                ImGui::SameLine(0.0f, padding);
-            }
-        }
+        render_rows(layout, is_drop_place_shown);
         ImGui::EndChild();
         ImGui::PopStyleColor();
+        accept_dropped_processor(core_number);
+        ImGui::PopID();
+    }
 
-        // ImGui marks the box while a processor is dragged over it.
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload =
-                    ImGui::AcceptDragDropPayload(PROCESSOR_TYPE_PAYLOAD)) {
-                std::size_t processor_index = 0;
-                if (std::cmp_equal(payload->DataSize, sizeof(processor_index))) {
-                    std::memcpy(&processor_index, payload->Data, sizeof(processor_index));
-                    if (processor_index < ALL_PROCESSORS.size()) {
-                        graph_.add_processor(ALL_PROCESSORS.at(processor_index), core_number);
-                    }
+    // Called inside a core's box: its rows of blocks from top to bottom and, while a processor is
+    // dragged from the panel, the place it would be dropped at.
+    void render_rows(const CoreLayout& layout, bool is_drop_place_shown) {
+        const float left_edge = ImGui::GetCursorPosX();
+        bool is_top_row = true;
+        for (const std::vector<PlacedProcessor>& row : layout.rows) {
+            bool is_first_of_row = true;
+            for (const PlacedProcessor& placed : row) {
+                const GraphProcessor* processor = graph_.find_processor(placed.processor);
+                if (processor == nullptr) {
+                    continue;
+                }
+                move_to_column(left_edge, placed.column, is_first_of_row);
+                render_block(*processor);
+                is_first_of_row = false;
+            }
+            if (is_top_row && is_drop_place_shown) {
+                move_to_column(left_edge, static_cast<float>(layout.width_in_blocks),
+                               is_first_of_row);
+                render_drop_place();
+            }
+            is_top_row = false;
+            // Room for the connections' lines to bend between two rows.
+            ImGui::Dummy(ImVec2(0.0f, gap_between_rows));
+        }
+        if (layout.rows.empty() && is_drop_place_shown) {
+            render_drop_place();
+        }
+    }
+
+    // Moves to where a block of this column starts, on the line of the block drawn before it
+    // unless it is the first of its row.
+    static void move_to_column(float left_edge, float column, bool is_first_of_row) {
+        if (!is_first_of_row) {
+            ImGui::SameLine();
+        }
+        ImGui::SetCursorPosX(left_edge + (column * (block_width + padding)));
+    }
+
+    // Called right after a core's box, which it makes a place to drop a processor dragged from the
+    // panel; ImGui marks the box while one is dragged over it.
+    void accept_dropped_processor(int core_number) {
+        if (!ImGui::BeginDragDropTarget()) {
+            return;
+        }
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(PROCESSOR_TYPE_PAYLOAD)) {
+            std::size_t processor_index = 0;
+            if (std::cmp_equal(payload->DataSize, sizeof(processor_index))) {
+                std::memcpy(&processor_index, payload->Data, sizeof(processor_index));
+                if (processor_index < ALL_PROCESSORS.size()) {
+                    graph_.add_processor(ALL_PROCESSORS.at(processor_index), core_number);
                 }
             }
-            ImGui::EndDragDropTarget();
         }
-        ImGui::PopID();
+        ImGui::EndDragDropTarget();
+    }
+
+    // Where a processor dragged from the panel is drawn once dropped into this core: an empty
+    // place with a dashed outline, at the end of the core's top row.
+    static void render_drop_place() {
+        constexpr float height_in_text_lines = 4.0f;
+        constexpr float half = 0.5f;
+        constexpr const char* label = "Drop here";
+        const ImVec2 size(block_width,
+                          ImGui::GetTextLineHeightWithSpacing() * height_in_text_lines);
+        ImGui::Dummy(size);
+        const ImVec2 top_left = ImGui::GetItemRectMin();
+        const ImVec2 bottom_right = ImGui::GetItemRectMax();
+        const ImU32 colour = ImGui::GetColorU32(faint_colour);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        add_dashed_line(draw_list, top_left, ImVec2(bottom_right.x, top_left.y), colour);
+        add_dashed_line(draw_list, ImVec2(bottom_right.x, top_left.y), bottom_right, colour);
+        add_dashed_line(draw_list, bottom_right, ImVec2(top_left.x, bottom_right.y), colour);
+        add_dashed_line(draw_list, ImVec2(top_left.x, bottom_right.y), top_left, colour);
+        const ImVec2 label_size = ImGui::CalcTextSize(label);
+        draw_list->AddText(ImVec2(top_left.x + ((size.x - label_size.x) * half),
+                                  top_left.y + ((size.y - label_size.y) * half)),
+                           colour, label);
+    }
+
+    static void add_dashed_line(ImDrawList* draw_list, ImVec2 line_start, ImVec2 line_end,
+                                ImU32 colour) {
+        constexpr float dash_length = 7.0f;
+        constexpr float gap_length = 5.0f;
+        constexpr float thickness = 1.5f;
+        const float length = std::hypot(line_end.x - line_start.x, line_end.y - line_start.y);
+        if (length <= 0.0f) {
+            return;
+        }
+        const ImVec2 direction((line_end.x - line_start.x) / length,
+                               (line_end.y - line_start.y) / length);
+        const int dash_count = static_cast<int>(std::ceil(length / (dash_length + gap_length)));
+        for (int dash = 0; dash < dash_count; ++dash) {
+            const float dash_start = static_cast<float>(dash) * (dash_length + gap_length);
+            const float dash_end = std::min(dash_start + dash_length, length);
+            draw_list->AddLine(ImVec2(line_start.x + (direction.x * dash_start),
+                                      line_start.y + (direction.y * dash_start)),
+                               ImVec2(line_start.x + (direction.x * dash_end),
+                                      line_start.y + (direction.y * dash_end)),
+                               colour, thickness);
+        }
     }
 
     // A block: its inputs on top, its name and type, its outputs at the bottom, as data flows.
@@ -240,64 +367,100 @@ private:
         }
     }
 
-    // A click picks the output as the start of a connection, and a second click lets it go.
+    // A click picks the output as one end of a connection, and a second click lets it go. While a
+    // port is picked, the outputs that fit it are marked and every other port can't be clicked.
     void render_output(const GraphProcessor& processor, const PortDescription& port) {
         const OutputReference output{.processor = processor.id, .port = port.name};
-        const bool is_picked = picked_output_ == output;
-        if (render_port_row(port, is_picked)) {
-            if (is_picked) {
-                picked_output_.reset();
+        const OutputReference* const picked = picked_output();
+        const bool is_picked = picked != nullptr && *picked == output;
+        const InputReference* const waiting_input = picked_input();
+        const bool is_fitting =
+            waiting_input != nullptr && graph_.can_connect(output, *waiting_input);
+        const bool is_picked_or_fitting = is_picked || is_fitting;
+        ImGui::BeginDisabled(is_port_picked() && !is_picked_or_fitting);
+        const bool is_clicked = render_port_row(port, is_picked_or_fitting);
+        if (is_picked_or_fitting && ImGui::IsItemHovered()) {
+            is_mouse_over_picked_or_fitting_port_ = true;
+        }
+        ImGui::EndDisabled();
+        if (is_clicked) {
+            if (is_fitting) {
+                graph_.connect(output, *waiting_input);
+                forget_picked_port();
+            } else if (is_picked) {
+                forget_picked_port();
             } else {
-                picked_output_ = output;
+                picked_port_ = output;
             }
         }
     }
 
-    // While an output is picked, the inputs it fits are marked and the others can't be clicked.
+    // A click picks the input as one end of a connection, and a second click lets it go. While a
+    // port is picked, the inputs that fit it are marked and every other port can't be clicked.
     void render_input(const GraphProcessor& processor, const PortDescription& port) {
         const InputReference input{.processor = processor.id, .port = port.name};
+        const InputReference* const picked = picked_input();
+        const bool is_picked = picked != nullptr && *picked == input;
+        const OutputReference* const waiting_output = picked_output();
         const bool is_fitting =
-            picked_output_.has_value() && graph_.can_connect(*picked_output_, input);
-        ImGui::BeginDisabled(picked_output_.has_value() && !is_fitting);
-        const bool is_clicked = render_port_row(port, is_fitting);
-        const bool is_right_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+            waiting_output != nullptr && graph_.can_connect(*waiting_output, input);
+        const bool is_picked_or_fitting = is_picked || is_fitting;
+        ImGui::BeginDisabled(is_port_picked() && !is_picked_or_fitting);
+        const bool is_clicked = render_port_row(port, is_picked_or_fitting);
+        if (is_picked_or_fitting && ImGui::IsItemHovered()) {
+            is_mouse_over_picked_or_fitting_port_ = true;
+        }
+        // While a port is picked, a right click only lets it go.
+        const bool is_right_clicked =
+            !is_port_picked() && ImGui::IsItemClicked(ImGuiMouseButton_Right);
         ImGui::EndDisabled();
-        if (is_clicked && is_fitting) {
-            graph_.connect(*picked_output_, input);
-            picked_output_.reset();
+        if (is_clicked) {
+            if (is_fitting) {
+                graph_.connect(*waiting_output, input);
+                forget_picked_port();
+            } else if (is_picked) {
+                forget_picked_port();
+            } else {
+                picked_port_ = input;
+            }
         }
         if (is_right_clicked) {
             graph_.disconnect(input);
         }
     }
 
-    // A dot in the colour of what the port carries, then its name; the tooltip says the rest.
-    // Returns whether the row was clicked.
+    // A dot in the colour of what the port carries, then its name; the tooltip says the rest. The
+    // dot and the name are one place to click. Returns whether it was clicked.
     static bool render_port_row(const PortDescription& port, bool is_marked) {
-        constexpr float dot_radius_in_line_heights = 0.27f;
+        constexpr float dot_radius_in_line_heights = 0.7f;
         constexpr float half = 0.5f;
-        constexpr float gap_after_dot = 6.0f;
+        constexpr float gap_after_dot = 8.0f;
         const float line_height = ImGui::GetTextLineHeight();
         const float dot_radius = line_height * dot_radius_in_line_heights;
-        const ImVec2 cursor = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddCircleFilled(
-            ImVec2(cursor.x + dot_radius, cursor.y + (line_height * half)), dot_radius,
-            ImGui::GetColorU32(kind_colour(port.kind)));
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (dot_radius * 2.0f) + gap_after_dot);
-        if (port.is_optional) {
-            ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-        }
+        const float row_height = dot_radius * 2.0f;
+        const ImVec2 row_top_left = ImGui::GetCursorScreenPos();
+
         ImGui::PushStyleColor(ImGuiCol_Header, marked_port_colour);
         ImGui::PushID(port.direction == PortDirection::Input ? "input" : "output");
-        const bool is_clicked = ImGui::Selectable(port.name, is_marked);
+        ImGui::PushID(port.name);
+        const bool is_clicked = ImGui::Selectable("##port", is_marked, ImGuiSelectableFlags_None,
+                                                  ImVec2(0.0f, row_height));
+        ImGui::PopID();
         ImGui::PopID();
         ImGui::PopStyleColor();
-        if (port.is_optional) {
-            ImGui::PopStyleColor();
-        }
         const std::string explanation =
             std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
         render_item_tooltip(explanation.c_str());
+
+        // Drawn after the row so that they lie over its highlight.
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddCircleFilled(ImVec2(row_top_left.x + dot_radius, row_top_left.y + dot_radius),
+                                   dot_radius, ImGui::GetColorU32(kind_colour(port.kind)));
+        const ImVec4 name_colour =
+            port.is_optional ? faint_colour : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        draw_list->AddText(ImVec2(row_top_left.x + row_height + gap_after_dot,
+                                  row_top_left.y + ((row_height - line_height) * half)),
+                           ImGui::GetColorU32(name_colour), port.name);
         return is_clicked;
     }
 
@@ -335,25 +498,16 @@ private:
                                                                    : rectangle->bottom_right.y);
     }
 
-    // Called inside the cores' area, after its blocks: a dot where each port meets its block, a
-    // line for each connection, leaving its output downward and entering its input from above, and
-    // one from the picked output to the mouse.
+    // Called inside the cores' area, after its blocks: a line for each connection, leaving its
+    // output downward and entering its input from above, and one between the picked port and the
+    // mouse.
     void render_connections() const {
-        constexpr float anchor_radius = 4.0f;
         const ImVec2 area_top_left = ImGui::GetWindowPos();
         const ImVec2 area_size = ImGui::GetWindowSize();
         ImDrawList* draw_list = ImGui::GetForegroundDrawList();
         draw_list->PushClipRect(
             area_top_left, ImVec2(area_top_left.x + area_size.x, area_top_left.y + area_size.y),
             true);
-        for (const GraphProcessor& processor : graph_.processors) {
-            for (const PortDescription& port : processor.type->ports) {
-                if (const auto anchor = port_anchor(processor.id, port.name, port.direction)) {
-                    draw_list->AddCircleFilled(*anchor, anchor_radius,
-                                               ImGui::GetColorU32(kind_colour(port.kind)));
-                }
-            }
-        }
         for (const GraphConnection& connection : graph_.connections) {
             const PortDescription* output_port = graph_.find_port(
                 connection.output.processor, connection.output.port, PortDirection::Output);
@@ -366,22 +520,32 @@ private:
                                     ImGui::GetColorU32(kind_colour(output_port->kind)));
             }
         }
-        if (picked_output_) {
-            const PortDescription* output_port = graph_.find_port(
-                picked_output_->processor, picked_output_->port, PortDirection::Output);
+        if (const OutputReference* const output = picked_output()) {
+            const PortDescription* output_port =
+                graph_.find_port(output->processor, output->port, PortDirection::Output);
             const auto at_output =
-                port_anchor(picked_output_->processor, picked_output_->port, PortDirection::Output);
+                port_anchor(output->processor, output->port, PortDirection::Output);
             if (output_port != nullptr && at_output) {
                 add_connection_line(draw_list,
                                     {.at_output = *at_output, .at_input = ImGui::GetMousePos()},
                                     ImGui::GetColorU32(kind_colour(output_port->kind)));
             }
         }
+        if (const InputReference* const input = picked_input()) {
+            const PortDescription* input_port =
+                graph_.find_port(input->processor, input->port, PortDirection::Input);
+            const auto at_input = port_anchor(input->processor, input->port, PortDirection::Input);
+            if (input_port != nullptr && at_input) {
+                add_connection_line(draw_list,
+                                    {.at_output = ImGui::GetMousePos(), .at_input = *at_input},
+                                    ImGui::GetColorU32(kind_colour(input_port->kind)));
+            }
+        }
         draw_list->PopClipRect();
     }
 
-    // The two ends of a connection's line on the screen: at its output, and at its input or, while
-    // the input isn't clicked yet, at the mouse.
+    // The two ends of a connection's line on the screen: each at its port or, while that port
+    // isn't clicked yet, at the mouse.
     struct LineEnds {
         ImVec2 at_output;
         ImVec2 at_input;
@@ -439,10 +603,5 @@ private:
     [[nodiscard]] static bool is_processor_dragged() {
         const ImGuiPayload* payload = ImGui::GetDragDropPayload();
         return payload != nullptr && payload->IsDataType(PROCESSOR_TYPE_PAYLOAD);
-    }
-
-    [[nodiscard]] std::vector<ProcessorId> processors_on(int core_number) const {
-        const auto found = std::ranges::find(graph_.cores, core_number, &GraphCore::number);
-        return found == graph_.cores.end() ? std::vector<ProcessorId>{} : found->processors;
     }
 };

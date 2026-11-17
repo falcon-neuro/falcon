@@ -38,7 +38,9 @@ custom_dir = "overrides"
 favicon = "assets/favicon.svg"
 font = false
 features = [
+  "content.code.annotate",
   "content.code.copy",
+  "content.footnote.tooltips",
   "content.tooltips",
   "navigation.footer",
   "navigation.instant",
@@ -65,16 +67,28 @@ toggle.icon = "lucide/moon"
 toggle.name = "Switch to light mode"
 
 [project.markdown_extensions]
+abbr = {}
 admonition = {}
 attr_list = {}
+def_list = {}
 footnotes = {}
 md_in_html = {}
 toc.permalink = true
+pymdownx.caret = {}
+pymdownx.critic = {}
 pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
 pymdownx.highlight.anchor_linenums = true
 pymdownx.highlight.line_spans = "__span"
 pymdownx.highlight.pygments_lang_class = true
 pymdownx.inlinehilite = {}
-pymdownx.superfences = {}
+pymdownx.keys = {}
+pymdownx.mark = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
 pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde = {}
 "l2m4m:LaTeX2MathMLExtension" = {}

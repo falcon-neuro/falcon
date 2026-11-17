@@ -1,6 +1,6 @@
 # template_processor
 
-A template for a Falcon extension: a folder of processors kept outside Falcon's own, e.g. a lab's private ones or an input built on a vendor's SDK (see **Extensions** in `.claude/ongoing_work/engine.md`).
+A template for a Falcon extension: a folder of processors kept outside Falcon's own, e.g. a lab's private ones or an input built on a vendor's SDK (see **Extensions** in `docs/ongoing_work/engine.md`).
 
 ## Starting an extension
 1. Copy this folder to `src/processors/custom/<extension name>/`. Falcon's repository ignores everything in `custom/` except this template, so the copy can be a git repository of its own, private if need be.

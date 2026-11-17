@@ -1,10 +1,12 @@
 ---
-description: "Falcon's built-in processors: inputs, filters, detectors and outputs, each with its inputs, outputs and options, and how it works."
+description: "Reference of Falcon's built-in processors. Each has a page with its inputs, outputs and options and the computation it performs."
 ---
 
 # Processor reference
 
-A graph is built from processors. A processor's page describes what it does, its inputs and outputs, its options and how it works. The pages so far:
+Falcon's built-in processors. Each page gives the processor's inputs, outputs and options, the computation it performs and guidance on choosing its option values.
 
-- [IIR filter](processors/iir_filter.md): a recursive filter on every channel, as a cascade of second-order sections.
-- [Spike detector](processors/spike_detector.md): an event on every sample where channels cross a fixed threshold.
+| Processor | Description |
+|-----------|-------------|
+| [IIR filter](processors/iir_filter.md) | Filters every channel with the same recursive filter, given as a cascade of second-order sections. |
+| [Spike detector](processors/spike_detector.md) | Emits an event on every sample where at least one channel crosses a fixed threshold. |

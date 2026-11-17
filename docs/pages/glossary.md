@@ -7,7 +7,7 @@ description: "What Falcon's documentation means by channel, sample, stream, even
 - **Channel**: one electrode's signal, the voltage one recording site measures over time. A probe with 32 recording sites gives 32 channels.
 - **Channel value**: one channel's measurement at one time point: a single number, in microvolts.
 - **Sample**: a snapshot of all channels at one time point: every channel's value, plus a header. Recording at 30 kHz gives 30,000 samples per second, one every 33.3 µs. A sample is never one channel's value alone.
-- **Header**: a small label attached to each sample that identifies it: which sample it is (its number), when the device took it and when it reached Falcon, and how many samples were lost before it.
+- **Header**: a small label attached to each sample that identifies it. It holds the sample's number, the time the device took it, the time it reached Falcon and the number of samples lost before it.
 - **Stream**: the series of samples one source produces, one after another, e.g. everything one acquisition device sends. All samples of a stream have the same channels and come at the same rate.
 - **Rate**: how many samples a stream has per second, e.g. 30 kHz. The time between two samples is the sample period.
 - **Event**: something that happened at one moment, written down as a struct of its kind (its event type), e.g. "on sample 12,345, channels 17 and 40 crossed the spike threshold", or "the trigger fired". One event can hold several spikes of the same sample. Samples come at a fixed rate whether anything happens or not; events come only when something happens, so most samples bring none.
@@ -21,13 +21,14 @@ description: "What Falcon's documentation means by channel, sample, stream, even
 - **Graph**: the processors and connections that make up one experiment, as the user designs it in the editor.
 - **Pipeline**: a graph written in C++ as its own program, `pipeline.cpp`: generated from the graph the user designs in the editor, or written by hand.
 - **Core**: one processing unit of the CPU; a CPU with 16 cores runs 16 things at once.
-- **Loop**: what each core runs over and over for as long as the experiment runs: each of its processors in a fixed order, then from the start again.
+- **Loop**: what each core runs repeatedly for as long as the experiment runs: each of its processors in a fixed order, then from the start again.
 - **Pass**: one turn of a core's loop, in which each processor on that core runs once.
 - **Chain**: processors connected one after another on the same core, so a sample goes through all of them within one pass, without a hop.
 - **SIMD** (single instruction, multiple data): one CPU instruction that does the same operation on several values at once, e.g. compares 16 numbers with a threshold in one step.
-- **Channel vector**: a group of adjacent channels of one sample (16, or 8 on older CPUs) that the CPU processes with one SIMD instruction. **Lane**: one channel's place in a channel vector.
+- **Channel vector**: a group of adjacent channels of one sample (16, or 8 on older CPUs) that the CPU processes with one SIMD instruction.
+- **Lane**: one channel's place in a channel vector.
 - **Mask**: a row of bits, one per channel, each saying yes or no for its channel, e.g. which channels crossed a threshold on this sample.
-- **Hot path**: the work done for every single sample, from the input to the decision to stimulate. Every nanosecond spent there adds to the latency.
+- **Hot path**: the work done for every sample, from the input to the decision to stimulate. Time spent there adds to the latency.
 - **Realtime core**: a core reserved for the hot path; the operating system runs nothing else on it.
-- **Trigger**: the decision to stimulate, and the processor that makes it.
+- **Trigger**: the decision to stimulate; also the processor that makes it.
 - **Latency**: the delay between a sample reaching Falcon and what it causes, e.g. a trigger. Measured end to end, it also includes the time spent in the acquisition and output hardware.
