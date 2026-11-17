@@ -22,4 +22,5 @@ sudo apt-get install -y \
   libgl1-mesa-dev \
   libegl1-mesa-dev \
   liburing-dev \
-  python3-jinja2
+  python3-jinja2 \
+  libdecor-0-plugin-1-gtk

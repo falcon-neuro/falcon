@@ -5,9 +5,16 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <glad/gl.h>
+#include <cstddef>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <optional>
 #include <print>
+#include <string>
+#include <vector>
 #include "main_window/main_window.cpp"
+#include "ui_driver/ui_driver.cpp"
 
 // Everything about this UI is just a "demo" for checking
 // capabilities of imgui and opengl and compute shaders.
@@ -21,6 +28,39 @@ private:
     GLFWwindow* window_ = nullptr;
     MainWindow main_window_;
     MainWindowController main_window_controller_;
+    // The file a picture of the window is written to, from the environment variable
+    // FALCON_SCREENSHOT; empty when that isn't set. With it, the program draws into a window that
+    // isn't shown, writes the picture and quits, so the UI can be looked at without a screen.
+    std::string screenshot_path_;
+    int drawn_frame_count_ = 0;
+    // On when the environment variable FALCON_UI_DRIVER is set: a test then plays the mouse and
+    // the keys, in a window that isn't shown either.
+    UiDriver ui_driver_;
+
+    static constexpr int screenshot_width = 1600;
+    static constexpr int screenshot_height = 1000;
+    // What sizes itself to what it holds has its size only from its second frame on, and what
+    // that holds from the frame after.
+    static constexpr int frames_before_screenshot = 8;
+
+    // Writes what was just drawn as a PPM picture. OpenGL hands the rows over bottom first, and a
+    // picture has its top row first.
+    static void write_screenshot(const std::string& path, int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        const std::size_t row_size = static_cast<std::size_t>(width) * 3;
+        const auto row_count = static_cast<std::size_t>(height);
+        std::vector<char> pixels(row_size * row_count);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadBuffer(GL_BACK);
+        glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+        std::ofstream file(path, std::ios::binary);
+        file << "P6\n" << width << ' ' << height << "\n255\n";
+        for (std::size_t row = row_count; row > 0; --row) {
+            file.write(&pixels.at((row - 1) * row_size), static_cast<std::streamsize>(row_size));
+        }
+    }
 
     bool init_window_context() {
         glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
@@ -35,17 +75,30 @@ private:
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
-        window_ = glfwCreateWindow(1280, 720, "Falcon", nullptr, nullptr);
+        if (const char* path = std::getenv("FALCON_SCREENSHOT")) {
+            screenshot_path_ = path;
+        }
+        const bool is_window_hidden = !screenshot_path_.empty() || UiDriver::is_on();
+        if (is_window_hidden) {
+            glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        }
+        window_ = glfwCreateWindow(is_window_hidden ? screenshot_width : 1280,
+                                   is_window_hidden ? screenshot_height : 720, "Falcon", nullptr,
+                                   nullptr);
         if (!window_) {
             std::cerr << "Failed to create GLFW window\n";
             glfwTerminate();
             return false;
         }
 
-        glfwMaximizeWindow(window_);
+        if (!is_window_hidden) {
+            glfwMaximizeWindow(window_);
+        }
 
         glfwMakeContextCurrent(window_);
-        glfwSwapInterval(1);
+        // A window that isn't shown is never told that its frame reached the screen, which a swap
+        // in step with the screen waits for.
+        glfwSwapInterval(is_window_hidden ? 0 : 1);
 
         if (gladLoadGL(glfwGetProcAddress) == 0) {  // returns the GL version, 0 on failure
             std::cerr << "Failed to initialize GLAD loader\n";
@@ -131,6 +184,9 @@ public:
     void run() {
         while (glfwWindowShouldClose(window_) == GLFW_FALSE) {
             glfwPollEvents();
+            if (UiDriver::is_on() && !ui_driver_.prepare_frame()) {
+                break;
+            }
 
             int display_w = 0;
             int display_h = 0;
@@ -139,6 +195,9 @@ public:
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
+            if (UiDriver::is_on()) {
+                ImGui::GetIO().DeltaTime = UiDriver::frame_seconds;
+            }
             ImGui::NewFrame();
 
             ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -167,6 +226,20 @@ public:
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+            if (!screenshot_path_.empty()) {
+                ++drawn_frame_count_;
+                if (drawn_frame_count_ == frames_before_screenshot) {
+                    write_screenshot(screenshot_path_, display_w, display_h);
+                    glfwSetWindowShouldClose(window_, GLFW_TRUE);
+                }
+            }
+            if (UiDriver::is_on()) {
+                if (const std::optional<std::string> picture = ui_driver_.picture_wanted()) {
+                    write_screenshot(*picture, display_w, display_h);
+                }
+                ui_driver_.finish_frame();
+            }
 
             glfwSwapBuffers(window_);
         }

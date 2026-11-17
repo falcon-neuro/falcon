@@ -1,5 +1,5 @@
 # Website
-`docs/` is the websites' source. This file is internal: only what is under `docs/pages/` is published.
+`docs/` is the websites' source. Only what is under `docs/pages/` is published. `docs/ongoing_work/`, which holds this file and the other areas' files, is internal: the build reads nothing from it (see **How they are built**).
 
 ## Goal
 Three websites, each linking to the other two:
@@ -7,7 +7,7 @@ Three websites, each linking to the other two:
 - **Documentation**: the pages under **Pages**, reached from the main website. It reads as the documentation of a finished product. Its full page structure exists from the start; a page about something that isn't built yet says "coming soon" until it can be written.
 - **API**: the reference generated from the code (classes, files, C++ concepts), for whoever writes a processor.
 
-Work on the websites changes only `docs/`, the scripts that build them and, where the build needs it, `.gitignore` and the deployment workflow.
+Work on the websites changes only `docs/` (in `docs/ongoing_work/`, only this file), the scripts that build them and, where the build needs it, `.gitignore` and the deployment workflow.
 
 State: the three websites are built and link to each other (see **How they are built**). The main website is one placeholder page so far.
 
@@ -42,7 +42,7 @@ Traps when writing one:
 - A `|` inside a table cell ends the cell.
 
 ### Glossary
-The glossary is the page `docs/pages/glossary.md` itself, which the engine's docs and the work on them use as their list of terms too, so the glossary exists once. After its description, the title is followed by the terms, with no introductory sentence.
+The glossary is the page `docs/pages/glossary.md` itself, which the engine's docs and the work on them use as their list of terms too, so the glossary exists once. After its description, the title is followed by the terms, with no introductory sentence. Each term is a list entry of its own, never a second term inside another's entry.
 
 - What is written in it is therefore published. Its text passes through the macros and the formulas like any page's: `{{`, `{%`, `{#` and a pair of `$` have their meaning there too (see **Class links** and **Formulas**).
 - No page includes a file any more, so `include_dir` in `docs/zensical.toml`, still `../src/core`, is unused and could go. Used again, it stays a small folder, since Zensical reads through all of it on every build: set to the repository's root, a build took 80 seconds and then failed on a file it couldn't read.
@@ -82,18 +82,30 @@ One Markdown file per page, in `docs/pages/`, in plain Markdown with no Doxygen 
 
 | # | Page | File | Content | State |
 |---|------|------|---------|-------|
-| 1 | Overview | `overview.md` | What Falcon is, who it is for, what it can do; the list of pages, closed by the website's one "coming soon" sentence; **Origins** as its last section. | First version, to rewrite. |
-| 2 | Processor reference | `processor_reference.md` | The list of the processors that have a page, each linking to it under `processors/`. With those pages it forms the "Processors" group in the sidebar. | Lists two. |
-| 2a | IIR filter | `processors/iir_filter.md` | See **Processor pages** under **Open questions**. | Written and proofread against the code and the glossary. |
-| 2b | Spike detector | `processors/spike_detector.md` | As 2a. | Written and proofread against the code and the glossary. |
+| 1 | Overview | `overview.md` | What Falcon is, who it is for, what it can do; one sentence that a new engine is coming soon, the website's only "coming soon"; a table of the pages, closed by a sentence naming the pages still to come; **Origins** as its last section. | First version, to rewrite. |
+| 2 | Processor reference | `processor_reference.md` | One sentence on what a processor's page holds, then a table of the processors that have a page: each one's name, linking to its page under `processors/`, and a one-line description that starts with a verb. With those pages it forms the "Processors" group in the sidebar. | Lists two. |
+| 2a | IIR filter | `processors/iir_filter.md` | See **Processor pages** under **Open questions**. | Written and proofread against the code and the glossary. Has two boxes (see **Decided**). |
+| 2b | Spike detector | `processors/spike_detector.md` | As 2a. | Written and proofread against the code and the glossary. Has three boxes (see **Decided**). |
 | 3 | Glossary | `glossary.md` | The page itself (see **Glossary** under **How they are built**). | Done. |
+
+### Widgets
+A page may use any widget Zensical offers: cards, buttons, the twelve kinds of box (titled, untitled, folding, beside the text, nested; for folding see **Decided**), tabs, code with a title, line numbers, a highlighted line and numbered notes, two blocks side by side, notes in the text, icons, keys, text marks, tooltips, footnotes, a checklist, a list of terms, an aligned table, formulas, a Mermaid diagram and pictures with a caption or beside the text.
+
+`docs/ongoing_work/widget_showcase.md` shows how each one is written, once each, with examples from the two processor pages: read it before writing a widget. It is internal and never published. To see it as a page, copy it into `docs/pages/` and add it to `nav` in `docs/zensical.toml`; remove both again before the branch is merged.
+
+`docs/zensical.toml` turns the widgets on: the features `content.code.annotate` and `content.footnote.tooltips`, and the Markdown extensions `abbr`, `def_list`, `pymdownx.caret`, `pymdownx.critic`, `pymdownx.emoji`, `pymdownx.keys`, `pymdownx.mark`, `pymdownx.tasklist`, `pymdownx.tilde` and the Mermaid fence of `pymdownx.superfences`.
+
+Traps:
+- Mermaid and emoji load from an outside server, which **Decided** rules out: Zensical's script fetches Mermaid from unpkg.com on a page that holds a diagram, and an emoji written as `:name:` becomes an image from a content delivery network. Icons written the same way (`:lucide-cpu:`) are safe: they are placed in the page itself. So no page uses a diagram or an emoji; the showcase holds one diagram, under a warning that says so.
+- A code block with line numbers shows neither its empty lines, so every number below one is too low, nor the indentation at the start of a line. Both are in the built page and lost on screen; a block without line numbers shows its empty lines. Seen in a headless Brave, cause not found. Until it is, no page numbers its code lines.
+- The extensions give `==`, `^^`, `~~`, `++` and `:name:` a meaning on every page.
 
 Pages to come, each added only once it has content: How it works (graph, processors, engine, and where the latency goes), System requirements (CPU, Debian with preempt_rt, core isolation, supported acquisition hardware), Installation, First experiment (building a graph in the editor and running it), Example experiments (spike detection, ripple detection, replay decoding), Writing a processor, and a page per remaining processor. Until then one sentence in the overview names them. When one is added, take it out of that sentence.
 
 Next: the remaining processor pages (see **Open questions**), each agreed at a high level before it is written.
 
 ## Documentation from the code
-Once Falcon is a usable product. The website is generated by Doxygen from two sources only, both kept minimal: doc comments in the code, and Markdown pages, such as tutorials on using Falcon. Until then its pages follow `.claude/ongoing_work/website.md`: the full page structure, with "coming soon" on what isn't built yet. The engine's docs, the test suite's and that plan lie outside its sources, in `.claude/ongoing_work`, as the brochure's notes do in `docs/poster`; the glossary is one of its pages, `docs/pages/glossary.md`. A push to `main` or `develop` deploys the website (`.github/workflows/deploy_website.yml`); these pages and the README without its install command are not on `develop` yet, so the live website still shows the old ones. Doc comments then also describe for users what each processor, option and connection does, a kind of comment beside the ones for what the code can't say.
+Once Falcon is a usable product. The website is generated by Doxygen from two sources only, both kept minimal: doc comments in the code, and Markdown pages, such as tutorials on using Falcon. Until then its pages follow `docs/ongoing_work/website.md`: the full page structure, with "coming soon" on what isn't built yet. The engine's docs, the test suite's and that plan lie outside its sources, in `docs/ongoing_work`, as the brochure's notes do in `docs/poster`; the glossary is one of its pages, `docs/pages/glossary.md`. A push to `main` or `develop` deploys the website (`.github/workflows/deploy_website.yml`); these pages and the README without its install command are not on `develop` yet, so the live website still shows the old ones. Doc comments then also describe for users what each processor, option and connection does, a kind of comment beside the ones for what the code can't say.
 - For processor authors: when an event is a channel mask (it says which channels did something on one sample, with no value per channel, e.g. spikes, level crossings) and when a sparse event (it carries a value per channel or per group, e.g. an amplitude, a tetrode's marks, a waveform, or isn't about channels, e.g. a trigger, a timer, a decoder result). See **Detection events are channel masks** in engine.md.
 
 ## Decided
@@ -109,7 +121,18 @@ Once Falcon is a usable product. The website is generated by Doxygen from two so
 - The pages don't show the "Made with Zensical" line (`generator = false` in `docs/zensical.toml`, a switch Zensical's theme provides), nor the grey strip that held it: `docs/pages/stylesheets/extra.css` hides the strip, which would also hide a copyright line or social links if either were set later.
 - A class named in a documentation page links to that class's page on the API website automatically: nobody writes the address by hand.
 - The website carries only content that is needed, and no page without it. "License and contributing" is deleted: the overview names the licence and links to the repository. The six pages that said only "coming soon" are deleted too. "Coming soon" may be said, but once on the whole website (see **Pages**).
+- The overview says that a new engine is coming soon and that the documentation describes the new version.
+- Boxes are used on the documentation's pages: tried on the spike detector's page, they improve it. There: a warning box under the option's table for the refused threshold of 0, in place of the section "What Falcon checks"; a note box "Edge cases" under the example table, in place of the list after "It follows that"; a tip box that opens "Choosing the threshold".
+- No box is folded when a page opens: it hides information.
+- A box's text is complete without its title: full sentences that would read the same as plain text. Its title is the kind's own name ("Tip", "Warning") or a plain noun label ("Edge cases"), never a headline, and never a phrase the text leans on. Rejected as marketing: a tip box titled "A common choice" over the fragment "Four to five times the standard deviation of the noise, ...".
+- The documentation is scientific and humble in tone. Nothing in it reads like a sales page.
+- A paper cited in a sentence is a footnote: its number in the sentence, its text at the foot of the page and shown on hover. The spike detector's page cites Quian Quiroga and colleagues this way.
+- The documentation is written in the manner of a scientific toolkit's documentation from about 2015: plain statements and summary tables. The processor reference is the model for a page that lists things.
+- All six pages follow the wording rules below. In the glossary only wording changed, never a term's meaning.
+- No words for effect: no emphasis ("the very sample", "exactly", "nothing more", "never adapts"), no contrast made for effect ("the crossing, not the peak"), no processor described as a person ("watches"). A section that lists what a processor doesn't do is headed "Limitations" and states each limit plainly.
+- No second clause hung on a sentence with ", and" ("Extracellular spikes mostly point downward, and the default threshold is negative to match"): it reads as machine-written. Say how the two facts relate ("which is why", "so", "because") or write two sentences. A plain list ("a, b and c") is not meant.
 - No machine-sounding filler: no sentence that only announces what follows, no promise of content in a page's search description that the page doesn't hold, no bold lead-in on each item of a list.
+- The processor pages keep their formulas and their signal-processing detail. Rewriting them for a junior neuroscientist, with the detail moved to the API, was considered and dropped.
 - The maintainer merges and deploys. Whoever works on the websites never commits, merges, pushes or deploys.
 - No page for users coming from Falcon 1, since only its authors ever used it.
 - The website honours the original Falcon and its paper, but in the last section of the overview (**Origins**), never at the entrance: the website looks forward. For now it lists only the 2017 paper. Papers that cite or used Falcon come later; the first of them is the 2018 eLife paper (Ciliberti, Michon, Kloosterman, https://doi.org/10.7554/eLife.36275), which the earlier single page listed.
@@ -117,7 +140,7 @@ Once Falcon is a usable product. The website is generated by Doxygen from two so
 ## Verified
 On one development machine, with Zensical 0.1.1 and Doxygen 1.18.0. The deployment workflow hasn't run with the new script yet.
 - `scripts/doc_gen.sh` runs to the end and `docs/build/` holds the three websites; one page of each loads from the local server, also right after the server starts.
-- After the glossary became its page and Doxygen's two exclusions for notes under `src` were removed, since those notes left `src`: the build has no issues, the glossary page shows its 27 terms, and none of the internal notes is in the build. `scripts/doc_serve.sh` serves the three websites.
+- After the glossary became its page and Doxygen's two exclusions for notes under `src` were removed, since those notes left `src`: the build has no issues, the glossary page shows its terms, and none of the internal notes is in the build. `scripts/doc_serve.sh` serves the three websites.
 - The pages build with no issues, in under a second. Under the "Documentation" tab the sidebar shows "Overview", the "Processors" group and "Glossary".
 - The class links on the two processor pages lead to those classes' API pages. With a name the API doesn't have, the build fails.
 - The top bar's link to the repository no longer asks GitHub for the release, the stars and the forks: `docs/overrides/partials/source.html` replaces the theme's version of the link, without the mark that made the theme's script ask. Checked in the built pages and in a screenshot, not by watching the browser's requests.
@@ -130,13 +153,23 @@ On one development machine, with Zensical 0.1.1 and Doxygen 1.18.0. The deployme
 - The API's tag file lists 19 classes, 120 structs and 5 concepts.
 - Search engines: the built pages carry the titles, descriptions, canonical addresses and shared-link tags; the main page's software description parses as valid JSON; `sitemap.xml` lists the six pages. Not checked with Google's own testing tool, which needs the published website.
 - The IIR filter's page shows its 23 formulas as MathML with none failed, in light and dark mode, in Firefox on Linux. Not looked at in Chrome or Safari, nor on a machine without a mathematical font.
-- The glossary page shows all 27 terms.
+- The glossary page shows all 28 terms, each as an entry of its own.
+- The widget showcase, while it was a page, in a headless Brave on Linux: every widget on it displays in light mode, and its boxes in dark mode, in screenshots. Nothing was clicked, so folding, tabs, tooltips and the numbered notes' pop-ups are unchecked. With the new extensions on, the IIR filter's and the spike detector's pages hold as many formulas as before.
+- `docs/ongoing_work/` stays out of the websites: Zensical reads only `docs/pages/` (`docs_dir` in `docs/zensical.toml`), Doxygen only `src/` and `docs/doxygen/api_main.md` (`INPUT` in the Doxyfile), and the workflow publishes only `docs/build/`. Checked in those three files and in the `docs/build/` at hand, which holds no page, search entry or sitemap entry from the folder. No fresh build was run after the folder moved there.
 - The built documentation pages reference no outside server except as links (the repository, the two papers' DOIs).
 - Zensical leaves `page.is_homepage` unset in its templates, so `docs/overrides/main.html` recognises the main page by its address.
 - https://falcon-neuro.org/ still served the old Doxygen website on 2026-11-16.
 - The search dialog (see **Search dialog** under **How they are built**), measured in a headless Brave, which draws without a graphics card, in a window of 2520 by 1303, while typing "filter coefficients", twice each way. Without the script's rules, the screen followed a key press after 80 to 88 ms on average, 127 ms at worst, and 47 to 48 frames took over 40 ms. With them: after 30 ms, and no such frame, also after following a link to another page. The page's other blurs (e.g. the top bar's) stay and cost nothing measurable while searching. The search itself was never the cost: in 6 s of typing, the page's script ran for 0.15 s, and the search data is 27 entries in 21 kB. With the script the panel is opaque and readable in light and dark mode, checked in screenshots. Confirmed on 2026-11-16 in the browser the slowness was reported from, a Brave with hardware acceleration off.
 
 ## Open questions
+- **Pages that read as machine-written.** From a reading of the six pages' text, not of their look in a browser; most affected first. Nothing is changed yet: to go through one page at a time.
+  - Overview: its wording follows **Decided** and its list of pages is a table. Still open: it says nothing that only Falcon could say, which needs content (see **What the website lacks**), not wording.
+  - Processor reference: rewritten as a summary table (see the **Pages** table).
+  - Spike detector: reworked. It has boxes, a footnote and a "Limitations" section, and its wording follows **Decided**. Left as it was: nine headed sections and a one-row options table.
+  - IIR filter: reworked like the spike detector's: a warning box for what Falcon refuses, a tip box in "Delay", and its wording follows **Decided**. Left as it was: nine headed sections, two-row tables and CPU detail a user can't act on (channels per instruction).
+  - Glossary: its wording follows **Decided**. Still open: 17 of its 28 terms (e.g. ring, slot, hop, chain, lane) appear on no other page: they are the engine's.
+  - Main page: empty rather than machine-sounding (see **Main page, a placeholder**).
+- **Which widgets to use.** Boxes and footnotes are settled (see **Decided**). Open: tabs, which were left off the IIR filter's page because a tab that isn't selected hides its content, as a folded box does (its MATLAB note would have sat behind the SciPy tab); which other widgets the pages take; and whether diagrams are worth keeping Mermaid's file with the website.
 - **Search dialog, what is left.** The slow search is fixed (see **Search dialog** under **How they are built**, and **Verified**). Two points are open with it:
   - The look: without the blur the page stays sharp behind the veil, around the panel. The veil could be made more opaque.
   - The way: the other way was `scripts/doc_gen.sh` deleting the blur from Zensical's installed script. It puts no script of ours in the pages and fails the build when a later Zensical no longer matches, but it changes an installed file of someone else's, whose name stays the same, so a browser may keep the old one.
@@ -163,4 +196,4 @@ On one development machine, with Zensical 0.1.1 and Doxygen 1.18.0. The deployme
   - **Troubleshooting.** A page of common problems.
   - **Website mechanics, to audit.** Dark mode, search, phone layout, copy buttons on code, the image and description a shared link shows, an "edit this page" link, `llms.txt` and plain-Markdown pages for AI assistants, documentation per released version.
 - **Citing.** Does the website ask users to cite the 2017 paper?
-- **API website.** The top bar's "API" tab links to it now. With few doc comments in the code, does the tab stay, or is the API built but left unlinked until the doc comments exist (see **Documentation** in `.claude/ongoing_work/beyond_prototype.md`)? A build on a developer's machine also includes the git-ignored extensions under `src/processors/custom/`, e.g. a vendor library's headers, which the deployed website doesn't have.
+- **API website.** The top bar's "API" tab links to it now. With few doc comments in the code, does the tab stay, or is the API built but left unlinked until the doc comments exist (see **Documentation** in `docs/ongoing_work/beyond_prototype.md`)? A build on a developer's machine also includes the git-ignored extensions under `src/processors/custom/`, e.g. a vendor library's headers, which the deployed website doesn't have.

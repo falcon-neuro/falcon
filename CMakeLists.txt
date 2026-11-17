@@ -109,20 +109,20 @@ target_compile_definitions(falcon PRIVATE
 target_include_directories(falcon PRIVATE src)
 
 # The list of processors for the UI and the generator, read from the processors' source by
-# src/core/list_processors.py. It is made again when a processor is added or changed.
+# src/ui/pipeline_designer/list_processors.py. It is made again when a processor is added or changed.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 file(GLOB FALCON_PROCESSOR_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/processors/*.cpp)
 file(GLOB FALCON_ENGINE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/core/*.cpp)
 set(FALCON_ALL_PROCESSORS_FILE "${CMAKE_BINARY_DIR}/generated/all_processors.cpp")
 add_custom_command(
     OUTPUT ${FALCON_ALL_PROCESSORS_FILE}
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/src/core/list_processors.py
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/src/ui/pipeline_designer/list_processors.py
             --clang ${CMAKE_CXX_COMPILER}
             --source-root ${CMAKE_SOURCE_DIR}/src
             --output ${FALCON_ALL_PROCESSORS_FILE}
             ${FALCON_PROCESSOR_SOURCES}
             -- -std=c++26 -stdlib=libc++ -mavx2 -mfma -march=native -I ${CMAKE_SOURCE_DIR}/src
-    DEPENDS ${CMAKE_SOURCE_DIR}/src/core/list_processors.py
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/ui/pipeline_designer/list_processors.py
             ${FALCON_PROCESSOR_SOURCES}
             ${FALCON_ENGINE_SOURCES}
     VERBATIM
