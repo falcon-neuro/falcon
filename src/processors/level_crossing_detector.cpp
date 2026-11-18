@@ -13,7 +13,8 @@
 
 // One event per sample: the mask of the channels that crossed the level on it.
 template <typename StreamInfoType>
-struct LevelCrossings : StreamEvent {
+struct LevelCrossings : Event {
+    SampleHeader header{};
     ChannelMask<StreamInfoType> channels;
 };
 

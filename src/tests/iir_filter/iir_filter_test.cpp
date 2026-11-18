@@ -173,7 +173,7 @@ void write_floats(const std::filesystem::path& path, std::span<const float> valu
 }
 
 // std::format writes each double in its shortest form that reads back exactly.
-template <int SectionCount>
+template <std::size_t SectionCount>
 std::string describe_design(const IirFilterOptions<SectionCount>& options, std::string_view name,
                             std::string_view design) {
     std::string sections;

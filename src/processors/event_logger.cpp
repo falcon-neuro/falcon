@@ -84,10 +84,10 @@ private:
     void log_every_event(Connections connections) {
         for (const EventType& event : connections.input) {
             ++received;
-            if constexpr (std::derived_from<EventType, StreamEvent> && has_channel_mask) {
+            if constexpr (StreamEvent<EventType> && has_channel_mask) {
                 log(name, "event {}, sample {}, channels {}", received, event.header.sample_number,
                     event.channels);
-            } else if constexpr (std::derived_from<EventType, StreamEvent>) {
+            } else if constexpr (StreamEvent<EventType>) {
                 log(name, "event {}, sample {}", received, event.header.sample_number);
             } else if constexpr (requires { event.count; }) {
                 log(name, "event {}, count {}", received, event.count);

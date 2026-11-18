@@ -228,7 +228,7 @@ private:
         graph_.connect({.processor = *trigger, .port = "output"},
                        {.processor = *recorder, .port = "inputs"});
         if (is_one_selected) {
-            selected_processor_ = *detector;
+            selected_processor_ = detector;
         }
     }
 

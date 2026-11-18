@@ -308,3 +308,6 @@ extensions/*
 
 !extensions/template_extension
 !extensions/README.md
+
+# The compiler that scripts/setup/fetch_gcc.sh fetches
+/gcc-*/

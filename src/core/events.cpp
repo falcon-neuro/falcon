@@ -13,9 +13,14 @@
 // Base of every event. Empty: an event from a timer has no sample to point to.
 struct Event {};
 
-// Base of every event that comes from a sample; `header` is that sample's header.
-struct StreamEvent : Event {
-    SampleHeader header;
+// An event that comes from a sample: its first field is `SampleHeader header{};`, that sample's
+// header. A field and not a base, so that an event is one list of fields to whatever reads or
+// writes it. The default lets a push name only the event's own fields, since push() sets the
+// header.
+template <typename EventType>
+concept StreamEvent = std::derived_from<EventType, Event> && requires {
+    requires std::same_as<decltype(EventType::header), SampleHeader>;
+    requires offsetof(EventType, header) == 0;
 };
 
 template <std::derived_from<Event> EventType, int Capacity>
@@ -53,7 +58,7 @@ private:
         first_fed_ring_ = &ring;
     }
 
-    std::array<EventType, Capacity> events_{};
+    std::array<EventType, static_cast<std::size_t>(Capacity)> events_{};
     int count_ = 0;
     EventRingWriterEnd<EventType, Capacity>* first_fed_ring_ = nullptr;
 };
@@ -192,10 +197,9 @@ private:
 
 // An event that holds a mask of a stream's channels, such as Spikes or LevelCrossings.
 template <typename EventType, typename StreamInfoType>
-concept ChannelMaskEvent =
-    std::derived_from<EventType, StreamEvent> && requires(const EventType& event) {
-        { event.channels } -> std::same_as<const ChannelMask<StreamInfoType>&>;
-    };
+concept ChannelMaskEvent = StreamEvent<EventType> && requires(const EventType& event) {
+    { event.channels } -> std::same_as<const ChannelMask<StreamInfoType>&>;
+};
 
 // A message may carry a channel mask.
 template <typename StreamInfoType>

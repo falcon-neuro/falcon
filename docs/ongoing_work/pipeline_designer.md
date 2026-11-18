@@ -81,13 +81,17 @@ Waiting for the user:
 The app is `src/main.cpp`, which `CMakeLists.txt` names by hand as the program to build; an engine pipeline is built by naming it there instead.
 
 ## Later
-- **Recorder's `slot_names` is not to be an option the user fills** (parked by the user on 17 November 2026; see the open questions of engine.md): until it is gone, the designer shows it as any other option.
+- **A recorder's slot names are filled in beforehand** (decided by the user on 18 November 2026, not built): when a connection is made to a Recorder, the designer fills that slot's entry of `slot_names` with the upstream processor's name and its output's, and the user may change it, e.g. to `my_output_signal`. So the user has nothing to fill, and the option stays (see **One file that describes itself** under **Recorder** in engine.md). Until it is built, the designer shows `slot_names` as any other option. Open:
+  - the text filled in; proposed: `ripple_filter.output`, which needs `.` allowed in a slot's name;
+  - whether a name the user hasn't changed follows when its upstream processor is renamed, and what removing a connection does to the names of the slots after it;
+  - how the names are shown, the option's type being `std::array<Str, SlotCount>` (see what is not done of **Types across the graph** in generator.md).
 - **Showing which inputs take several connections** more visibly than the "any number" in a port's summary in the panel (put off by the user on 17 November 2026).
 - **Moving a whole chain to another core** at once, where a drag moves one processor: by Ctrl and a drag, or by a bar on top of the chain that moves all of it, much like the group around a rack of audio effects in Ableton Live.
 
 ## Open questions
 - **A picked input that already has its connection** and no slots fits no output, so no output can be clicked until it is let go. Whether a click on an output should then replace its connection.
 - **Which port a line belongs to** shows only by its place along the block's edge and its colour (see **A port has one dot** under **Done**). If that proves unclear on a block with several ports: lay the ports side by side along the edge, inputs on top and outputs at the bottom, each one dot with its name, clicked and met by its line, which leaves little room for the names.
+- **Names that are used twice**, asked for by the user on 18 November 2026, not designed: the designer refuses a processor's name that is already used, which the engine does only at start (see **Processor names** under **Logging** in engine.md). Two slots of one Recorder can share a name too, since the user may change them (see **A recorder's slot names are filled in beforehand** under **Later**); proposed: Recorder refuses it when compiling, and the designer shows that as any option's error (see **The compiler checks a processor's options** in generator.md).
 - **What follows from a fixed layout**, to design:
   - The order from left to right where neither the connections nor the user give it: of the processors an output fans out to. In code it is that of the core's list, so the order in which they were added.
   - The cores' boxes stand side by side by core number, in a row that scrolls (in code). Not looked at yet: many cores at once, and where a line between two cores far apart runs.

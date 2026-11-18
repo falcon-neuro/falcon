@@ -5,7 +5,9 @@
 // never reads a clock, so a replay gives the same triggers.
 
 // Its header is that of the sample whose event completed the set.
-struct TriggerEvent : StreamEvent {};
+struct TriggerEvent : Event {
+    SampleHeader header{};
+};
 
 /// Decides when to act: it emits a trigger event once every channel of a stream has had an event
 /// since the previous trigger. It is built for measuring latency with a test signal on every

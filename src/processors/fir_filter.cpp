@@ -9,7 +9,7 @@
 // FirFilter: an FIR filter on every channel, computed in double; its input and output are float32.
 
 // y[n] = taps[0]·x[n] + taps[1]·x[n−1] + … + taps[N−1]·x[n−N+1]
-template <int TapCount>
+template <std::size_t TapCount>
 struct FirFilterOptions {
     /// The sampling rate the taps were designed for, in Hz. It must equal the rate of the input
     /// stream, or every cutoff would shift.
