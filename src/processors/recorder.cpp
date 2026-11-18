@@ -8,9 +8,11 @@
 #include <cstring>
 #include <format>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 #include "../core/engine.cpp"
 
@@ -18,8 +20,9 @@
 // run's directory. The file starts with one line of JSON that names each connection and says how
 // its records are laid out. Chunks follow, each a u32 for the connection, a u32 for the number of
 // records, then that many records of that connection. A sample's record is its number as a u64
-// and its channels' values in order as float32. An event's record is its header: the sample
-// number, device timestamp, arrival TSC and lost-sample count, each a u64. All little-endian.
+// and its channels' values in order as float32. An event's record is the event's bytes as they
+// are in memory, and the first line lists the event's fields, each with its name, type, place,
+// size and count, so a reader finds them without knowing the event's type. All little-endian.
 // Writing to a file can block, so it runs on a core that isn't realtime, behind rings.
 
 // How one connection of a Recorder is written.
@@ -28,7 +31,8 @@ struct RecorderSlotFormat {
     int channels = 0;  // of a sample stream
     double rate = 0;   // Hz, of a sample stream
     std::size_t record_bytes = 0;
-    std::size_t chunk_records = 0;  // how many records are gathered before they are written
+    std::size_t chunk_records = 0;       // how many records are gathered before they are written
+    std::span<const EventField> fields;  // of an event
 };
 
 // Defined for each kind of connection a Recorder can write.
@@ -46,22 +50,21 @@ struct RecorderSlotFormatOf<SampleBuffer<StreamInfoType>> {
         .record_bytes =
             sizeof(u64) + (static_cast<std::size_t>(StreamInfoType::channels) * sizeof(float)),
         .chunk_records = 1024,
+        .fields = {},
     };
 };
 
-template <StreamEvent EventType, int Capacity>
+template <std::derived_from<Event> EventType, int Capacity>
 struct RecorderSlotFormatOf<EventBuffer<EventType, Capacity>> {
-    static_assert(sizeof(EventType) == sizeof(SampleHeader),
-                  "only an event's header is written, so an event with fields of its own would "
-                  "lose them");
-    static_assert(sizeof(SampleHeader) == 4 * sizeof(u64),
-                  "an event's record is the header's four u64 fields, with no padding");
+    static_assert(std::is_trivially_copyable_v<EventType>,
+                  "an event is written as its bytes, so it must be a plain struct");
 
     // Events are rare, so a pass's events are written at once, never held back for a full chunk.
     static constexpr RecorderSlotFormat value{
         .is_sample_stream = false,
-        .record_bytes = sizeof(SampleHeader),
+        .record_bytes = sizeof(EventType),
         .chunk_records = static_cast<std::size_t>(Capacity),
+        .fields = EVENT_FIELDS<EventType>,
     };
 };
 
@@ -104,7 +107,7 @@ struct Recorder {
 
     struct Connections {
         /// Whatever is to be recorded: any number of connections, each bringing samples or events.
-        /// Of an event, only its sample number and its times are written.
+        /// Of an event, every field is written.
         InputSlots<InputKinds...> inputs;
     };
 
@@ -189,7 +192,7 @@ private:
 
     // The file's first line.
     [[nodiscard]] static std::string file_description() {
-        std::string description = R"({"format": "falcon_recording", "version": 1, "slots": [)";
+        std::string description = R"({"format": "falcon_recording", "version": 2, "slots": [)";
         for (std::size_t slot_index = 0; slot_index < slot_count; ++slot_index) {
             const RecorderSlotFormat& format = slot_formats[slot_index];
             const char* const slot_name = options.slot_names[slot_index].c_str();
@@ -202,9 +205,18 @@ private:
                                 R"("record_bytes": {}}})",
                                 slot_name, format.channels, format.rate, format.record_bytes);
             } else {
-                description +=
-                    std::format(R"({{"name": "{}", "kind": "events", "record_bytes": {}}})",
-                                slot_name, format.record_bytes);
+                description += std::format(
+                    R"({{"name": "{}", "kind": "events", "record_bytes": {}, "fields": [)",
+                    slot_name, format.record_bytes);
+                const char* separator = "";
+                for (const EventField& field : format.fields) {
+                    description += std::format(
+                        R"({}{{"name": "{}", "type": "{}", "offset": {}, "bytes": {}, "count": {}}})",
+                        separator, field.name, field_type_name(field.type), field.offset,
+                        field.bytes, field.count);
+                    separator = ", ";
+                }
+                description += "]}";
             }
         }
         description += "]}\n";
@@ -240,13 +252,13 @@ private:
         finish_record(slot_index);
     }
 
-    template <StreamEvent EventType, int Capacity>
+    template <std::derived_from<Event> EventType, int Capacity>
     void stage(std::size_t slot_index, const EventInputBuffer<EventType, Capacity>& input) {
         if (input.is_empty()) {
             return;
         }
         for (const EventType& event : input) {
-            std::memcpy(next_record(slot_index), &event.header, sizeof(SampleHeader));
+            std::memcpy(next_record(slot_index), &event, sizeof(EventType));
             finish_record(slot_index);
         }
         write_chunk_or_fail(slot_index);

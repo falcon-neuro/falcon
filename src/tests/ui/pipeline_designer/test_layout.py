@@ -5,12 +5,12 @@ from designer_driver import Designer
 
 def test_chain_stands_in_one_column():
     with Designer() as designer:
-        generator = designer.add_processor("EventGenerator", core=0)
+        detector = designer.add_processor("SpikeDetector", core=0)
         trigger = designer.add_processor("Trigger", core=0)
         logger = designer.add_processor("EventLogger", core=0)
-        designer.connect((generator, "output"), (trigger, "input"))
+        designer.connect((detector, "output"), (trigger, "input"))
         designer.connect((trigger, "output"), (logger, "input"))
-        assert designer.rows(0) == [[(generator, 0)], [(trigger, 0)], [(logger, 0)]]
+        assert designer.rows(0) == [[(detector, 0)], [(trigger, 0)], [(logger, 0)]]
 
 
 def test_block_of_a_reader_is_drawn_under_the_one_it_reads():
@@ -26,13 +26,13 @@ def test_block_of_a_reader_is_drawn_under_the_one_it_reads():
 
 def test_readers_of_one_output_stand_side_by_side_under_it():
     with Designer() as designer:
-        generator = designer.add_processor("EventGenerator", core=0)
+        detector = designer.add_processor("SpikeDetector", core=0)
         trigger = designer.add_processor("Trigger", core=0)
         logger = designer.add_processor("EventLogger", core=0)
-        designer.connect((generator, "output"), (logger, "input"))
-        designer.connect((generator, "output"), (trigger, "input"))
+        designer.connect((detector, "output"), (logger, "input"))
+        designer.connect((detector, "output"), (trigger, "input"))
         # In the order of the core's list, and the one they read is centred over them.
-        assert designer.rows(0) == [[(generator, 0.5)], [(trigger, 0), (logger, 1)]]
+        assert designer.rows(0) == [[(detector, 0.5)], [(trigger, 0), (logger, 1)]]
 
 
 def test_reader_of_two_stands_in_the_middle_under_both():
@@ -68,8 +68,8 @@ def test_unconnected_processor_stands_in_the_top_row_beside_the_chains():
 
 def test_processors_that_feed_each_other_stand_in_the_top_row():
     with Designer() as designer:
-        first = designer.add_processor("Trigger", core=0)
-        second = designer.add_processor("Trigger", core=0)
+        first = designer.add_processor("IirFilter", core=0)
+        second = designer.add_processor("IirFilter", core=0)
         designer.connect((first, "output"), (second, "input"))
         designer.connect((second, "output"), (first, "input"))
         assert designer.rows(0) == [[(first, 0), (second, 1)]]
@@ -87,12 +87,12 @@ def test_connection_of_a_state_value_places_nothing():
 
 def test_reader_of_another_core_stands_at_the_top_of_its_own():
     with Designer() as designer:
-        generator = designer.add_processor("EventGenerator", core=0)
+        detector = designer.add_processor("SpikeDetector", core=0)
         trigger = designer.add_processor("Trigger", core=0)
-        designer.connect((generator, "output"), (trigger, "input"))
+        designer.connect((detector, "output"), (trigger, "input"))
         logger = designer.add_processor("EventLogger", core=1)
         designer.connect((trigger, "output"), (logger, "input"))
-        assert designer.rows(0) == [[(generator, 0)], [(trigger, 0)]]
+        assert designer.rows(0) == [[(detector, 0)], [(trigger, 0)]]
         assert designer.rows(1) == [[(logger, 0)]]
 
 

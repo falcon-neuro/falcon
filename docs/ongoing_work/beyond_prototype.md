@@ -257,17 +257,17 @@ The prototype puts each sample's header in its ring slot, in front of the sample
   - Adding it later without touching processors needs per-channel processors written in a per-vector form: a per-sample "do I run?" plus a per-vector `process()` that returns its output instead of writing it.
 
 ### Inlining every `process()`
-In the prototype, clang decides which `process()` calls to inline (see **Processors** in engine.md). A call it doesn't inline runs on every pass, even when its input is empty, and since the buffer's address goes into the call, the buffer's count lives on the stack instead of in a register (see **pipeline.cpp** in engine.md).
+In the prototype, the compiler decides which `process()` calls to inline (see **Processors** in engine.md). What follows was measured with clang, the compiler until 18 November 2026 (see **The compiler is GCC** under **Boundaries** in engine.md), and is not yet looked at in GCC's machine code. A call it doesn't inline runs on every pass, even when its input is empty, and since the buffer's address goes into the call, the buffer's count lives on the stack instead of in a register (see **pipeline.cpp** in engine.md).
 - Measured on the monotonous event pipeline, with a test event logger whose `process()` printed with `std::println`: clang didn't inline it, because `std::println` made it too big, so that core's loop was not one fused unit and the call saved and restored six registers on every pass. A small processor was inlined: with a test processor between the generator and the logger that adds a constant to each event, the buffer between the generator and that processor disappeared from the machine code entirely, with no stack slot and no register.
 - Harmless on that non-realtime core, but any realtime processor too big to inline does the same.
 - Measured on a realtime core too: in the FIR chain latency pipeline (128 channels), clang called each of the 7 FirFilters' `process()` out of line, with its `Connections` struct on the stack, and inside it reloaded both buffers' sample pointers for every channel vector, since it couldn't rule out that its own stores change them.
-- Open: should `pipeline.cpp` force every `process()` call inline (clang's `[[clang::always_inline]]` on the call statement, which processors never see), or keep leaving it to clang and check the disassembly?
+- Open: should `pipeline.cpp` force every `process()` call inline, or keep leaving it to the compiler and check the disassembly? With clang it would have been `[[clang::always_inline]]` on the call statement, which processors never see; what GCC offers for it is to find.
 
 ### Arithmetic across processors
-Once a core's `process()` calls are inlined into one loop (see **Inlining every `process()`**), clang optimises across processors: it removes buffers between them (measured) and folds integer arithmetic (`3 × (2x + 5)` becomes `6x + 15`).
+Once a core's `process()` calls are inlined into one loop (see **Inlining every `process()`**), the compiler optimises across processors: it removes buffers between them (measured with clang) and folds integer arithmetic (`3 × (2x + 5)` becomes `6x + 15`).
 - It doesn't do that for float32 samples by default, since IEEE floating-point arithmetic isn't associative: `3 × (2x + 5)` and `6x + 15` round differently. Flags such as `-ffast-math` or `-fassociative-math` allow it, but then results differ from a reference script that computes in the written order (see **How we judge that the engine works** in test_suite.md) and from one build to the next. Rejected, even for processors that opt in: accuracy comes first (see **Priorities** in engine.md).
-- Related: clang contracts `a * b + c` within one expression into a fused multiply-add by default (`-ffp-contract=on`), which rounds once instead of twice: slightly more accurate, but different from a reference that rounds twice. It applies to plain arithmetic, not to SIMD intrinsics, which processors mostly use (IirFilter uses fused multiply-adds on purpose). Kept as clang's default; `-ffp-contract=off`, so that only an explicit fused multiply-add fuses, was not taken.
-- Each processor loops over its channel vectors on its own, and clang doesn't fuse two such loops by default; keeping a vector in registers from one processor to the next is **Vector chains**.
+- Related: clang contracts `a * b + c` within one expression into a fused multiply-add by default (`-ffp-contract=on`), which rounds once instead of twice: slightly more accurate, but different from a reference that rounds twice. It applies to plain arithmetic, not to SIMD intrinsics, which processors mostly use (IirFilter uses fused multiply-adds on purpose). Kept, and since 18 November 2026 passed to the compiler as a flag (decided by the user): GCC's own default, `-ffp-contract=fast`, also fuses across expressions, and without the flag it did so, since the flag changed the instructions of nearly every pipeline. `-ffp-contract=off`, so that only an explicit fused multiply-add fuses, was not taken.
+- Each processor loops over its channel vectors on its own, and the compiler doesn't fuse two such loops by default; keeping a vector in registers from one processor to the next is **Vector chains**.
 - An exact alternative is fusion by the generator: it could merge consecutive linear processors (e.g. two gains, or a gain into an IirFilter's gain) into one before compiling, as long as the merged form gives the same results within the tolerance agreed for that processor.
 
 ### False sharing
@@ -284,7 +284,7 @@ Not a goal: a replay should give about the same triggers as the live run (99% ma
 
 ### Log ring
 The engine's own ring for `warn()` and `log()` is in engine.md (**In the loop** under **Logging**). The libraries considered instead:
-- The realistic library is Quill: one queue per thread, a polling backend thread, TSC timestamps, a bounded queue that drops and counts, ready file and console output. Against it: its default queue grows by allocating, so it must be configured bounded and preallocated per thread; its macros expand at every call site, which may keep clang from inlining `process()` (see **Inlining every `process()`**; to measure); it formats through a formatter per type, not C++26 reflection; and it is a large dependency with a thread of its own, whose queues and drop counts are separate from the engine's rings.
+- The realistic library is Quill: one queue per thread, a polling backend thread, TSC timestamps, a bounded queue that drops and counts, ready file and console output. Against it: its default queue grows by allocating, so it must be configured bounded and preallocated per thread; its macros expand at every call site, which may keep the compiler from inlining `process()` (see **Inlining every `process()`**; to measure); it formats through a formatter per type, not C++26 reflection; and it is a large dependency with a thread of its own, whose queues and drop counts are separate from the engine's rings.
 - spdlog's asynchronous mode doesn't fit: it wakes its thread through a condition variable, a system call.
 
 ### A cap per kind of message
@@ -329,8 +329,11 @@ Tracked in test_suite.md (**Latency tests for the paper** under **Latency measur
 
 ## Hardening
 Ways to catch bugs that the current build setup (`CMakeLists.txt`, `.clang-tidy`) misses. Deferred: no time during the prototype.
+- **The C++ library's run-time checks came on with GCC** (18 November 2026, see **The compiler is GCC** under **Boundaries** in engine.md), not by a decision. `CMakeLists.txt` defines `_GLIBCXX_ASSERTIONS`, which GCC's library obeys and clang's ignored, so until then no build checked anything. Every build now checks, in the loop too, an index into a `std::array`, `std::vector` or `std::span` and the use of an empty `std::optional`, among others (tried on an array and on an optional: each ends the program with the library's message). So an optional connection used without its check is caught at run time (see **Required and optional connections** in engine.md). Open:
+  - Whether the realtime build keeps them, since every check costs time in the loop: a compare and a branch never taken, which the compiler removes where it can prove the index valid. The latency measured with GCC includes them (see **The FIR chain's latency** in test_suite.md). To measure before deciding: one pipeline built both ways, compared by its assembly and by LatencyBenchmark.
+  - What a failed check does. It ends the program on the spot, and the library's handler can't throw, so the check can't become an exception: no destructor runs and no output is set safe, unlike a failure of Falcon's own (see **An error is an exception** in engine.md).
 - **Settings that look like protection but do nothing** (cheap to fix):
-  - `CMakeLists.txt` defines `_GLIBCXX_ASSERTIONS`, which only affects GCC's standard library (libstdc++), and `LIBCXX_ENABLE_HARDENING`, which libc++ doesn't know. Falcon builds with libc++ (`-stdlib=libc++`), whose switch is `_LIBCPP_HARDENING_MODE`. So no build checks `std::array` or `std::vector` indexes.
+  - `CMakeLists.txt` also defines `LIBCXX_ENABLE_HARDENING`, which no library knows.
   - `.clang-tidy` sets options for `misc-assert-side-effect`, but `misc-*` is not in its `Checks`, so the check never runs.
 - **More clang-tidy check families:**
   - `clang-analyzer-*` (the Clang Static Analyzer) follows code paths and finds null dereferences, use-after-free, leaks and reads of uninitialised values. It finds the most real bugs of all of these, but is slow.
@@ -338,10 +341,6 @@ Ways to catch bugs that the current build setup (`CMakeLists.txt`, `.clang-tidy`
   - `misc-*`: const-correctness (`const` wherever possible) and assert side effects.
   - `concurrency-*`: C library functions that aren't thread-safe, which matters with one thread per core.
 - **Sanitizer builds**: see the open questions of test_suite.md.
-- **libc++ bounds checks**, once the macro is fixed: `_LIBCPP_HARDENING_MODE_DEBUG` in Debug builds. Open: whether Release keeps any (e.g. `_LIBCPP_HARDENING_MODE_FAST`), since every check costs time in the loop.
-  - The fast mode checks what takes constant time, among it an index into an array, vector or span and the use of an empty optional, so it would catch an optional connection used without its check (see **Required and optional connections** in engine.md). Each check is a compare and a branch never taken, which the compiler removes where it can prove the index valid. To measure before deciding: one pipeline built both ways, compared by its assembly and by LatencyBenchmark.
-  - Open with any mode: what a failed check does. It ends the program on the spot, and the library's handler can't throw, so the check can't become an exception: no destructor runs and no output is set safe, unlike a failure of Falcon's own (see **An error is an exception** in engine.md).
-
 ## Documentation
 Tracked in website.md (**Documentation from the code**), with every other task on the website.
 

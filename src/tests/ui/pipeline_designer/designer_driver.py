@@ -291,6 +291,9 @@ class Designer:
         return new_names.pop()
 
     def connect(self, output, input_port):
-        """Clicks an output and then an input, each a (processor, port name)."""
+        """Clicks an output and then an input, each a (processor, port name), and fails when that
+        didn't connect them: a test's graph must not lack a connection the test counts on."""
         self.click(port(output[0], "output", output[1]))
         self.click(port(input_port[0], "input", input_port[1]))
+        made = (f"{output[0]}.{output[1]}", f"{input_port[0]}.{input_port[1]}")
+        assert made in self.connections(), f"{made[0]} wasn't connected to {made[1]}"

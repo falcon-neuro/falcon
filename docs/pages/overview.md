@@ -4,7 +4,7 @@ description: "What Falcon is: open-source software that reads neural signals dur
 
 # Overview
 
-Falcon is open-source software for closed-loop neuroscience experiments. It reads neural signals from an acquisition system during recording and passes them through a graph of processors, such as filters and detectors. When the graph detects a pattern of interest, Falcon triggers an output, for example a TTL pulse to a stimulator. The user builds the graph for an experiment from these processors.
+Falcon is open-source software for closed-loop neuroscience experiments. It reads neural signals from an acquisition system during recording and passes them through a graph of processors, such as filters and detectors. The user builds the graph for each experiment. When the graph detects a pattern of interest, Falcon triggers an output, for example a TTL pulse to a stimulator.
 
 Falcon is designed for recordings with hundreds of channels sampled at 30 kHz. It processes them sample by sample on a standard CPU.
 
@@ -22,7 +22,7 @@ Falcon runs on Linux and is released under the GNU General Public License v3. Th
 | [Rings](data_flow/rings.md) | How a connection's data gets from one core to another. |
 | [Glossary](glossary.md) | Definitions of the terms used in this documentation. |
 
-Still to come: the pages of the other processors, how Falcon works, the system requirements, installation, a first experiment, example experiments and writing a processor of your own.
+Still to come: the pages of the processors that read acquisition hardware, how Falcon works, the system requirements, installation, a first experiment, example experiments and writing a processor of your own.
 
 ## Origins
 

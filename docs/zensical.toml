@@ -15,8 +15,18 @@ nav = [
     "overview.md",
     { "Processors" = [
       "processor_reference.md",
+      "processors/event_generator.md",
+      "processors/event_logger.md",
+      "processors/fir_filter.md",
       "processors/iir_filter.md",
+      "processors/latency_benchmark.md",
+      "processors/level_crossing_detector.md",
+      "processors/pcie_parallel_output.md",
+      "processors/recorder.md",
+      "processors/ripple_detector.md",
+      "processors/signal_generator.md",
       "processors/spike_detector.md",
+      "processors/trigger.md",
     ] },
     { "Data flow" = [
       "data_flow/streams.md",
@@ -25,7 +35,7 @@ nav = [
     ] },
     "glossary.md",
   ] },
-  { "API" = "api/index.html" },
+  { "Falcon C++ API" = "api/index.html" },
 ]
 
 [project.extra]
@@ -60,6 +70,11 @@ features = [
 logo = "falcon/logo"
 
 [[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
 toggle.icon = "lucide/sun"
@@ -69,7 +84,7 @@ toggle.name = "Switch to dark mode"
 media = "(prefers-color-scheme: dark)"
 scheme = "slate"
 toggle.icon = "lucide/moon"
-toggle.name = "Switch to light mode"
+toggle.name = "Switch to system preference"
 
 [project.markdown_extensions]
 abbr = {}

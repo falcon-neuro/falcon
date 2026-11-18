@@ -7,7 +7,8 @@
 // SpikeDetector: on each sample where channels cross the threshold, emits one Spikes event with
 // those channels, without waiting for the peak. The threshold's sign gives the direction.
 
-// One event per sample: the mask of the channels that crossed the threshold on it.
+/// The channels that spiked on one sample. One event for each sample on which at least one channel
+/// crossed the spike threshold, naming every channel that did.
 template <typename StreamInfoType>
 struct Spikes : Event {
     SampleHeader header{};

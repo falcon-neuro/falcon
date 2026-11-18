@@ -3,7 +3,9 @@
 
 Reads each processor's definition from clang's syntax tree of its file and writes them all as C++
 data (see processor_list.cpp). It parses no C++ itself. It refuses a processor whose description,
-options, connections or checks lack the text a user is shown. The build runs it (CMakeLists.txt):
+options, connections or checks lack the text a user is shown. It also lists the kinds of event those
+files define, each a struct derived from Event, and has clang say which of them each input that
+takes events takes. The build runs it (CMakeLists.txt):
 
     list_processors.py --clang clang++ --source-root src --output all_processors.cpp FILE... -- CLANG_FLAG...
 """
@@ -26,6 +28,11 @@ PORT_TYPES = {
     "InputSlots<": ("Input", "Any", True),
     "OutputSlots<": ("Output", "Any", True),
 }
+
+
+# The stream that stands in wherever a question to clang needs one: no graph exists when Falcon is
+# built, and whether an input takes a kind of event is the same for any stream.
+MADE_UP_STREAM = "StreamInfo<16, 30000.0, float>"
 
 
 def fail(message):
@@ -103,6 +110,35 @@ def parameter_text(source, parameter):
     begin = offset_of(parameter["range"]["begin"])
     qualifier = re.search(rb"((?:[A-Za-z_]\w*::)+)$", source[:begin] if begin is not None else b"")
     return (qualifier.group(1).decode("utf-8") if qualifier else "") + text
+
+
+def template_arguments(written_type):
+    """What stands between a type's outermost angle brackets, argument by argument, as written."""
+    arguments, depth, current = [], 0, ""
+    for character in written_type[written_type.index("<") + 1:written_type.rindex(">")]:
+        if character == "," and depth == 0:
+            arguments.append(current.strip())
+            current = ""
+            continue
+        depth += (character in "<({[") - (character in ">)}]")
+        current += character
+    return arguments + [current.strip()]
+
+
+def constraint_of(parameter_as_written):
+    """A template type parameter's constraint as written, e.g. `StreamEvent` of `StreamEvent
+    EventType`; None for a plain `typename`, which takes any type."""
+    match = re.fullmatch(r"(.+?)\s*(?:\.\.\.)?\s*[A-Za-z_]\w*", parameter_as_written.split("=")[0].strip())
+    constraint = match.group(1).strip() if match else "typename"
+    return None if constraint in ("typename", "class") else constraint
+
+
+def with_first_argument(constraint, argument):
+    """The question a constraint asks of a type: `C<A>` written before a parameter means `C<T, A>`."""
+    if "<" not in constraint:
+        return "%s<%s>" % (constraint, argument)
+    name, rest = constraint.split("<", 1)
+    return "%s<%s, %s" % (name, argument, rest)
 
 
 def line_of(source, node):
@@ -199,13 +235,17 @@ def read_port(source, field, where, problems):
     if not description:
         problems.append("%s: the connection `%s` has no doc comment (///) saying what it expects or gives" % (where, field["name"]))
     direction, port_kind, has_slots = kind
+    # What the connection carries, as written: an event type, a template parameter that stands for
+    # one, or the parameter that stands for the kinds of a port with slots.
+    carried = template_arguments(inner_type)[0].removesuffix("...").strip() if port_kind in ("Events", "Any") else ""
     return {"name": field["name"], "direction": direction, "kind": port_kind, "is_optional": is_optional,
             "has_slots": has_slots, "type": written_type, "description": description,
-            "stream": stream_of_port(field["name"], direction, port_kind, inner_type, where, problems)}
+            "stream": stream_of_port(field["name"], direction, port_kind, inner_type, where, problems),
+            "carried": carried, "where": where, "event_kind": "", "takes_event_kinds": []}
 
 
 def read_file(clang, clang_flags, source_root, path):
-    """The processors one file defines, and what is wrong with them."""
+    """The processors and the kinds of event one file defines, and what is wrong with them."""
     source = path.read_bytes()
     shown_path = path.resolve().relative_to(source_root.resolve()).as_posix()
     records, templates = {}, {}
@@ -226,7 +266,20 @@ def read_file(clang, clang_flags, source_root, path):
         for tree in syntax_trees(clang, clang_flags, path, name):
             gather(tree, None)
 
-    processors, problems, choices_cache = [], [], {}
+    processors, events, problems, choices_cache = [], [], [], {}
+    for name, record in sorted(records.items()):
+        if not any(base.get("type", {}).get("qualType") == "Event" for base in record.get("bases", [])):
+            continue
+        where = "%s:%d" % (path, line_of(source, record))
+        template = templates.get(name)
+        template_parameters = [child for child in children(template or {}) if child.get("kind", "").endswith("ParmDecl")]
+        if template is not None and [parameter.get("kind") for parameter in template_parameters] != ["TemplateTypeParmDecl"]:
+            problems.append("%s: the event type `%s` may have one template parameter, its stream, and no other" % (where, name))
+        description = (doc_comment(template) if template is not None else "") or doc_comment(record)
+        if not description:
+            problems.append("%s: the event type `%s` has no doc comment (///) saying what such an event means" % (where, name))
+        events.append({"name": name, "path": path, "description": description, "has_stream": template is not None, "where": where})
+
     for name, record in sorted(records.items()):
         connections = [child for child in children(record)
                        if child.get("kind") == "CXXRecordDecl" and child.get("name") == "Connections" and child.get("completeDefinition")]
@@ -269,18 +322,96 @@ def read_file(clang, clang_flags, source_root, path):
             if port is not None and port["stream"] == "Output" and OUTPUT_STREAM not in parameter_names:
                 problems.append("%s: the connection `%s` carries %s, which isn't a template parameter of `%s`" % (
                     where, port["name"], OUTPUT_STREAM, name))
-        processors.append({"name": name, "file": shown_path, "description": description,
+        processors.append({"name": name, "file": shown_path, "path": path, "description": description,
                            "parameters": [parameter_text(source, parameter) for parameter in parameters],
+                           "constraints": {parameter.get("name"): constraint_of(parameter_text(source, parameter))
+                                           for parameter in parameters if parameter.get("kind") == "TemplateTypeParmDecl"},
                            "options": options, "ports": [port for port in ports if port is not None],
                            "starts_stream": OUTPUT_STREAM in parameter_names})
-    return path, processors, problems
+    return path, processors, events, problems
+
+
+def find_event_kinds_of_ports(clang, clang_flags, output, processors, events, problems):
+    """Gives every event output its kind, and every input that takes events the kinds it takes.
+    What an input takes is the constraint on the template parameter its type names, so clang is
+    asked that constraint about each kind, all in one file: a static_assert per input and kind,
+    of which those that fail are the kinds the input doesn't take."""
+    event_names = [event["name"] for event in events]
+    for name in sorted(set(event_names)):
+        if event_names.count(name) > 1:
+            problems.append("the event type `%s` is defined more than once: %s" % (
+                name, ", ".join(event["where"] for event in events if event["name"] == name)))
+    type_of_kind = {event["name"]: event["name"] + ("<MadeUpStream>" if event["has_stream"] else "") for event in events}
+
+    questions, files = [], {event["path"] for event in events}
+    for processor in processors:
+        for port in processor["ports"]:
+            if port["kind"] not in ("Events", "Any"):
+                continue
+            carried = port["carried"]
+            if port["direction"] == "Output":
+                written_kind = re.sub(r"<.*", "", carried)
+                if written_kind in type_of_kind:
+                    port["event_kind"] = written_kind
+                elif port["kind"] == "Events" and carried not in processor["constraints"]:
+                    problems.append("%s: the connection `%s` gives `%s`, which is no event type of a processor's file" % (
+                        port["where"], port["name"], carried))
+                continue
+            # A port with slots is asked about the buffer of events one of its slots would take.
+            asked_type = "EventBuffer<%s, 1>" if port["kind"] == "Any" else "%s"
+            if carried in processor["constraints"]:
+                constraint = processor["constraints"][carried]
+                if constraint is None:
+                    port["takes_event_kinds"] = sorted(type_of_kind)
+                    continue
+                question = with_first_argument(constraint, asked_type)
+            else:
+                question = "std::same_as<%s, %s>" % (asked_type, carried)
+            files.add(processor["path"])
+            for kind in sorted(type_of_kind):
+                questions.append((port, kind, question % type_of_kind[kind]))
+    if problems or not questions:
+        return
+
+    lines = ["// Written by src/ui/pipeline_designer/list_processors.py when Falcon is built: each static_assert",
+             "// asks whether one input takes one kind of event, and clang's answers go into all_processors.cpp.",
+             "#include <concepts>"]
+    lines += ['#include "%s"' % path.resolve().as_posix() for path in sorted(files)]
+    lines += ["", "namespace event_kind_questions {", "",
+              "using MadeUpStream = %s;" % MADE_UP_STREAM,
+              "// A constraint may name its processor's stream, which it does by these two names.",
+              "using %s = MadeUpStream;" % INPUT_STREAM, "using %s = MadeUpStream;" % OUTPUT_STREAM, ""]
+    lines += ['static_assert(%s, "QUESTION %d");' % (question, index) for index, (_, _, question) in enumerate(questions)]
+    lines += ["", "}  // namespace event_kind_questions", ""]
+    questions_file = output.parent / "event_kind_questions.cpp"
+    questions_file.parent.mkdir(parents=True, exist_ok=True)
+    questions_file.write_text("\n".join(lines), encoding="utf-8")
+
+    command = [clang, *clang_flags, "-fsyntax-only", "-ferror-limit=0", "-Wno-pragma-once-outside-header", str(questions_file)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    refused, other_errors = set(), []
+    for line in result.stderr.splitlines():
+        if " error: " not in line:
+            continue
+        answer = re.search(r"static assertion failed.*QUESTION (\d+)", line)
+        if answer:
+            refused.add(int(answer.group(1)))
+        else:
+            other_errors.append(line)
+    if other_errors:
+        # An input whose constraint this script can't ask, e.g. one that names another template
+        # parameter than the stream's, shows here.
+        fail("clang couldn't say which kinds of event each input takes (%s):\n  %s" % (questions_file, "\n  ".join(other_errors[:20])))
+    for index, (port, kind, _) in enumerate(questions):
+        if index not in refused:
+            port["takes_event_kinds"].append(kind)
 
 
 def literal(text):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
 
 
-def write_output(output, processors):
+def write_output(output, processors, events):
     lines = ["// Written by src/ui/pipeline_designer/list_processors.py from the processors' source when Falcon is",
              "// built.",
              "// Not to be edited: change the processor, and build again.",
@@ -309,6 +440,12 @@ def write_output(output, processors):
             lines.append("                      .choices = %s}," % (
                 "%s_%s_choices" % (name, option["name"]) if option["choices"] else "{}"))
         lines.append("}};")
+        for port in processor["ports"]:
+            if port["takes_event_kinds"]:
+                lines.append("inline constexpr std::array<const char*, %d> %s_%s_takes_event_kinds{{" % (
+                    len(port["takes_event_kinds"]), name, port["name"]))
+                lines += ["    %s," % literal(kind) for kind in port["takes_event_kinds"]]
+                lines.append("}};")
         lines.append("inline constexpr std::array<PortDescription, %d> %s_ports{{" % (len(processor["ports"]), name))
         for port in processor["ports"]:
             lines.append("    PortDescription{.name = %s, .direction = PortDirection::%s, .kind = PortKind::%s," % (
@@ -316,10 +453,16 @@ def write_output(output, processors):
             lines.append("                    .is_optional = %s, .has_slots = %s, .type = %s," % (
                 "true" if port["is_optional"] else "false", "true" if port["has_slots"] else "false", literal(port["type"])))
             lines.append("                    .description = %s," % literal(port["description"]))
-            lines.append("                    .stream = PortStream::%s}," % port["stream"])
+            lines.append("                    .stream = PortStream::%s, .event_kind = %s," % (port["stream"], literal(port["event_kind"])))
+            lines.append("                    .takes_event_kinds = %s}," % (
+                "%s_%s_takes_event_kinds" % (name, port["name"]) if port["takes_event_kinds"] else "{}"))
         lines.append("}};")
         lines.append("")
     lines += ["}  // namespace all_processors_detail", "",
+              "inline constexpr std::array<EventKindDescription, %d> ALL_EVENT_KINDS{{" % len(events)]
+    lines += ["    EventKindDescription{.name = %s, .description = %s}," % (literal(event["name"]), literal(event["description"]))
+              for event in events]
+    lines += ["}};", "",
               "inline constexpr std::array<ProcessorDescription, %d> ALL_PROCESSORS{{" % len(processors)]
     for processor in processors:
         name = processor["name"]
@@ -338,17 +481,20 @@ def main():
     clang, source_root, output, files, clang_flags = arguments()
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(lambda path: read_file(clang, clang_flags, source_root, path), sorted(files)))
-    processors, problems = [], []
-    for path, found, file_problems in results:
+    processors, events, problems = [], [], []
+    for path, found, found_events, file_problems in results:
         if not found:
             print("list_processors.py: %s defines no processor (nothing with a Connections struct), so it is left out" % path)
         processors += found
+        events += found_events
         problems += file_problems
+    processors.sort(key=lambda processor: processor["name"].lower())
+    events.sort(key=lambda event: event["name"].lower())
+    find_event_kinds_of_ports(clang, clang_flags, output, processors, events, problems)
     if problems:
         fail("these must be put right before Falcon builds:\n  " + "\n  ".join(problems))
-    processors.sort(key=lambda processor: processor["name"].lower())
-    write_output(output, processors)
-    print("list_processors.py: %d processors listed in %s" % (len(processors), output))
+    write_output(output, processors, events)
+    print("list_processors.py: %d processors and %d kinds of event listed in %s" % (len(processors), len(events), output))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,8 @@
 // Blocks are per channel, so channels that cross a sample apart are all detected. The direction is
 // its own option, since a signal may cross a positive level downward.
 
-// One event per sample: the mask of the channels that crossed the level on it.
+/// The channels that crossed a level on one sample. One event for each sample on which at least
+/// one channel did, naming every channel that did.
 template <typename StreamInfoType>
 struct LevelCrossings : Event {
     SampleHeader header{};

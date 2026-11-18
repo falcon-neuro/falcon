@@ -70,16 +70,16 @@ def test_chain_dropped_beside_itself_stays_where_it_is():
 
 def test_remove_icon_removes_the_processor_and_its_connections():
     with Designer() as designer:
-        generator = designer.add_processor("EventGenerator", core=0)
+        detector = designer.add_processor("SpikeDetector", core=0)
         trigger = designer.add_processor("Trigger", core=0)
         logger = designer.add_processor("EventLogger", core=0)
-        designer.connect((generator, "output"), (trigger, "input"))
+        designer.connect((detector, "output"), (trigger, "input"))
         designer.connect((trigger, "output"), (logger, "input"))
 
         designer.click(f"block/{trigger}/remove")
-        assert sorted(designer.processors()) == [generator, logger]
+        assert sorted(designer.processors()) == sorted([detector, logger])
         assert designer.connections() == []
-        assert designer.core_list(0) == [generator, logger]
+        assert designer.core_list(0) == [detector, logger]
 
 
 def test_remove_icon_cannot_be_clicked_while_a_port_is_picked():

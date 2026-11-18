@@ -2,9 +2,9 @@
 description: "Falcon's IIR filter: a cascade of second-order sections on every channel. Its input, output and options, the equations it computes and its start without a transient."
 ---
 
-# IIR filter
+# IirFilter
 
-The IIR filter applies the same recursive filter to every channel of its input, for example a band-pass in front of a spike detector. It needs fewer operations per sample than an FIR filter of the same sharpness, but its delay differs from one frequency to the next.
+{{ api("IirFilter") }} applies the same recursive filter to every channel of its input, for example a band-pass in front of a spike detector. It needs fewer operations per sample than an FIR filter of the same sharpness, but its delay differs from one frequency to the next.
 
 The filter is a cascade of second-order sections, a form in which SciPy and MATLAB can give a filter design. Falcon doesn't design the filter: its coefficients come from such a tool (see [Designing the coefficients](#designing-the-coefficients)).
 
@@ -19,9 +19,9 @@ The filter is a cascade of second-order sections, a form in which SciPy and MATL
 
 | Option | Meaning | Default |
 |--------|---------|---------|
-| `design_rate` | The rate, in Hz, that the coefficients were designed for. It must equal the input's rate. | None: it must be set. |
+| `design_rate` | The rate, in Hz, that the coefficients were designed for. It must equal the input's rate: at another rate every cutoff frequency would shift. | Required. |
 | `gain` | One factor for the whole cascade. | 1 |
-| `sections` | The second-order sections, in the order the input passes through them. Each has five coefficients: `b0`, `b1`, `b2`, `a1` and `a2`. | None: at least one section. |
+| `sections` | The second-order sections, in the order the input passes through them. Each is a {{ api("BiquadSection") }} with five coefficients: `b0`, `b1`, `b2`, `a1` and `a2`. | Required: at least one section. |
 
 ## What it computes
 
@@ -49,7 +49,7 @@ $$
 
 This arrangement is known as Transposed Direct Form II. The output of one section is the input of the next. The gain adds no operation per sample: it is multiplied into the first section's $b$ coefficients before the filter runs.
 
-Every channel uses the same coefficients and keeps its own $s_1$ and $s_2$. The channel values arrive and leave as 32-bit numbers. The filter computes with 64-bit numbers, because a section feeds its own rounded results back into itself and 64-bit arithmetic keeps that rounding error small. The channels are computed eight at a time, or four at a time on a CPU without AVX-512.
+Every channel uses the same coefficients and keeps its own $s_1$ and $s_2$. The channel values arrive and leave as 32-bit numbers. The filter computes with 64-bit numbers, because a section feeds its own rounded results back into itself and 64-bit arithmetic keeps that rounding error small.
 
 ## Starting without a transient
 
@@ -73,18 +73,11 @@ Each section's output therefore starts at its settled value $y_0$, which is also
 
 Every sample's header says how many samples were lost before it. When that count rises, the input has a gap whose two sides don't join. Filtering across the gap would give a swing of the same kind as a start from zero.
 
-The filter therefore starts again, as described above, on the first sample after a gap. It also writes a warning to the log, such as "restarted after 12 lost samples, at sample 4500000". The warning gives the number of samples lost and the number of the sample at which the filter started again.
+The filter therefore starts again, as described above, on the first sample after a gap. It also writes a warning to the log, such as "restarted after 12 lost samples, at sample 4500000".
 
-## What Falcon checks
+## Stability
 
-!!! warning
-    Falcon refuses a graph, before it runs, when its IIR filter:
-
-    - has no section;
-    - was designed for another rate than its input's, since every cutoff frequency would then shift;
-    - has an unstable section.
-
-A section is stable when both of its poles lie inside the unit circle, which holds if and only if
+Every section must be stable. A section is stable when both of its poles lie inside the unit circle, which holds if and only if
 
 $$
 -1 < a_2 < 1 \quad \text{and} \quad -(1 + a_2) < a_1 < 1 + a_2
@@ -96,7 +89,7 @@ The output of an unstable filter grows without bound. A mistyped $a_1$ or $a_2$ 
 
 The filter doesn't wait for later samples: it computes sample $n$ of its output from the input's samples up to $n$.
 
-The delay it adds is the group delay of the design. The group delay differs from one frequency to the next. It grows with the number of sections and with the sharpness of the band's edges.
+The delay it adds is the group delay of the design, which grows with the number of sections and with the sharpness of the band's edges.
 
 !!! tip
     Where a detection must come early, design the filter no sharper than the experiment needs.
@@ -123,7 +116,3 @@ This band-pass, from 300 Hz to 6000 Hz for an input at 30 kHz, has two sections.
 With `design_rate` set to 30000, the filter passes 1500 Hz unchanged, lets 71% of the amplitude through at 300 Hz and at 6000 Hz and removes a constant offset.
 
 In MATLAB, `[sos, g] = zp2sos(z, p, k)` gives rows in the same layout. Its output `g` is the value for `gain`.
-
-## In the code
-
-The filter is the struct {{ api("IirFilter") }}, with its options in {{ api("IirFilterOptions") }}. One section is a {{ api("BiquadSection") }}.

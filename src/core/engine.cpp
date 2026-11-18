@@ -8,6 +8,7 @@
 // including this file is not reported as unused.
 // IWYU pragma: begin_exports
 #include "connections.cpp"
+#include "event_fields.cpp"
 #include "events.cpp"
 #include "rings.cpp"
 #include "run.cpp"

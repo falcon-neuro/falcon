@@ -10,7 +10,7 @@ description: "What Falcon's documentation means by channel, sample, stream, even
 - **Header**: a small label attached to each sample that identifies it. It holds the sample's number, the time the device took it, the time it reached Falcon and the number of samples lost before it.
 - **Stream**: the series of samples one source produces, one after another, e.g. everything one acquisition device sends. All samples of a stream have the same channels and come at the same rate.
 - **Rate**: how many samples a stream has per second, e.g. 30 kHz. The time between two samples is the sample period.
-- **Event**: something that happened at one moment, written down as a struct of its kind (its event type), e.g. "on sample 12,345, channels 17 and 40 crossed the spike threshold", or "the trigger fired". One event can hold several spikes of the same sample. Samples come at a fixed rate whether anything happens or not; events come only when something happens, so most samples bring none.
+- **Event**: something that happened at one moment, stored as a struct of its event type, e.g. "on sample 12,345, channels 17 and 40 crossed the spike threshold", or "the trigger fired". One event can hold several spikes of the same sample. Samples come at a fixed rate whether anything happens or not; events come only when something happens, so most samples bring none.
 - **State value**: a single value that describes an ongoing condition and stays as it is until its producer changes it, e.g. whether a ripple is ongoing. Unlike samples and events, it doesn't mean "something new just arrived".
 - **Processor**: one step of a graph that does one job, e.g. reading data from the acquisition hardware, filtering it, detecting spikes, deciding to stimulate, or sending the stimulation pulse.
 - **Connection**: a link from one processor's output to another processor's input, drawn as a line in the graph editor. It carries one kind of data: samples, events or a state value.
@@ -25,7 +25,7 @@ description: "What Falcon's documentation means by channel, sample, stream, even
 - **Pass**: one turn of a core's loop, in which each processor on that core runs once.
 - **Chain**: processors connected one after another on the same core, so a sample goes through all of them within one pass, without a hop.
 - **SIMD** (single instruction, multiple data): one CPU instruction that does the same operation on several values at once, e.g. compares 16 numbers with a threshold in one step.
-- **Channel vector**: a group of adjacent channels of one sample (16, or 8 on older CPUs) that the CPU processes with one SIMD instruction.
+- **Channel vector**: a group of adjacent channels of one sample (16 with AVX-512, 8 with AVX2) that the CPU processes with one SIMD instruction.
 - **Lane**: one channel's place in a channel vector.
 - **Mask**: a row of bits, one per channel, each saying yes or no for its channel, e.g. which channels crossed a threshold on this sample.
 - **Hot path**: the work done for every sample, from the input to the decision to stimulate. Time spent there adds to the latency.

@@ -14,6 +14,8 @@ HeaderFilterRegex: '(^|.*/)src/.*'
 # Not ExtraArgs: it lands after the "--" in borrowed compile commands, where it reads as a file name.
 ExtraArgsBefore:
   - '-Wno-pragma-once-outside-header'
+  # The compile commands are GCC's, and clang has no use for their -freflection.
+  - '-Wno-unused-command-line-argument'
 CheckOptions:
   - key: readability-identifier-naming.TypedefCase
     value: CamelCase

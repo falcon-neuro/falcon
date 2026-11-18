@@ -5,13 +5,17 @@
 """Plots a file that Recorder wrote. The file describes itself: its first line is JSON that names
 each connection (a slot) and says how its records are laid out. Chunks follow, each a u32 for the
 slot, a u32 for the number of records, then that many records of that slot. A sample's record is its
-number as a u64 and its channels' values in order as float32; an event's record is its header's
-sample number, device timestamp, arrival TSC and lost-sample count, each a u64. All little-endian.
+number as a u64 and its channels' values in order as float32. An event's record is the event as it
+was in memory, and the first line lists its fields, each with its name, type, place, size and count:
+a field of the event's header is named header.sample_number and so on. All little-endian. A file of
+version 1, where an event's record is its header alone, is read too.
 
     uv run src/tests/plot_recording.py ~/falcon/runs/<run>/ripple_detector.bin
 
 One sample slot is plotted, a panel per channel: the first one, or the one named with --samples.
-Every event slot is drawn as vertical lines, a colour per slot. With --mean-square, a last panel
+Every event slot whose events have a sample number is drawn as vertical lines, a colour per slot. An
+event with a mask of the plotted stream's channels, such as a spike, is drawn on those channels
+only. With --mean-square, a last panel
 shows the mean over the channels of their squared values, which is what RippleDetector compares
 with its threshold.
 """
@@ -24,23 +28,65 @@ import struct
 import matplotlib.pyplot as plt
 import numpy as np
 
-EVENT_TYPE = np.dtype(
+# An event of a version 1 file, under the names a version 2 file gives the same fields.
+HEADER_ONLY_EVENT_TYPE = np.dtype(
     [
-        ("sample_number", "<u8"),
-        ("device_timestamp", "<u8"),
-        ("arrival_tsc", "<u8"),
-        ("lost_sample_count", "<u8"),
+        ("header.sample_number", "<u8"),
+        ("header.device_timestamp", "<u8"),
+        ("header.arrival_tsc", "<u8"),
+        ("header.lost_sample_count", "<u8"),
     ]
 )
+NUMBER_TYPES = {
+    "bool": "?",
+    "u8": "<u1",
+    "u16": "<u2",
+    "u32": "<u4",
+    "u64": "<u8",
+    "i8": "<i1",
+    "i16": "<i2",
+    "i32": "<i4",
+    "i64": "<i8",
+    "f32": "<f4",
+    "f64": "<f8",
+}
+SAMPLE_NUMBER = "header.sample_number"
 CHUNK_HEADER = struct.Struct("<II")
 EVENT_COLOURS = ["tab:red", "tab:purple", "tab:orange", "tab:brown", "tab:pink"]
+
+
+def event_type_of(slot: dict) -> np.dtype:
+    """An event's record, from the fields its slot lists. The bytes between fields are skipped."""
+    names, formats, offsets = [], [], []
+    for field in slot["fields"]:
+        if field["type"] == "channel_mask":
+            # Kept as its 64-bit words; channels_of_mask() turns them into one bool per channel.
+            field_format = ("<u8", (field["bytes"] // 8,))
+        elif field["type"] not in NUMBER_TYPES:
+            raise SystemExit(f"slot {slot['name']} has a field of an unknown type, {field['type']}")
+        elif field["count"] == 1:
+            field_format = NUMBER_TYPES[field["type"]]
+        else:
+            field_format = (NUMBER_TYPES[field["type"]], (field["count"],))
+        names.append(field["name"])
+        formats.append(field_format)
+        offsets.append(field["offset"])
+    return np.dtype(
+        {"names": names, "formats": formats, "offsets": offsets, "itemsize": slot["record_bytes"]}
+    )
+
+
+def channels_of_mask(words: np.ndarray, channel_count: int) -> np.ndarray:
+    """One row per event, one bool per channel: bit n of word n // 64 is channel n."""
+    bits = np.unpackbits(np.ascontiguousarray(words).view(np.uint8), axis=1, bitorder="little")
+    return bits[:, :channel_count].astype(bool)
 
 
 def record_type_of(slot: dict) -> np.dtype:
     if slot["kind"] == "samples":
         record_type = np.dtype([("sample_number", "<u8"), ("values", "<f4", (slot["channels"],))])
     elif slot["kind"] == "events":
-        record_type = EVENT_TYPE
+        record_type = event_type_of(slot) if "fields" in slot else HEADER_ONLY_EVENT_TYPE
     else:
         raise SystemExit(f"slot {slot['name']} is of an unknown kind, {slot['kind']}")
     if record_type.itemsize != slot["record_bytes"]:
@@ -56,8 +102,8 @@ def read_recording(path: pathlib.Path) -> tuple[dict, dict[str, np.ndarray]]:
     with open(path, "rb") as file:
         description = json.loads(file.readline())
         data = file.read()
-    if description.get("format") != "falcon_recording" or description.get("version") != 1:
-        raise SystemExit(f"{path} is not a falcon_recording file of version 1")
+    if description.get("format") != "falcon_recording" or description.get("version") not in (1, 2):
+        raise SystemExit(f"{path} is not a falcon_recording file of version 1 or 2")
 
     slots = description["slots"]
     record_types = [record_type_of(slot) for slot in slots]
@@ -146,21 +192,40 @@ def main() -> None:
     event_slots = [slot for slot in slots if slot["kind"] == "events"]
     for event_slot_index, event_slot in enumerate(event_slots):
         events = records[event_slot["name"]]
-        event_seconds = (events["sample_number"].astype(np.int64) - first_sample_number) / rate
-        shown_event_seconds = event_seconds[
-            (event_seconds >= arguments.start) & (event_seconds < window_end)
+        if SAMPLE_NUMBER not in events.dtype.names:
+            print(f"{event_slot['name']}: not drawn, since its events have no sample number")
+            continue
+        event_seconds = (events[SAMPLE_NUMBER].astype(np.int64) - first_sample_number) / rate
+        is_event_shown = (event_seconds >= arguments.start) & (event_seconds < window_end)
+        shown_event_seconds = event_seconds[is_event_shown]
+        # A mask of the plotted stream's channels says on which panels each event is drawn.
+        mask_fields = [
+            field
+            for field in event_slot.get("fields", [])
+            if field["type"] == "channel_mask" and field["count"] == channel_count
         ]
+        if mask_fields:
+            is_on_channel = channels_of_mask(
+                events[mask_fields[0]["name"]][is_event_shown], channel_count
+            )
+        else:
+            is_on_channel = np.ones((shown_event_seconds.size, channel_count), dtype=bool)
         print(f"{event_slot['name']}: {shown_event_seconds.size} of its events are in the plot:")
-        for event_second in shown_event_seconds:
-            print(f"  at {event_second:.6f} s")
+        for event_second, channels_of_event in zip(shown_event_seconds, is_on_channel):
+            channel_text = (
+                f", channels {np.flatnonzero(channels_of_event).tolist()}" if mask_fields else ""
+            )
+            print(f"  at {event_second:.6f} s{channel_text}")
         colour = EVENT_COLOURS[event_slot_index % len(EVENT_COLOURS)]
-        for panel in panels:
+        for channel in range(channel_count):
+            for event_second in shown_event_seconds[is_on_channel[:, channel]]:
+                panels[channel].axvline(event_second, color=colour, linewidth=0.8)
+        for panel in panels[channel_count:]:
             for event_second in shown_event_seconds:
                 panel.axvline(event_second, color=colour, linewidth=0.8)
         if shown_event_seconds.size > 0:
-            panels[0].axvline(
-                shown_event_seconds[0], color=colour, linewidth=0.8, label=event_slot["name"]
-            )
+            # An empty line, for the legend alone: the first event may not be on the first channel.
+            panels[0].plot([], [], color=colour, linewidth=0.8, label=event_slot["name"])
     if event_slots and panels[0].get_legend_handles_labels()[0]:
         panels[0].legend(loc="upper right")
 
