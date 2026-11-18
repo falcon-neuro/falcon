@@ -95,11 +95,16 @@ target_compile_options(falcon PRIVATE
     -Wformat=2
     -Werror
     -ftrivial-auto-var-init=pattern
+    # A multiply and an add fuse into one instruction only inside one expression, whichever
+    # compiler builds Falcon. GCC's own default also fuses across expressions, which rounds
+    # differently from what a reference script computes.
+    -ffp-contract=on
     # GCC warns wherever a SIMD vector type such as __m512 is a template argument, e.g. in a
     # std::array of vectors, because it drops there the attribute that lets a pointer of that type
     # read memory of any type. Falcon passes vectors by value and reads memory through intrinsics
     # on float*, so it never relies on that attribute.
     $<$<CXX_COMPILER_ID:GNU>:-Wno-ignored-attributes>
+    $<$<CXX_COMPILER_ID:GNU>:-freflection>
     $<$<CXX_COMPILER_ID:Clang>:-stdlib=libc++>
     $<$<CONFIG:Debug>:-O0 -g>
     $<$<CONFIG:Profile>:-O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -march=native>

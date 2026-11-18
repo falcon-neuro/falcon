@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -1261,6 +1262,8 @@ private:
                 return "A processor's output can't be connected to its own input.";
             case ConnectionVerdict::DifferentKind:
                 return different_kind_message(output, input, is_input_hovered);
+            case ConnectionVerdict::EventKindNotTaken:
+                return event_kind_message(output, input, is_input_hovered);
             case ConnectionVerdict::AlreadyConnected:
                 return is_input_hovered ? "This input is already connected to the picked output."
                                         : "This output is already connected to the picked input.";
@@ -1290,12 +1293,63 @@ private:
                            port_kind_name(output_port->kind), port_kind_name(input_port->kind));
     }
 
-    // What a port's tooltip says while the port can be clicked: what it is, its description and,
-    // for a samples port, the stream it carries.
+    // Why an input doesn't take an output's events: the kinds it does take, the kind the output
+    // gives, and the input's own description, which says the rule in words.
+    [[nodiscard]] std::string event_kind_message(const OutputReference& output,
+                                                 const InputReference& input,
+                                                 bool is_input_hovered) const {
+        const PortDescription* output_port =
+            graph_.find_port(output.processor, output.port, PortDirection::Output);
+        const PortDescription* input_port =
+            graph_.find_port(input.processor, input.port, PortDirection::Input);
+        if (output_port == nullptr || input_port == nullptr) {
+            return "These two can't be connected.";
+        }
+        const std::string taken_kinds = event_kinds_text(input_port->takes_event_kinds);
+        if (is_input_hovered) {
+            return std::format("This input takes {}, and the picked output gives {} events.\n\n{}",
+                               taken_kinds, output_port->event_kind, input_port->description);
+        }
+        return std::format(
+            "This output gives {} events, and the picked input takes {}.\n\nThe picked input: {}",
+            output_port->event_kind, taken_kinds, input_port->description);
+    }
+
+    // The kinds of event an input takes, as words for a sentence: "Spikes or LevelCrossings
+    // events".
+    [[nodiscard]] static std::string event_kinds_text(std::span<const char* const> kinds) {
+        if (kinds.empty()) {
+            return "no kind of event";
+        }
+        std::string text;
+        for (std::size_t kind_index = 0; kind_index < kinds.size(); ++kind_index) {
+            if (kind_index > 0) {
+                text += kind_index + 1 == kinds.size() ? " or " : ", ";
+            }
+            text += kinds[kind_index];
+        }
+        return text + " events";
+    }
+
+    // What a port's tooltip says while the port can be clicked: what it is, its description, for
+    // a port of events the kinds it gives or takes, and for a samples port the stream it carries.
     [[nodiscard]] std::string port_explanation(const GraphProcessor& processor,
                                                const PortDescription& port) const {
         std::string explanation =
             std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
+        const std::string_view event_kind = port.event_kind;
+        if (!event_kind.empty()) {
+            const auto* const kind = std::ranges::find_if(
+                ALL_EVENT_KINDS, [event_kind](const EventKindDescription& described) {
+                    return event_kind == described.name;
+                });
+            explanation += std::format("\n\nIt gives {} events. {}", event_kind,
+                                       kind == ALL_EVENT_KINDS.end() ? "" : kind->description);
+        }
+        if (port.direction == PortDirection::Input && !port.takes_event_kinds.empty()) {
+            explanation +=
+                std::format("\n\nIt takes {}.", event_kinds_text(port.takes_event_kinds));
+        }
         if (port.stream == PortStream::None) {
             return explanation;
         }

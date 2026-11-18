@@ -113,12 +113,12 @@ def note_of(designer, name):
 
 def test_while_an_output_is_picked_only_the_inputs_it_fits_can_be_clicked():
     with Designer() as designer:
-        generator = designer.add_processor("EventGenerator", core=0)
+        crossing_detector = designer.add_processor("LevelCrossingDetector", core=0)
         trigger = designer.add_processor("Trigger", core=0)
         detector = designer.add_processor("SpikeDetector", core=0)
-        designer.click(port(generator, "output", "output"))
+        designer.click(port(crossing_detector, "output", "output"))
 
-        assert note_of(designer, port(generator, "output", "output")) == ""
+        assert note_of(designer, port(crossing_detector, "output", "output")) == ""
         assert note_of(designer, port(trigger, "input", "input")) == ""
         assert (note_of(designer, port(detector, "input", "input")) ==
                 "This input takes samples, and the picked output gives events.")
@@ -129,14 +129,14 @@ def test_while_an_output_is_picked_only_the_inputs_it_fits_can_be_clicked():
 
 def test_while_an_input_is_picked_only_the_outputs_that_fit_it_can_be_clicked():
     with Designer() as designer:
-        generator = designer.add_processor("EventGenerator", core=0)
+        spike_detector = designer.add_processor("SpikeDetector", core=0)
         signal = designer.add_processor("LevelCrossingDetector", core=0)
         logger = designer.add_processor("EventLogger", core=0)
         trigger = designer.add_processor("Trigger", core=0)
         designer.click(port(trigger, "input", "input"))
 
         assert note_of(designer, port(trigger, "input", "input")) == ""
-        assert note_of(designer, port(generator, "output", "output")) == ""
+        assert note_of(designer, port(spike_detector, "output", "output")) == ""
         assert note_of(designer, port(signal, "output", "output")) == ""
         other_input = "An input connects to an output, not to another input."
         assert note_of(designer, port(logger, "input", "input")) == other_input

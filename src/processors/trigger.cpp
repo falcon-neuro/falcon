@@ -4,7 +4,8 @@
 // Trigger: emits a TriggerEvent once every channel has had an event since its previous one. It
 // never reads a clock, so a replay gives the same triggers.
 
-// Its header is that of the sample whose event completed the set.
+/// A decision to act, e.g. to send a pulse. One event each time a trigger fires, on the sample
+/// whose event completed what the trigger was waiting for.
 struct TriggerEvent : Event {
     SampleHeader header{};
 };

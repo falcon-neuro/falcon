@@ -64,12 +64,20 @@ struct CoreListPlace {
 // Whether an output may be connected to an input, and if not, why.
 enum class ConnectionVerdict : std::uint8_t {
     Fits,
-    UnknownPort,       // one of the two isn't a port of a processor in the graph
-    SameProcessor,     // both are ports of one processor
-    DifferentKind,     // they don't carry the same kind
-    AlreadyConnected,  // these two are connected already
-    InputTaken,        // the input takes one connection and has one
+    UnknownPort,        // one of the two isn't a port of a processor in the graph
+    SameProcessor,      // both are ports of one processor
+    DifferentKind,      // they don't carry the same kind
+    EventKindNotTaken,  // the input doesn't take the kind of event the output gives
+    AlreadyConnected,   // these two are connected already
+    InputTaken,         // the input takes one connection and has one
 };
+
+// Whether an input takes events of this kind.
+[[nodiscard]] inline bool takes_event_kind(const PortDescription& input_port,
+                                           std::string_view event_kind) {
+    return std::ranges::any_of(input_port.takes_event_kinds,
+                               [event_kind](const char* taken) { return event_kind == taken; });
+}
 
 struct GraphCore {
     int number = 0;
@@ -192,8 +200,8 @@ public:
     }
 
     // Whether this output may be connected to this input, and if not, the first of the reasons in
-    // ConnectionVerdict's order that holds. It compares kinds only, not yet a stream's channels
-    // and rate or an event's type.
+    // ConnectionVerdict's order that holds. It compares kinds and, for events, the kind of event,
+    // not yet a stream's channels and rate.
     [[nodiscard]] ConnectionVerdict connection_verdict(const OutputReference& output,
                                                        const InputReference& input) const {
         const PortDescription* output_port =
@@ -211,6 +219,12 @@ public:
             (input_port->kind == PortKind::Any && output_port->kind != PortKind::State);
         if (!is_same_kind) {
             return ConnectionVerdict::DifferentKind;
+        }
+        // An output whose events are of a kind the list of processors doesn't name is not judged.
+        const std::string_view event_kind = output_port->event_kind;
+        if (output_port->kind == PortKind::Events && !event_kind.empty() &&
+            !takes_event_kind(*input_port, event_kind)) {
+            return ConnectionVerdict::EventKindNotTaken;
         }
         const bool is_already_there =
             std::ranges::any_of(connections, [&output, &input](const GraphConnection& connection) {

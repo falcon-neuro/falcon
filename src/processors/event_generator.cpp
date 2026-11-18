@@ -7,7 +7,8 @@
 // It is an input processor, so it may sleep its core's thread: each pass sleeps until the next
 // event is due, then emits it, so the core doesn't spin. A stop signal is seen only after the
 // current sleep ends, so stopping can take up to one period (1 / rate). ScheduledEvent comes from a
-// timer, not a stream, so it derives from Event directly and has no header.
+// timer, not a stream, so it has no header.
+/// A tick of a timer, numbered from 1. It comes from no signal, so it belongs to no sample.
 struct ScheduledEvent : Event {
     u32 count = 0;  // number of this event since the start, from 1
 };

@@ -8,7 +8,8 @@
 // envelope, the mean over the channels of their squared values, and emits a Ripple event when the
 // envelope rises more than threshold_multiplier mean absolute deviations above its running mean.
 
-// One event per detection, with the header of the sample whose envelope crossed the threshold.
+/// A ripple was detected. One event for each detection, on the sample at which the signal's power
+/// crossed the detector's threshold.
 struct Ripple : Event {
     SampleHeader header{};
 };
