@@ -10,7 +10,7 @@ jobs:
   build-linux:
     name: Lint, format and compile
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout code
