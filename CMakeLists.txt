@@ -5,7 +5,12 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(CMAKE_CXX_COMPILER "clang++")
+# The system's own GCC is older, and it is what CMake finds when it is run without scripts/cmake.sh.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
+    message(FATAL_ERROR
+        "Falcon needs GCC 16 or newer, and this is GCC ${CMAKE_CXX_COMPILER_VERSION}. "
+        "Fetch it with scripts/setup/fetch_gcc.sh and configure with scripts/cmake.sh.")
+endif()
 
 # Generate compile_commands.json for IDEs like VS Code
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -90,16 +95,31 @@ target_compile_options(falcon PRIVATE
     -Wformat=2
     -Werror
     -ftrivial-auto-var-init=pattern
-    -stdlib=libc++
+    # GCC warns wherever a SIMD vector type such as __m512 is a template argument, e.g. in a
+    # std::array of vectors, because it drops there the attribute that lets a pointer of that type
+    # read memory of any type. Falcon passes vectors by value and reads memory through intrinsics
+    # on float*, so it never relies on that attribute.
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-ignored-attributes>
+    $<$<CXX_COMPILER_ID:Clang>:-stdlib=libc++>
     $<$<CONFIG:Debug>:-O0 -g>
     $<$<CONFIG:Profile>:-O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -march=native>
     $<$<CONFIG:Release>:-O3 -march=native -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer>
 )
 
 target_link_options(falcon PRIVATE
-    -stdlib=libc++
-    -fuse-ld=lld
+    $<$<CXX_COMPILER_ID:Clang>:-stdlib=libc++>
+    $<$<CXX_COMPILER_ID:Clang>:-fuse-ld=lld>
 )
+
+# The fetched GCC (scripts/setup/fetch_gcc.sh) is newer than the system's, and so is its C++
+# library, which sits in its own folder: the program is told where, or it would load the
+# system's older one and not start.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH FALCON_GCC_BIN_DIRECTORY)
+    cmake_path(SET FALCON_GCC_LIBRARY_DIRECTORY NORMALIZE
+               "${FALCON_GCC_BIN_DIRECTORY}/../lib/x86_64-linux-gnu")
+    target_link_options(falcon PRIVATE "-Wl,-rpath,${FALCON_GCC_LIBRARY_DIRECTORY}")
+endif()
 
 target_compile_definitions(falcon PRIVATE
     _GLIBCXX_ASSERTIONS=1
@@ -111,13 +131,15 @@ target_include_directories(falcon PRIVATE src)
 # The list of processors for the UI and the generator, read from the processors' source by
 # src/ui/pipeline_designer/list_processors.py. It is made again when a processor is added or changed.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# Always clang, whichever compiler builds Falcon: the script reads the syntax tree that clang prints.
+find_program(FALCON_CLANG NAMES clang++ REQUIRED)
 file(GLOB FALCON_PROCESSOR_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/processors/*.cpp)
 file(GLOB FALCON_ENGINE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/core/*.cpp)
 set(FALCON_ALL_PROCESSORS_FILE "${CMAKE_BINARY_DIR}/generated/all_processors.cpp")
 add_custom_command(
     OUTPUT ${FALCON_ALL_PROCESSORS_FILE}
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/src/ui/pipeline_designer/list_processors.py
-            --clang ${CMAKE_CXX_COMPILER}
+            --clang ${FALCON_CLANG}
             --source-root ${CMAKE_SOURCE_DIR}/src
             --output ${FALCON_ALL_PROCESSORS_FILE}
             ${FALCON_PROCESSOR_SOURCES}

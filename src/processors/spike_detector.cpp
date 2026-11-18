@@ -9,7 +9,8 @@
 
 // One event per sample: the mask of the channels that crossed the threshold on it.
 template <typename StreamInfoType>
-struct Spikes : StreamEvent {
+struct Spikes : Event {
+    SampleHeader header{};
     ChannelMask<StreamInfoType> channels;
 };
 

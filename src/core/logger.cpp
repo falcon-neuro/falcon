@@ -372,7 +372,8 @@ void store_message_argument(MessageArgumentBytes& bytes, MessageArgumentCursor& 
 
 template <MessageArgument... Arguments>
 void store_message_arguments(MessageArgumentBytes& bytes, const Arguments&... arguments) noexcept {
-    MessageArgumentCursor cursor{
+    // Unused when the message has no arguments, which GCC otherwise reports.
+    [[maybe_unused]] MessageArgumentCursor cursor{
         .offset = 0,
         .text_room = MESSAGE_ARGUMENTS_CAPACITY - MESSAGE_ARGUMENTS_FIXED_SIZE<Arguments...>,
     };

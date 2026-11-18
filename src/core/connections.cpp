@@ -199,14 +199,14 @@ struct Out<EventBuffer<EventType, Capacity>> {
     // Neither push checks Capacity: a producer never pushes more than Capacity per pass.
     // A stream event can only be pushed with its sample's header, never without one.
     void push(const EventType& event)
-        requires(!std::derived_from<EventType, StreamEvent>)
+        requires(!StreamEvent<EventType>)
     {
         buffer_.events_[static_cast<std::size_t>(buffer_.count_++)] = event;
     }
 
-    // The header is a parameter because designated initializers can't name a base's members.
+    // The header is a parameter, so that no stream event can be pushed without one.
     void push(const SampleHeader& header, const EventType& event)
-        requires std::derived_from<EventType, StreamEvent>
+        requires StreamEvent<EventType>
     {
         EventType& stored = buffer_.events_[static_cast<std::size_t>(buffer_.count_++)];
         stored = event;

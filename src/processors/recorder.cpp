@@ -49,9 +49,9 @@ struct RecorderSlotFormatOf<SampleBuffer<StreamInfoType>> {
     };
 };
 
-template <std::derived_from<StreamEvent> EventType, int Capacity>
+template <StreamEvent EventType, int Capacity>
 struct RecorderSlotFormatOf<EventBuffer<EventType, Capacity>> {
-    static_assert(sizeof(EventType) == sizeof(StreamEvent),
+    static_assert(sizeof(EventType) == sizeof(SampleHeader),
                   "only an event's header is written, so an event with fields of its own would "
                   "lose them");
     static_assert(sizeof(SampleHeader) == 4 * sizeof(u64),
@@ -76,7 +76,7 @@ concept RecordableKind = requires { RecorderSlotFormatOf<Kind>::value; };
     });
 }
 
-template <int SlotCount>
+template <std::size_t SlotCount>
 struct RecorderOptions {
     /// The name of the file, in the run's directory. A name only, without a folder.
     Str file_name = "recording.bin";
@@ -95,7 +95,7 @@ struct Recorder {
     static constexpr std::size_t slot_count = sizeof...(InputKinds);
 
     static_assert(slot_count > 0, "a recorder needs at least one connection");
-    static_assert(std::same_as<decltype(options), RecorderOptions<static_cast<int>(slot_count)>>,
+    static_assert(std::same_as<decltype(options), RecorderOptions<slot_count>>,
                   "options is a RecorderOptions<N>, with a name for each of the N connections");
     static_assert(is_file_name(options.file_name),
                   "file_name is a name inside the run's directory, without a /");
@@ -240,7 +240,7 @@ private:
         finish_record(slot_index);
     }
 
-    template <std::derived_from<StreamEvent> EventType, int Capacity>
+    template <StreamEvent EventType, int Capacity>
     void stage(std::size_t slot_index, const EventInputBuffer<EventType, Capacity>& input) {
         if (input.is_empty()) {
             return;

@@ -17,7 +17,7 @@ struct BiquadSection {
     double a2 = 0;
 };
 
-template <int SectionCount>
+template <std::size_t SectionCount>
 struct IirFilterOptions {
     /// The sampling rate the coefficients were designed for, in Hz. It must equal the rate of the
     /// input stream, or every cutoff would shift.

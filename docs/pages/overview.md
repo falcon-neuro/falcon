@@ -17,6 +17,9 @@ Falcon runs on Linux and is released under the GNU General Public License v3. Th
 | Page | Content |
 |------|---------|
 | [Processor reference](processor_reference.md) | The built-in processors, each with its inputs, outputs and options. |
+| [Streams](data_flow/streams.md) | What a stream of samples holds, and how its channels are processed. |
+| [Events](data_flow/events.md) | The events the built-in processors emit. |
+| [Rings](data_flow/rings.md) | How a connection's data gets from one core to another. |
 | [Glossary](glossary.md) | Definitions of the terms used in this documentation. |
 
 Still to come: the pages of the other processors, how Falcon works, the system requirements, installation, a first experiment, example experiments and writing a processor of your own.

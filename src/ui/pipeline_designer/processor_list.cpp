@@ -15,7 +15,14 @@ struct OptionDescription {
     const char* type = "";           // as written in the options struct
     const char* default_value = "";  // its initializer, as written
     const char* description = "";
+    // Every value the option can have, each as written in pipeline.cpp, when its type is a fixed
+    // list of values (an enum); empty for any other type.
+    std::span<const char* const> choices;
 };
+
+// Which stream a samples port carries: the one its processor takes at its input, or the one its
+// processor starts. None for a port that carries no samples.
+enum class PortStream : std::uint8_t { None, Input, Output };
 
 // One member of a processor's Connections.
 struct PortDescription {
@@ -26,6 +33,7 @@ struct PortDescription {
     bool has_slots = false;    // it takes several connections
     const char* type = "";     // as written in Connections
     const char* description = "";
+    PortStream stream = PortStream::None;
 };
 
 struct ProcessorDescription {
@@ -35,4 +43,7 @@ struct ProcessorDescription {
     std::span<const char* const> template_parameters;  // each as written
     std::span<const OptionDescription> options;
     std::span<const PortDescription> ports;
+    // It starts a stream of its own, whose channel count and rate the user sets: it has a
+    // template parameter OutputStreamInfo.
+    bool starts_stream = false;
 };

@@ -200,7 +200,8 @@ private:
     alignas(BYTES_BETWEEN_CORES) bool is_holding_slot_ = false;
     u64 last_read_pass_ = NO_PASS;
     SampleBuffer<StreamInfoType> reader_buffer_;
-    alignas(BYTES_BETWEEN_CORES) std::array<SampleWithHeader<StreamInfoType>, slot_count> slots_{};
+    alignas(BYTES_BETWEEN_CORES)
+        std::array<SampleWithHeader<StreamInfoType>, static_cast<std::size_t>(slot_count)> slots_{};
 };
 
 // The writer's side of an event ring, without the slot count in its type, so an output and an
@@ -326,7 +327,8 @@ private:
     EventBuffer<EventType, Capacity> reader_buffer_;
     // Writer core only: what a producer pushes into when this ring is its output.
     alignas(BYTES_BETWEEN_CORES) EventBuffer<EventType, Capacity> writer_buffer_;
-    alignas(BYTES_BETWEEN_CORES) std::array<EventType, slot_count> slots_{};
+    alignas(
+        BYTES_BETWEEN_CORES) std::array<EventType, static_cast<std::size_t>(slot_count)> slots_{};
 };
 
 // --- Waiting for data ---

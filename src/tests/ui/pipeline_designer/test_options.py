@@ -187,6 +187,33 @@ def test_whole_number_option_takes_no_decimals():
         assert option_of(designer, output, "pin").isdigit()
 
 
+def test_option_with_a_fixed_list_of_values_is_chosen_from_a_list():
+    with Designer() as designer:
+        generator = designer.add_processor("SignalGenerator", core=0)
+        assert option_of(designer, generator, "waveform") == "Waveform::Sine"
+        designer.click(f"block/{generator}/handle")
+        designer.click("options_panel/input/waveform")
+        designer.click("options_panel/choice/waveform/Square")
+        assert option_of(designer, generator, "waveform") == "Waveform::Square"
+
+        assert designer.has_target("options_panel/default/waveform")
+        designer.click("options_panel/default/waveform")
+        assert option_of(designer, generator, "waveform") == "Waveform::Sine"
+
+
+def test_list_of_values_offers_every_value_and_only_while_it_is_open():
+    with Designer() as designer:
+        detector = designer.add_processor("LevelCrossingDetector", core=0)
+        designer.click(f"block/{detector}/handle")
+        assert not designer.has_target("options_panel/choice/direction/Upward")
+        designer.click("options_panel/input/direction")
+        assert designer.has_target("options_panel/choice/direction/Upward")
+        assert designer.has_target("options_panel/choice/direction/Downward")
+        designer.click("options_panel/choice/direction/Downward")
+        assert not designer.has_target("options_panel/choice/direction/Upward")
+        assert option_of(designer, detector, "direction") == "CrossingDirection::Downward"
+
+
 def test_button_puts_the_default_back_and_shows_only_for_a_changed_value():
     with Designer() as designer:
         detector = designer.add_processor("SpikeDetector", core=0)

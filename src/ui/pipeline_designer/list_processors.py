@@ -141,6 +141,51 @@ def initializer_text(source, field):
     return source_text(source, initializers[0]) if initializers else ""
 
 
+# A type written as one of these words is no fixed list of values, so clang isn't asked about it.
+PLAIN_TYPES = {"bool", "char", "double", "float", "int", "long", "short", "unsigned"}
+
+
+def choices_of(clang, clang_flags, path, written_type, cache):
+    """The values an option can have, each as written in pipeline.cpp, when its type is a fixed
+    list of values (an enum); none for any other type. Clang is asked about the type by its name,
+    wherever the processor's file takes it from."""
+    if not re.fullmatch(r"[A-Za-z_]\w*", written_type) or written_type in PLAIN_TYPES:
+        return []
+    if written_type not in cache:
+        choices = []
+        for tree in syntax_trees(clang, clang_flags, path, written_type):
+            if tree.get("kind") == "EnumDecl" and tree.get("name") == written_type and not choices:
+                # A value of an enum that isn't scoped is written without the enum's name.
+                prefix = written_type + "::" if tree.get("scopedEnumTag") else ""
+                choices = [prefix + child["name"] for child in children(tree)
+                           if child.get("kind") == "EnumConstantDecl"]
+        cache[written_type] = choices
+    return cache[written_type]
+
+
+# The names by which a samples connection says which stream it carries (see stream_of_port).
+INPUT_STREAM = "InputStreamInfo"
+OUTPUT_STREAM = "OutputStreamInfo"
+
+
+def stream_of_port(name, direction, port_kind, inner_type, where, problems):
+    """Which stream a samples connection carries: "Input" for the stream its processor takes at its
+    input, "Output" for one its processor starts, "None" for a connection without samples. The UI
+    and the generator follow a stream through the graph by these two names alone, so a samples
+    connection written with any other is refused."""
+    if port_kind != "Samples":
+        return "None"
+    written_stream = inner_type[inner_type.index("<") + 1:inner_type.rindex(">")].strip()
+    if written_stream == INPUT_STREAM:
+        return "Input"
+    if written_stream == OUTPUT_STREAM and direction == "Output":
+        return "Output"
+    allowed = "%s or %s" % (INPUT_STREAM, OUTPUT_STREAM) if direction == "Output" else INPUT_STREAM
+    problems.append("%s: the samples connection `%s` is written with the stream `%s`: it must be %s, "
+                    "so that its stream can be followed through a graph" % (where, name, written_stream, allowed))
+    return "None"
+
+
 def read_port(source, field, where, problems):
     written_type = field["type"]["qualType"]
     initializer = initializer_text(source, field) or ""
@@ -155,7 +200,8 @@ def read_port(source, field, where, problems):
         problems.append("%s: the connection `%s` has no doc comment (///) saying what it expects or gives" % (where, field["name"]))
     direction, port_kind, has_slots = kind
     return {"name": field["name"], "direction": direction, "kind": port_kind, "is_optional": is_optional,
-            "has_slots": has_slots, "type": written_type, "description": description}
+            "has_slots": has_slots, "type": written_type, "description": description,
+            "stream": stream_of_port(field["name"], direction, port_kind, inner_type, where, problems)}
 
 
 def read_file(clang, clang_flags, source_root, path):
@@ -180,7 +226,7 @@ def read_file(clang, clang_flags, source_root, path):
         for tree in syntax_trees(clang, clang_flags, path, name):
             gather(tree, None)
 
-    processors, problems = [], []
+    processors, problems, choices_cache = [], [], {}
     for name, record in sorted(records.items()):
         connections = [child for child in children(record)
                        if child.get("kind") == "CXXRecordDecl" and child.get("name") == "Connections" and child.get("completeDefinition")]
@@ -205,7 +251,8 @@ def read_file(clang, clang_flags, source_root, path):
             if not option_description:
                 problems.append("%s:%d: the option `%s` has no doc comment (///) written for the user" % (path, line_of(source, field), field["name"]))
             options.append({"name": field["name"], "type": field["type"]["qualType"],
-                            "default": initializer_text(source, field) or "", "description": option_description})
+                            "default": initializer_text(source, field) or "", "description": option_description,
+                            "choices": choices_of(clang, clang_flags, path, field["type"]["qualType"], choices_cache)})
 
         ports = [read_port(source, field, "%s:%d" % (path, line_of(source, field)), problems) for field in fields_of(connections[0])]
 
@@ -217,9 +264,15 @@ def read_file(clang, clang_flags, source_root, path):
             if parts and uses_options(parts[0]) and not has_message:
                 problems.append("%s:%d: a static_assert about an option has no message for the user" % (path, line_of(source, check)))
 
+        parameter_names = [parameter.get("name") for parameter in parameters]
+        for port in ports:
+            if port is not None and port["stream"] == "Output" and OUTPUT_STREAM not in parameter_names:
+                problems.append("%s: the connection `%s` carries %s, which isn't a template parameter of `%s`" % (
+                    where, port["name"], OUTPUT_STREAM, name))
         processors.append({"name": name, "file": shown_path, "description": description,
                            "parameters": [parameter_text(source, parameter) for parameter in parameters],
-                           "options": options, "ports": [port for port in ports if port is not None]})
+                           "options": options, "ports": [port for port in ports if port is not None],
+                           "starts_stream": OUTPUT_STREAM in parameter_names})
     return path, processors, problems
 
 
@@ -242,11 +295,19 @@ def write_output(output, processors):
         lines.append("inline constexpr std::array<const char*, %d> %s_template_parameters{{" % (len(processor["parameters"]), name))
         lines += ["    %s," % literal(parameter) for parameter in processor["parameters"]]
         lines.append("}};")
+        for option in processor["options"]:
+            if option["choices"]:
+                lines.append("inline constexpr std::array<const char*, %d> %s_%s_choices{{" % (
+                    len(option["choices"]), name, option["name"]))
+                lines += ["    %s," % literal(choice) for choice in option["choices"]]
+                lines.append("}};")
         lines.append("inline constexpr std::array<OptionDescription, %d> %s_options{{" % (len(processor["options"]), name))
         for option in processor["options"]:
             lines.append("    OptionDescription{.name = %s, .type = %s, .default_value = %s," % (
                 literal(option["name"]), literal(option["type"]), literal(option["default"])))
-            lines.append("                      .description = %s}," % literal(option["description"]))
+            lines.append("                      .description = %s," % literal(option["description"]))
+            lines.append("                      .choices = %s}," % (
+                "%s_%s_choices" % (name, option["name"]) if option["choices"] else "{}"))
         lines.append("}};")
         lines.append("inline constexpr std::array<PortDescription, %d> %s_ports{{" % (len(processor["ports"]), name))
         for port in processor["ports"]:
@@ -254,7 +315,8 @@ def write_output(output, processors):
                 literal(port["name"]), port["direction"], port["kind"]))
             lines.append("                    .is_optional = %s, .has_slots = %s, .type = %s," % (
                 "true" if port["is_optional"] else "false", "true" if port["has_slots"] else "false", literal(port["type"])))
-            lines.append("                    .description = %s}," % literal(port["description"]))
+            lines.append("                    .description = %s," % literal(port["description"]))
+            lines.append("                    .stream = PortStream::%s}," % port["stream"])
         lines.append("}};")
         lines.append("")
     lines += ["}  // namespace all_processors_detail", "",
@@ -265,7 +327,8 @@ def write_output(output, processors):
         lines.append("                         .description = %s," % literal(processor["description"]))
         lines.append("                         .template_parameters = all_processors_detail::%s_template_parameters," % name)
         lines.append("                         .options = all_processors_detail::%s_options," % name)
-        lines.append("                         .ports = all_processors_detail::%s_ports}," % name)
+        lines.append("                         .ports = all_processors_detail::%s_ports," % name)
+        lines.append("                         .starts_stream = %s}," % ("true" if processor["starts_stream"] else "false"))
     lines += ["}};", ""]
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines), encoding="utf-8")

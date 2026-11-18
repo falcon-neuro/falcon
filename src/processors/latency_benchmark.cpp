@@ -35,7 +35,7 @@ struct LatencyBenchmarkOptions {
 /// event's sample to the moment this processor runs. Placed right before an output, it measures
 /// everything up to the decision. When the run ends it writes one row per event to a file and logs
 /// the shortest, the median, the 99th percentile and the longest.
-template <std::derived_from<StreamEvent> EventType, int Capacity,
+template <StreamEvent EventType, int Capacity,
           LatencyBenchmarkOptions options = LatencyBenchmarkOptions{}>
 struct LatencyBenchmark {
     static_assert(is_file_name(options.file_name),

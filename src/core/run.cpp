@@ -257,7 +257,7 @@ void report_everything(std::span<MessageChannelReader> readers) noexcept {
 bool wait_at_start_barrier() {
     cpu_set_t set;
     CPU_ZERO(&set);
-    CPU_SET(core_number_of_this_thread, &set);
+    CPU_SET(static_cast<std::size_t>(core_number_of_this_thread), &set);
     if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
         throw std::runtime_error(std::format("can't pin to CPU {}", core_number_of_this_thread));
     }
@@ -396,7 +396,9 @@ int run_on_cores(PipelineName pipeline_name, std::initializer_list<CoreThread> c
                     message_channel_of_this_thread = channel;
                     // Denormals, e.g. a filter's state on a flat channel, are far slower.
                     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
-                    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+                    // Written out, not _MM_SET_DENORMALS_ZERO_MODE: GCC's macro of that name mixes
+                    // signed and unsigned values, which the build's warnings refuse.
+                    _mm_setcsr(_mm_getcsr() | _MM_DENORMALS_ZERO_ON);
                     core_thread.entry_point();
                 } catch (const ProcessorFailure&) {
                     end_run_after_core_failure();

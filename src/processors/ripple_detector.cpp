@@ -9,7 +9,9 @@
 // envelope rises more than threshold_multiplier mean absolute deviations above its running mean.
 
 // One event per detection, with the header of the sample whose envelope crossed the threshold.
-struct Ripple : StreamEvent {};
+struct Ripple : Event {
+    SampleHeader header{};
+};
 
 struct RippleDetectorOptions {
     /// The time over which the detector averages the signal to learn its usual level and spread,

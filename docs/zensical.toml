@@ -18,6 +18,11 @@ nav = [
       "processors/iir_filter.md",
       "processors/spike_detector.md",
     ] },
+    { "Data flow" = [
+      "data_flow/streams.md",
+      "data_flow/events.md",
+      "data_flow/rings.md",
+    ] },
     "glossary.md",
   ] },
   { "API" = "api/index.html" },
