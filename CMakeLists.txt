@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
-project(falcon LANGUAGES C CXX)
+# Falcon's version, set by hand before a release: the release's date as year, month and day. The
+# release's tag is this with a v in front.
+project(falcon VERSION 26.11.21 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -129,6 +131,7 @@ endif()
 target_compile_definitions(falcon PRIVATE
     _GLIBCXX_ASSERTIONS=1
     LIBCXX_ENABLE_HARDENING=1
+    FALCON_VERSION="v${PROJECT_VERSION}"
 )
 
 target_include_directories(falcon PRIVATE src)

@@ -29,10 +29,6 @@ void core1() {
     RepeatedWarner<{.warnings_per_second = 250}> second_warner{"second_warner"};
     SampleSource<TestStream> sample_source{"sample_source"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         lifetime_reporter.process({});
         first_warner.process({});
@@ -45,10 +41,6 @@ void core2() {
     // Processors
     ArgumentLogger argument_logger{"argument_logger"};
     SlowSampleCounter<TestStream> slow_sample_counter{"slow_sample_counter"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         argument_logger.process({});

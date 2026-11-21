@@ -28,6 +28,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Website: [docs/ongoing_work/website.md](../docs/ongoing_work/website.md).
 - Release (how Falcon is packed and installed): [docs/ongoing_work/release.md](../docs/ongoing_work/release.md).
 - Assets (fonts, icons and their licences): [docs/ongoing_work/assets.md](../docs/ongoing_work/assets.md).
+- Security: [docs/ongoing_work/security.md](../docs/ongoing_work/security.md).
 
 ## Guidelines
 - Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.

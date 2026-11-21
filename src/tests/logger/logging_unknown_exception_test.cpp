@@ -11,10 +11,6 @@ void core1() {
     LifetimeReporter<{.failure = TestFailure::NonStdExceptionInProcess}> throwing_processor{
         "throwing_processor"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         same_core_neighbour.process({});
         throwing_processor.process({});
@@ -24,10 +20,6 @@ void core1() {
 void core2() {
     // Processors
     LifetimeReporter<> other_core_processor{"other_core_processor"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         other_core_processor.process({});

@@ -10,10 +10,6 @@ void core1() {
     LifetimeReporter<> first_processor{"same_name"};
     LifetimeReporter<> second_processor{"same_name"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         first_processor.process({});
         second_processor.process({});
@@ -23,10 +19,6 @@ void core1() {
 void core2() {
     // Processors
     LifetimeReporter<> other_core_processor{"other_core_processor"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         other_core_processor.process({});

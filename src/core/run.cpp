@@ -250,11 +250,17 @@ void report_everything(std::span<MessageChannelReader> readers) noexcept {
 
 // --- Start and stop ---
 
-// Every core calls this once its processors are built. Returns false if startup failed on any
-// core, so the core returns without running its loop. The thread pins itself to its core only
-// now: a thread that a library starts in a constructor (e.g. to receive packets) inherits its
-// creator's CPUs, and on the realtime core it would compete with a loop that never yields.
+// Every core comes here once its processors are built: its first next_pass() calls this. Returns
+// false if startup failed on any core, so the core returns without running its loop. The thread
+// pins itself to its core only now: a thread that a library starts in a constructor (e.g. to
+// receive packets) inherits its creator's CPUs, and on the realtime core it would compete with a
+// loop that never yields.
 bool wait_at_start_barrier() {
+    // A core's function may have called this itself in front of its loop, and the barrier counts
+    // each core once.
+    if (has_arrived_at_start_barrier) {
+        return !has_startup_failed;
+    }
     cpu_set_t set;
     CPU_ZERO(&set);
     CPU_SET(static_cast<std::size_t>(core_number_of_this_thread), &set);
@@ -269,8 +275,7 @@ bool wait_at_start_barrier() {
 
 struct CoreThread {
     int core_number;        // CPU core the thread pins itself to in wait_at_start_barrier()
-    void (*entry_point)();  // declares the core's processors and buffers, calls
-                            // wait_at_start_barrier(), then runs its loop
+    void (*entry_point)();  // declares the core's processors and buffers, then runs its loop
     // False for a core whose work can wait, e.g. one that writes files: its loop sleeps after a
     // pass that brought it nothing, where a realtime core spins.
     bool is_realtime = true;

@@ -20,10 +20,6 @@ void core4() {
     SignalGenerator<TemplateStream, {.waveform = Waveform::Sine, .frequency = 3, .amplitude = 50}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process({.output = signal_generator_to_gain_sample_ring});
     }
@@ -39,10 +35,6 @@ void core5() {
     // Connections
     SampleBuffer<TemplateStream> gain_to_spike_detector_sample_buffer;
     EventBuffer<Spikes<TemplateStream>, 1> spike_detector_to_event_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         gain.process({

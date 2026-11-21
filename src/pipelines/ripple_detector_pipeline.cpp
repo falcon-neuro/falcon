@@ -27,10 +27,6 @@ void core4() {
                     {.waveform = Waveform::RippleBursts, .frequency = 2, .amplitude = 100}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process({.output = signal_generator_to_ripple_filter_sample_ring});
     }
@@ -88,10 +84,6 @@ void core5() {
     EventBuffer<Ripple, 1> ripple_detector_to_ripple_logger_event_buffer{
         ripple_detector_to_recorder_event_ring};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         ripple_filter.process({
             .input = signal_generator_to_ripple_filter_sample_ring,
@@ -113,10 +105,6 @@ void core8() {
              },
              SampleBuffer<RippleTestStream>, EventBuffer<Ripple, 1>>
         recorder{"recorder"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         recorder.process({

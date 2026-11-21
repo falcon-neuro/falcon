@@ -19,10 +19,6 @@ void core4() {
                     {.waveform = Waveform::RippleBursts, .frequency = 2, .amplitude = 100}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process({.output = signal_generator_to_recorder_sample_ring});
     }
@@ -33,10 +29,6 @@ void core8() {
     Recorder<RecorderOptions<1>{.file_name = "ripple_bursts.bin", .slot_names = {"ripple_bursts"}},
              SampleBuffer<RippleTestStream>>
         recorder{"recorder"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         recorder.process({.inputs = {signal_generator_to_recorder_sample_ring}});

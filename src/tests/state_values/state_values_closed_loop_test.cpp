@@ -42,10 +42,6 @@ void core4() {
                     {.waveform = Waveform::RippleBursts, .frequency = 2, .amplitude = 100}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process(
             {.output = signal_generator_to_gated_detector_and_free_detector_sample_ring});
@@ -62,10 +58,6 @@ void core5() {
     // Connections
     EventBuffer<Ripple, 1> gated_detector_to_gated_logger_event_buffer;
     EventBuffer<Ripple, 1> free_detector_to_free_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         gated_detector.process({
@@ -88,10 +80,6 @@ void core5() {
 void core6() {
     // Processors
     DetectionPauser<> detection_pauser{"detection_pauser"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         detection_pauser.process({

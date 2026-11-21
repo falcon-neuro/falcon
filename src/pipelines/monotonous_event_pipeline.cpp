@@ -12,10 +12,6 @@ void core1() {
     // Connections
     EventBuffer<ScheduledEvent, 1> dummy_generator_to_example_logger_event_buffer;
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         dummy_generator.process({.output = dummy_generator_to_example_logger_event_buffer});
         example_logger.process({.input = dummy_generator_to_example_logger_event_buffer});

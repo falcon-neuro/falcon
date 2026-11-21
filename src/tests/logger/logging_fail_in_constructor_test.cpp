@@ -12,10 +12,6 @@ void core1() {
         "failing_processor"};
     LifetimeReporter<> never_built{"never_built"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         built_before.process({});
         failing_processor.process({});
@@ -26,10 +22,6 @@ void core1() {
 void core2() {
     // Processors
     LifetimeReporter<> other_core_processor{"other_core_processor"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         other_core_processor.process({});

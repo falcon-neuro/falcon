@@ -29,10 +29,6 @@ void core4() {
     SampleBuffer<TestStream> signal_generator_to_spike_detector_and_recorder_sample_buffer{
         signal_generator_to_spike_detector_sample_ring, signal_generator_to_recorder_sample_ring};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process(
             {.output = signal_generator_to_spike_detector_and_recorder_sample_buffer});
@@ -42,10 +38,6 @@ void core4() {
 void core5() {
     // Processors
     SpikeDetector<TestStream, {.threshold = -70}> spike_detector{"spike_detector"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         spike_detector.process({
@@ -63,10 +55,6 @@ void core8() {
              },
              SampleBuffer<TestStream>, EventBuffer<Spikes<TestStream>, 1>>
         recorder{"recorder"};
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         recorder.process({

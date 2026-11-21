@@ -89,7 +89,9 @@ struct GraphCore {
 
 class PipelineGraph {
 public:
+    // What people call the pipeline: free text on one line, and not the name of its directory.
     std::string name;
+    std::string description;  // one line
     std::vector<GraphCore> cores;
     std::vector<GraphProcessor> processors;
     std::vector<GraphConnection> connections;

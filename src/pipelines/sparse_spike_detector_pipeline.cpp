@@ -18,10 +18,6 @@ void core4() {
                     {.waveform = Waveform::Square, .frequency = 1, .amplitude = 100}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process({.output = signal_generator_to_spike_detector_sample_ring});
     }
@@ -34,10 +30,6 @@ void core5() {
 
     // Connections
     EventBuffer<Spikes<SparseTestStream>, 1> spike_detector_to_example_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         spike_detector.process({

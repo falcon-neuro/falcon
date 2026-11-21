@@ -35,10 +35,6 @@ void core1() {
                     }>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process({.output = signal_generator_to_pass_through_filter_1_sample_ring});
     }
@@ -74,10 +70,6 @@ void core2() {
     SampleBuffer<LatencyStream> pass_through_filter_7_to_level_crossing_detector_sample_buffer;
     EventBuffer<LevelCrossings<LatencyStream>, 1> level_crossing_detector_to_trigger_event_buffer;
     EventBuffer<TriggerEvent, 1> trigger_to_latency_benchmark_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         pass_through_filter_1.process({

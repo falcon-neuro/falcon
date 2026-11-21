@@ -34,10 +34,6 @@ void core4() {
                     }>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         signal_generator.process(
             {.output = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring});
@@ -87,10 +83,6 @@ void core5() {
         filtered_spike_detector_to_filtered_logger_event_buffer;
     EventBuffer<Spikes<ComparisonTestStream>, 1>
         unfiltered_spike_detector_to_unfiltered_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
 
     while (next_pass()) {
         ap_filter.process({
