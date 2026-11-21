@@ -28,8 +28,8 @@ void core2() {
     }
 }
 
-int main() {
-    return run_on_cores("logging_fail_in_constructor_test",
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments,
                         {
                             {.core_number = 1, .entry_point = core1},
                             {.core_number = 2, .entry_point = core2},

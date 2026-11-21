@@ -169,6 +169,23 @@ target_link_libraries(falcon PRIVATE
     uring
 )
 
+# The test of the pipeline's writer and reader, a program of its own that needs none of the UI's
+# libraries. It is built as falcon is, and src/tests/ui/pipeline_file/run.py runs it.
+add_executable(pipeline_file_test
+    src/tests/ui/pipeline_file/pipeline_file_test.cpp
+)
+target_compile_options(pipeline_file_test PRIVATE $<TARGET_PROPERTY:falcon,COMPILE_OPTIONS>)
+target_compile_definitions(pipeline_file_test PRIVATE
+    $<TARGET_PROPERTY:falcon,COMPILE_DEFINITIONS>
+)
+target_link_options(pipeline_file_test PRIVATE $<TARGET_PROPERTY:falcon,LINK_OPTIONS>)
+target_include_directories(pipeline_file_test PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+add_dependencies(pipeline_file_test falcon_all_processors)
+# The lint borrows falcon's compile command for every file that has none of its own, which
+# finds the UI's libraries. With a second command in the list it would borrow this one for
+# some of the UI's files, and not find them.
+set_target_properties(pipeline_file_test PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
+
 # Each extension may bring a CMakeLists.txt that adds its own include directories and libraries.
 file(GLOB FALCON_EXTENSION_CMAKE_FILES ${CMAKE_SOURCE_DIR}/src/processors/custom/*/CMakeLists.txt)
 foreach(FALCON_EXTENSION_CMAKE_FILE ${FALCON_EXTENSION_CMAKE_FILES})

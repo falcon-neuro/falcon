@@ -52,7 +52,20 @@ struct InputReference {
 struct GraphConnection {
     OutputReference output;
     InputReference input;
+    // The number of slots of the ring it goes through, where its two processors lie on different
+    // cores and the user has set one. None for the number such a ring has otherwise (see
+    // usual_ring_slot_count()), and for a connection on one core, which goes through no ring.
+    std::optional<int> ring_slot_count;
 };
+
+// The number of slots a ring has while the user has set none. A reader that isn't realtime may
+// be kept from reading for a while, e.g. by a write to a file, and its ring must hold what
+// arrives meanwhile.
+[[nodiscard]] constexpr int usual_ring_slot_count(bool is_reader_realtime) {
+    constexpr int slots_to_realtime_reader = 64;
+    constexpr int slots_to_other_reader = 16384;
+    return is_reader_realtime ? slots_to_realtime_reader : slots_to_other_reader;
+}
 
 // A place in a core's list: in front of next_processor, or at the end of the list when that is
 // none.
@@ -254,7 +267,7 @@ public:
         if (!can_connect(output, input)) {
             return false;
         }
-        connections.push_back({.output = output, .input = input});
+        connections.push_back({.output = output, .input = input, .ring_slot_count = std::nullopt});
         return true;
     }
 

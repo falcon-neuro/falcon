@@ -117,9 +117,9 @@ void core8() {
     }
 }
 
-int main() {
+int main(int argument_count, char** arguments) {
     // The recorder writes to a file, so its core isn't a realtime one.
-    return run_on_cores("ripple_detector",
+    return run_on_cores(argument_count, arguments,
                         {
                             {.core_number = 4, .entry_point = core4},
                             {.core_number = 5, .entry_point = core5},

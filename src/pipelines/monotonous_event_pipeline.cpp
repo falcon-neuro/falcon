@@ -18,6 +18,6 @@ void core1() {
     }
 }
 
-int main() {
-    return run_on_cores("monotonous_event", {{.core_number = 1, .entry_point = core1}});
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments, {{.core_number = 1, .entry_point = core1}});
 }
