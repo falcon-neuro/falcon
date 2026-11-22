@@ -850,13 +850,11 @@ private:
         if (processor->stream.has_value()) {
             render_stream_inputs(*processor->stream);
         }
-        if (processor->type->options.empty()) {
-            if (!processor->stream.has_value()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-                ImGui::TextUnformatted("This processor has no options.");
-                ImGui::PopStyleColor();
-            }
-            return;
+        if (processor->type->options.empty() && !processor->stream.has_value()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
+            ImGui::TextUnformatted("This processor has no options.");
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
         }
         std::size_t option_index = 0;
         for (const OptionDescription& option : processor->type->options) {
@@ -867,6 +865,61 @@ private:
             }
             ++option_index;
         }
+        if (has_port(*processor->type, PortDirection::Output)) {
+            render_output_names(*processor);
+        }
+    }
+
+    // In the options panel, the name of what each of the processor's outputs gives, in a field
+    // that takes the characters of a name only. What is typed becomes the name as soon as it can
+    // be one; until then, e.g. while the field is empty, the name stays what it was. A name of
+    // the user's has a button that puts the output's own back.
+    void render_output_names(const GraphProcessor& processor) {
+        ImGui::Separator();
+        ImGui::Spacing();
+        push_bold_font();
+        ImGui::TextUnformatted("Outputs");
+        ImGui::PopFont();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, input_active_colour);
+        for (const PortDescription& port : processor.type->ports) {
+            if (port.direction != PortDirection::Output) {
+                continue;
+            }
+            const OutputReference output{.processor = processor.id, .port = port.name};
+            ImGui::PushID(port.name);
+            ImGui::TextUnformatted(port.name);
+            render_faint_wrapped("Label for this output in recordings and logs.");
+            std::string typed_name = graph_.name_of_output(output);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (render_filtered_field("##name", typed_name, IDENTIFIER_CHARACTERS) &&
+                is_identifier(typed_name)) {
+                graph_.rename_output(output, typed_name);
+            }
+            name_last_item_for_ui_driver({"options_panel", "output_name", port.name});
+            if (graph_.is_output_name_shared(output)) {
+                ImGui::PushStyleColor(ImGuiCol_Text, warning_colour);
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(
+                    "Another output has this name. Each output needs a name of its own.");
+                ImGui::PopTextWrapPos();
+                ImGui::PopStyleColor();
+                name_last_item_for_ui_driver({"options_panel", "output_name_shared", port.name});
+            }
+            if (graph_.name_of_output(output) != graph_.own_name_of_output(output)) {
+                const bool is_own_name_asked_for = ImGui::SmallButton("Put its own name back");
+                name_last_item_for_ui_driver({"options_panel", "own_output_name", port.name});
+                if (is_own_name_asked_for) {
+                    graph_.rename_output(output, graph_.own_name_of_output(output));
+                }
+            }
+            ImGui::Spacing();
+            ImGui::Spacing();
+            ImGui::PopID();
+        }
+        ImGui::PopStyleColor(3);
     }
 
     // A text field that edits a string of any length: ImGui asks through the callback for a

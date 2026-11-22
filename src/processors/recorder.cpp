@@ -1,5 +1,4 @@
 #pragma once
-#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <concepts>
@@ -10,7 +9,6 @@
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <type_traits>
 #include <vector>
@@ -71,44 +69,40 @@ struct RecorderSlotFormatOf<EventBuffer<EventType, Capacity>> {
 template <typename Kind>
 concept RecordableKind = requires { RecorderSlotFormatOf<Kind>::value; };
 
-// A slot's name goes into the file's JSON as it is, so it holds nothing JSON would escape.
-[[nodiscard]] constexpr bool is_recorder_slot_name(const Str& text) {
-    const std::string_view name = text.c_str();
-    return !name.empty() && std::ranges::all_of(name, [](char character) {
-        return is_letter_or_digit(character) || character == '_' || character == '-';
-    });
-}
+// How each slot of a list is written, in the list's order. Defined only for a list whose every
+// slot is of a kind a Recorder can write.
+template <typename SlotList>
+struct RecorderSlotFormatsOf;
 
-template <std::size_t SlotCount>
+template <SlotName... names, RecordableKind... Kinds>
+struct RecorderSlotFormatsOf<Slots<Slot<names, Kinds>...>> {
+    static constexpr std::array<RecorderSlotFormat, sizeof...(Kinds)> value{
+        RecorderSlotFormatOf<Kinds>::value...};
+};
+
+template <typename SlotList>
+concept RecordableSlots = requires { RecorderSlotFormatsOf<SlotList>::value; };
+
 struct RecorderOptions {
     /// The name of the file, in the run's directory. A name only, without a folder.
     Str file_name = "recording.bin";
-    /// What the file calls each connection, in the order they are connected: one name each, of
-    /// letters, digits, _ and - only.
-    std::array<Str, SlotCount> slot_names{};
 };
 
-// `options` comes first and its type is checked below: a template's list of kinds has to come
-// last, and the options' type depends on how many kinds there are.
 /// Writes everything its connections bring, samples and events alike, into one file in the run's
 /// directory, to look at after the run. Writing to a file can stall, so it belongs on a core that
 /// isn't realtime.
-template <auto options, RecordableKind... InputKinds>
+template <RecordableSlots Inputs, RecorderOptions options = RecorderOptions{}>
 struct Recorder {
-    static constexpr std::size_t slot_count = sizeof...(InputKinds);
+    static constexpr std::size_t slot_count = SLOT_NAMES<Inputs>.size();
 
     static_assert(slot_count > 0, "a recorder needs at least one connection");
-    static_assert(std::same_as<decltype(options), RecorderOptions<slot_count>>,
-                  "options is a RecorderOptions<N>, with a name for each of the N connections");
     static_assert(is_file_name(options.file_name),
                   "file_name is a name inside the run's directory, without a /");
-    static_assert(std::ranges::all_of(options.slot_names, is_recorder_slot_name),
-                  "a slot's name holds only letters, digits, _ and -");
 
     struct Connections {
         /// Whatever is to be recorded: any number of connections, each bringing samples or events.
-        /// Of an event, every field is written.
-        InputSlots<InputKinds...> inputs;
+        /// Of an event, every field is written. The file calls each one by its connection's name.
+        InputSlots<Inputs> inputs;
     };
 
     explicit Recorder(ProcessorName processor_name) : name(processor_name) {
@@ -140,7 +134,7 @@ struct Recorder {
         }
         for (std::size_t slot_index = 0; slot_index < slot_count; ++slot_index) {
             log(name, "recorded {} records of {} to {}", slots_[slot_index].recorded_count,
-                options.slot_names[slot_index].c_str(), path_.c_str());
+                SLOT_NAMES<Inputs>[slot_index].c_str(), path_.c_str());
         }
     }
 
@@ -165,16 +159,16 @@ private:
     };
 
     // The records of one connection that wait to be written as its next chunk.
-    struct Slot {
+    struct StagedSlot {
         std::vector<std::byte> staged_records;
         std::size_t staged_count = 0;
         u64 recorded_count = 0;
     };
 
-    static constexpr std::array<RecorderSlotFormat, slot_count> slot_formats{
-        RecorderSlotFormatOf<InputKinds>::value...};
+    static constexpr std::array<RecorderSlotFormat, slot_count> slot_formats =
+        RecorderSlotFormatsOf<Inputs>::value;
 
-    std::array<Slot, slot_count> slots_;
+    std::array<StagedSlot, slot_count> slots_;
     std::string path_;
     std::unique_ptr<std::FILE, FileCloser> file_;
 
@@ -190,12 +184,13 @@ private:
         return std::unique_ptr<std::FILE, FileCloser>(file);
     }
 
-    // The file's first line.
+    // The file's first line. A slot's name goes into the JSON as it is: a SlotName holds nothing
+    // JSON would escape.
     [[nodiscard]] static std::string file_description() {
         std::string description = R"({"format": "falcon_recording", "version": 2, "slots": [)";
         for (std::size_t slot_index = 0; slot_index < slot_count; ++slot_index) {
             const RecorderSlotFormat& format = slot_formats[slot_index];
-            const char* const slot_name = options.slot_names[slot_index].c_str();
+            const char* const slot_name = SLOT_NAMES<Inputs>[slot_index].c_str();
             if (slot_index > 0) {
                 description += ", ";
             }
@@ -265,12 +260,12 @@ private:
     }
 
     [[nodiscard]] std::byte* next_record(std::size_t slot_index) {
-        Slot& slot = slots_[slot_index];
+        StagedSlot& slot = slots_[slot_index];
         return &slot.staged_records[slot.staged_count * slot_formats[slot_index].record_bytes];
     }
 
     void finish_record(std::size_t slot_index) {
-        Slot& slot = slots_[slot_index];
+        StagedSlot& slot = slots_[slot_index];
         ++slot.staged_count;
         ++slot.recorded_count;
         if (slot.staged_count == slot_formats[slot_index].chunk_records) {
@@ -281,7 +276,7 @@ private:
     // Writes a connection's waiting records as one chunk, if it has any. Returns whether the
     // write succeeded.
     [[nodiscard]] bool write_chunk(std::size_t slot_index) {
-        Slot& slot = slots_[slot_index];
+        StagedSlot& slot = slots_[slot_index];
         if (slot.staged_count == 0) {
             return true;
         }

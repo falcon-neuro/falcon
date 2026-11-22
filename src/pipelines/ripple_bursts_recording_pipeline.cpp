@@ -10,8 +10,7 @@ using RippleTestStream = StreamInfo<4, 30000.0, float>;
 
 // Connections between cores
 // Half a second of samples, so a write that blocks for a while loses none.
-SampleRing<RippleTestStream, 16384> signal_generator_to_recorder_sample_ring{
-    "signal_generator_to_recorder_sample_ring"};
+SampleRing<RippleTestStream, 16384> ripple_bursts_ring_to_core8{"ripple_bursts_ring_to_core8"};
 
 void core4() {
     // Processors
@@ -20,18 +19,18 @@ void core4() {
         signal_generator{"signal_generator"};
 
     while (next_pass()) {
-        signal_generator.process({.output = signal_generator_to_recorder_sample_ring});
+        signal_generator.process({.output = ripple_bursts_ring_to_core8});
     }
 }
 
 void core8() {
     // Processors
-    Recorder<RecorderOptions<1>{.file_name = "ripple_bursts.bin", .slot_names = {"ripple_bursts"}},
-             SampleBuffer<RippleTestStream>>
+    Recorder<Slots<Slot<"ripple_bursts", SampleBuffer<RippleTestStream>>>,
+             {.file_name = "ripple_bursts.bin"}>
         recorder{"recorder"};
 
     while (next_pass()) {
-        recorder.process({.inputs = {signal_generator_to_recorder_sample_ring}});
+        recorder.process({.inputs = {ripple_bursts_ring_to_core8}});
     }
 }
 

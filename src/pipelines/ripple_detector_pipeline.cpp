@@ -13,13 +13,11 @@
 using RippleTestStream = StreamInfo<4, 30000.0, float>;
 
 // Connections between cores
-SampleRing<RippleTestStream, 64> signal_generator_to_ripple_filter_sample_ring{
-    "signal_generator_to_ripple_filter_sample_ring"};
+SampleRing<RippleTestStream, 64> signal_generator_output_ring_to_core5{
+    "signal_generator_output_ring_to_core5"};
 // Half a second of samples, so a write that blocks for a while loses none.
-SampleRing<RippleTestStream, 16384> ripple_filter_to_recorder_sample_ring{
-    "ripple_filter_to_recorder_sample_ring"};
-EventRing<Ripple, 1, 64> ripple_detector_to_recorder_event_ring{
-    "ripple_detector_to_recorder_event_ring"};
+SampleRing<RippleTestStream, 16384> filtered_signal_ring_to_core8{"filtered_signal_ring_to_core8"};
+EventRing<Ripple, 1, 64> ripples_ring_to_core8{"ripples_ring_to_core8"};
 
 void core4() {
     // Processors
@@ -28,7 +26,7 @@ void core4() {
         signal_generator{"signal_generator"};
 
     while (next_pass()) {
-        signal_generator.process({.output = signal_generator_to_ripple_filter_sample_ring});
+        signal_generator.process({.output = signal_generator_output_ring_to_core5});
     }
 }
 
@@ -75,43 +73,39 @@ void core5() {
               }>
         ripple_filter{"ripple_filter"};
     RippleDetector<RippleTestStream, RippleDetectorOptions{}> ripple_detector{"ripple_detector"};
-    EventLogger<Ripple, 1> ripple_logger{"ripple_logger"};
+    EventLogger<Slots<Slot<"ripples", EventBuffer<Ripple, 1>>>> ripple_logger{"ripple_logger"};
 
     // Connections
     // Each of these two is read on this core and also goes to the recorder's core.
-    SampleBuffer<RippleTestStream> ripple_filter_to_ripple_detector_sample_buffer{
-        ripple_filter_to_recorder_sample_ring};
-    EventBuffer<Ripple, 1> ripple_detector_to_ripple_logger_event_buffer{
-        ripple_detector_to_recorder_event_ring};
+    SampleBuffer<RippleTestStream> filtered_signal_buffer{filtered_signal_ring_to_core8};
+    EventBuffer<Ripple, 1> ripples_buffer{ripples_ring_to_core8};
 
     while (next_pass()) {
         ripple_filter.process({
-            .input = signal_generator_to_ripple_filter_sample_ring,
-            .output = ripple_filter_to_ripple_detector_sample_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = filtered_signal_buffer,
         });
         ripple_detector.process({
-            .input = ripple_filter_to_ripple_detector_sample_buffer,
-            .output = ripple_detector_to_ripple_logger_event_buffer,
+            .input = filtered_signal_buffer,
+            .output = ripples_buffer,
         });
-        ripple_logger.process({.input = ripple_detector_to_ripple_logger_event_buffer});
+        ripple_logger.process({.inputs = {ripples_buffer}});
     }
 }
 
 void core8() {
     // Processors
-    Recorder<RecorderOptions<2>{
-                 .file_name = "ripple_detector.bin",
-                 .slot_names = {"filtered_signal", "ripples"},
-             },
-             SampleBuffer<RippleTestStream>, EventBuffer<Ripple, 1>>
+    Recorder<Slots<Slot<"filtered_signal", SampleBuffer<RippleTestStream>>,
+                   Slot<"ripples", EventBuffer<Ripple, 1>>>,
+             {.file_name = "ripple_detector.bin"}>
         recorder{"recorder"};
 
     while (next_pass()) {
         recorder.process({
             .inputs =
                 {
-                    ripple_filter_to_recorder_sample_ring,
-                    ripple_detector_to_recorder_event_ring,
+                    filtered_signal_ring_to_core8,
+                    ripples_ring_to_core8,
                 },
         });
     }

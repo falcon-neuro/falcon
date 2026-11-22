@@ -303,16 +303,17 @@ struct ReadDeclaration {
     std::size_t line = 0;
 };
 
-// A port that a call gives a buffer.
-struct ReadPortBuffer {
+// A port that a call gives a buffer, or several in braces.
+struct ReadPortBuffers {
     std::string port_name;
-    std::string buffer_name;
+    std::vector<std::string> buffer_names;
+    bool is_in_braces = false;
 };
 
 // A call of a processor in a core's loop.
 struct ReadCall {
     std::string processor_name;
-    std::vector<ReadPortBuffer> port_buffers;
+    std::vector<ReadPortBuffers> port_buffers;
     std::size_t line = 0;
 };
 
@@ -362,6 +363,28 @@ struct ReadFile {
     return declaration;
 }
 
+// What a call gives one of its ports, from behind the `=`: a buffer's name, or several in braces.
+[[nodiscard]] inline ReadPortBuffers read_port_buffers(TokenReader& reader, std::string port_name) {
+    ReadPortBuffers port_buffers{
+        .port_name = std::move(port_name),
+        .buffer_names = {},
+        .is_in_braces = next_is(reader, "{"),
+    };
+    if (!port_buffers.is_in_braces) {
+        port_buffers.buffer_names.push_back(take_word(reader, "a buffer's name"));
+        return port_buffers;
+    }
+    expect(reader, "{");
+    while (!next_is(reader, "}")) {
+        port_buffers.buffer_names.push_back(take_word(reader, "a buffer's name"));
+        if (!next_is(reader, "}")) {
+            expect(reader, ",");
+        }
+    }
+    expect(reader, "}");
+    return port_buffers;
+}
+
 [[nodiscard]] inline ReadCall read_call(TokenReader& reader) {
     ReadCall call;
     call.line = line_of_next(reader);
@@ -371,13 +394,7 @@ struct ReadFile {
         expect(reader, ".");
         std::string port_name = take_word(reader, "a port's name");
         expect(reader, "=");
-        if (next_is(reader, "{")) {
-            refuse_at(line_of_next(reader),
-                      "the reader doesn't read a port that is given several buffers");
-        }
-        std::string buffer_name = take_word(reader, "a buffer's name");
-        call.port_buffers.push_back(
-            {.port_name = std::move(port_name), .buffer_name = std::move(buffer_name)});
+        call.port_buffers.push_back(read_port_buffers(reader, std::move(port_name)));
         if (!next_is(reader, "}")) {
             expect(reader, ",");
         }
@@ -748,10 +765,39 @@ struct ReadRing {
 // The file's rings, by their names.
 using ReadRings = std::map<std::string, ReadRing, std::less<>>;
 
+// One slot of a port that takes several connections: its place among them, and the name that the
+// processor's type gives it.
+struct ReadSlot {
+    std::size_t index = 0;
+    std::string name;
+};
+
 // An input that a call gives a buffer or a ring, to be connected once the writer of that is known.
 struct PendingInput {
     InputReference input;
     std::string source_name;
+    std::size_t line = 0;
+    std::optional<ReadSlot> slot;  // for an input that takes several connections
+};
+
+// The names that a processor's type lists for the slots of one of its ports, in their order.
+struct ReadSlotList {
+    InputReference input;
+    std::vector<std::string> names;
+};
+
+// Where a connection into a port that takes several lies among the graph's connections, and
+// which of the port's slots it is.
+struct SlotPlace {
+    std::size_t connection_index = 0;
+    std::size_t slot_index = 0;
+};
+
+// What a file calls an output: in a slot that the output is connected to, or in the name of the
+// output's buffer or ring.
+struct ReadOutputName {
+    OutputReference output;
+    std::string name;
     std::size_t line = 0;
 };
 
@@ -762,6 +808,10 @@ struct GraphBeingRead {
     // The inputs that read a ring. They are connected once every function's calls are read, since
     // a ring's writer may be called in a function further down.
     std::vector<PendingInput> ring_inputs;
+    std::vector<ReadSlotList> slot_lists;
+    std::vector<SlotPlace> slot_places;
+    std::vector<ReadOutputName> output_names;   // from the slots
+    std::vector<ReadOutputName> carrier_names;  // from the buffers and the rings
 };
 
 // A buffer that a core's function declares, with the rings it is given, which carry what it
@@ -824,16 +874,115 @@ inline void refuse_option_that_names_stream(const ReadDeclaration& declaration,
     }
 }
 
+[[noreturn]] inline void refuse_slot_list(const ReadDeclaration& declaration,
+                                          std::string_view port_name) {
+    refuse_at(declaration.line, std::format("the slots of {}'s port {} must be written as "
+                                            "Slots<Slot<\"name\", Kind>, ...>",
+                                            declaration.variable_name, port_name));
+}
+
+// The name of one slot, from `Slot<"filtered_signal", SampleBuffer<Stream>>`. Its kind isn't
+// read: it follows from what is connected to the slot.
+[[nodiscard]] inline std::string slot_name_of(std::string_view slot,
+                                              const ReadDeclaration& declaration,
+                                              std::string_view port_name) {
+    const std::vector<Token> tokens = tokens_of(slot, declaration.line);
+    TokenReader reader{.tokens = tokens};
+    if (!next_is(reader, "Slot")) {
+        refuse_slot_list(declaration, port_name);
+    }
+    take(reader);
+    if (!next_is(reader, "<")) {
+        refuse_slot_list(declaration, port_name);
+    }
+    const std::vector<std::string> arguments = take_template_arguments(reader, slot);
+    const std::string_view quoted_name = arguments.front();
+    const bool is_name_and_kind = arguments.size() == 2 && is_at_end(reader) &&
+                                  quoted_name.size() >= 2 && quoted_name.starts_with('"') &&
+                                  quoted_name.ends_with('"');
+    if (!is_name_and_kind) {
+        refuse_slot_list(declaration, port_name);
+    }
+    std::string name(quoted_name.substr(1, quoted_name.size() - 2));
+    if (!is_slot_name(name)) {
+        refuse_at(declaration.line,
+                  std::format("\"{}\" can't be a slot's name: a name holds letters, digits and _ "
+                              "only, and isn't empty",
+                              name));
+    }
+    return name;
+}
+
+// The names of the slots that a processor's type lists for one of its ports, from a list written
+// as `Slots<Slot<"filtered_signal", SampleBuffer<Stream>>, Slot<"ripples", EventBuffer<Ripple,
+// 1>>>`.
+[[nodiscard]] inline std::vector<std::string> slot_names_of(std::string_view slot_list,
+                                                            const ReadDeclaration& declaration,
+                                                            std::string_view port_name) {
+    const std::vector<Token> tokens = tokens_of(slot_list, declaration.line);
+    TokenReader reader{.tokens = tokens};
+    if (!next_is(reader, "Slots")) {
+        refuse_slot_list(declaration, port_name);
+    }
+    take(reader);
+    std::vector<std::string> names;
+    // A list of no slots has nothing between its angle brackets, which is no template argument.
+    const bool is_empty_list = tokens.size() == 3 && tokens[1].text == "<" && tokens[2].text == ">";
+    if (is_empty_list) {
+        return names;
+    }
+    if (!next_is(reader, "<")) {
+        refuse_slot_list(declaration, port_name);
+    }
+    for (const std::string& slot : take_template_arguments(reader, slot_list)) {
+        names.push_back(slot_name_of(slot, declaration, port_name));
+    }
+    if (!is_at_end(reader)) {
+        refuse_slot_list(declaration, port_name);
+    }
+    return names;
+}
+
+// Notes the slots that a processor's type lists for each of its ports that take several
+// connections. Which template argument holds a port's list is said by the port's type, which
+// names that template parameter.
+inline void read_slot_lists_into(GraphBeingRead& being_read, const ReadDeclaration& declaration,
+                                 const ProcessorDescription& type, ProcessorId processor_id) {
+    for (const PortDescription& port : type.ports) {
+        if (!port.has_slots) {
+            continue;
+        }
+        if (port.direction == PortDirection::Output) {
+            refuse_at(declaration.line,
+                      std::format("the reader doesn't read a {}, whose output {} takes several "
+                                  "connections",
+                                  type.name, port.name));
+        }
+        const std::vector<std::string> port_type_arguments = type_arguments(port.type);
+        const std::string_view list_parameter =
+            port_type_arguments.empty() ? std::string_view{} : port_type_arguments.front();
+        const auto parameter = std::ranges::find(
+            type.template_parameters, list_parameter,
+            [](const char* candidate) { return template_parameter_name(candidate); });
+        const auto parameter_index = static_cast<std::size_t>(
+            std::ranges::distance(type.template_parameters.begin(), parameter));
+        if (parameter_index >= declaration.template_arguments.size()) {
+            refuse_at(declaration.line, std::format("the type of {} lists no slots for its port {}",
+                                                    declaration.variable_name, port.name));
+        }
+        being_read.slot_lists.push_back({
+            .input = {.processor = processor_id, .port = port.name},
+            .names = slot_names_of(declaration.template_arguments.at(parameter_index), declaration,
+                                   port.name),
+        });
+    }
+}
+
 // Adds a processor that a core's function declares to the graph, at the end of its core's list.
-inline void add_processor_to_graph(PipelineGraph& graph, const ReadDeclaration& declaration,
+inline void add_processor_to_graph(GraphBeingRead& being_read, const ReadDeclaration& declaration,
                                    const ProcessorDescription& type, int core_number,
                                    const std::vector<ReadStream>& streams) {
-    if (takes_argument_for_each_connection(type)) {
-        refuse_at(declaration.line,
-                  std::format("the reader doesn't read a {}, whose type takes an argument for each "
-                              "of its connections",
-                              type.name));
-    }
+    PipelineGraph& graph = being_read.graph;
     const bool is_named_in_quotes =
         declaration.initializer.size() == 1 &&
         declaration.initializer.front().text == std::format("\"{}\"", declaration.variable_name);
@@ -862,6 +1011,7 @@ inline void add_processor_to_graph(PipelineGraph& graph, const ReadDeclaration& 
     if (type.starts_stream) {
         processor->stream = stream_started_by(declaration, type, streams);
     }
+    read_slot_lists_into(being_read, declaration, type, processor_id);
 }
 
 // A buffer as a core's function declares it. What stands in its braces are the rings it is given.
@@ -892,7 +1042,7 @@ inline void add_processor_to_graph(PipelineGraph& graph, const ReadDeclaration& 
         const auto type =
             std::ranges::find(processor_types, declaration.type_name, &ProcessorDescription::name);
         if (type != processor_types.end()) {
-            add_processor_to_graph(being_read.graph, declaration, *type, core_number, file.streams);
+            add_processor_to_graph(being_read, declaration, *type, core_number, file.streams);
         } else if (std::ranges::contains(BUFFER_TYPE_NAMES, declaration.type_name)) {
             buffers.push_back(buffer_of(declaration, being_read.rings));
         } else {
@@ -927,16 +1077,16 @@ inline void add_processor_to_graph(PipelineGraph& graph, const ReadDeclaration& 
 }
 
 // Notes the output that writes a ring. A ring has one.
-inline void set_ring_writer(ReadRings& rings, const ReadPortBuffer& port_buffer,
+inline void set_ring_writer(ReadRings& rings, std::string_view ring_name,
                             const OutputReference& output, std::size_t line) {
-    const auto found = rings.find(port_buffer.buffer_name);
+    const auto found = rings.find(ring_name);
     if (found == rings.end()) {
         refuse_at(line, std::format("{} is no buffer that this function declares, and no ring",
-                                    port_buffer.buffer_name));
+                                    ring_name));
     }
     ReadRing& ring = found->second;
     if (ring.writer.value_or(output) != output) {
-        refuse_at(line, std::format("two outputs write the ring {}", port_buffer.buffer_name));
+        refuse_at(line, std::format("two outputs write the ring {}", ring_name));
     }
     ring.writer = output;
 }
@@ -944,45 +1094,114 @@ inline void set_ring_writer(ReadRings& rings, const ReadPortBuffer& port_buffer,
 // Takes in an output that a call gives a buffer or a ring: it writes that, and the rings that the
 // buffer is given.
 inline void read_output_into(GraphBeingRead& being_read, CoreBeingRead& core,
-                             const OutputReference& output, const ReadPortBuffer& port_buffer,
+                             const OutputReference& output, std::string_view buffer_name,
                              std::size_t line) {
-    const auto buffer = std::ranges::find(core.buffers, port_buffer.buffer_name, &ReadBuffer::name);
+    const auto buffer = std::ranges::find(core.buffers, buffer_name, &ReadBuffer::name);
     if (buffer == core.buffers.end()) {
-        set_ring_writer(being_read.rings, port_buffer, output, line);
+        set_ring_writer(being_read.rings, buffer_name, output, line);
         return;
     }
     if (!core.buffer_writers.emplace(buffer->name, output).second) {
         refuse_at(line, std::format("two outputs write the buffer {}", buffer->name));
     }
     for (const std::string& ring_name : buffer->ring_names) {
-        set_ring_writer(being_read.rings,
-                        {.port_name = port_buffer.port_name, .buffer_name = ring_name}, output,
-                        line);
+        set_ring_writer(being_read.rings, ring_name, output, line);
     }
 }
 
 // Takes in an input that a call gives a buffer or a ring, to be connected later.
-inline void read_input_into(GraphBeingRead& being_read, CoreBeingRead& core,
-                            const InputReference& input, const ReadPortBuffer& port_buffer,
-                            std::size_t line) {
-    PendingInput pending{.input = input, .source_name = port_buffer.buffer_name, .line = line};
-    if (std::ranges::contains(core.buffers, port_buffer.buffer_name, &ReadBuffer::name)) {
+inline void read_input_into(GraphBeingRead& being_read, CoreBeingRead& core, PendingInput pending) {
+    if (std::ranges::contains(core.buffers, pending.source_name, &ReadBuffer::name)) {
         core.buffer_inputs.push_back(std::move(pending));
         return;
     }
-    const auto found = being_read.rings.find(port_buffer.buffer_name);
+    const auto found = being_read.rings.find(pending.source_name);
     if (found == being_read.rings.end()) {
-        refuse_at(line, std::format("{} is no buffer that this function declares, and no ring",
-                                    port_buffer.buffer_name));
+        refuse_at(pending.line,
+                  std::format("{} is no buffer that this function declares, and no ring",
+                              pending.source_name));
     }
     ReadRing& ring = found->second;
     if (ring.reader_core_number.value_or(core.core_number) != core.core_number) {
-        refuse_at(line, std::format("the ring {} is read on two cores, and a ring has one core "
-                                    "that reads it",
-                                    port_buffer.buffer_name));
+        refuse_at(pending.line, std::format("the ring {} is read on two cores, and a ring has one "
+                                            "core that reads it",
+                                            pending.source_name));
     }
     ring.reader_core_number = core.core_number;
     being_read.ring_inputs.push_back(std::move(pending));
+}
+
+// The names that a processor's type lists for the slots of a port, or none for a port that takes
+// one connection.
+[[nodiscard]] inline const std::vector<std::string>* slot_names_of_port(
+    const GraphBeingRead& being_read, const InputReference& input) {
+    const auto slot_list = std::ranges::find(being_read.slot_lists, input, &ReadSlotList::input);
+    return slot_list == being_read.slot_lists.end() ? nullptr : &slot_list->names;
+}
+
+// Refuses a call that doesn't give each port with several connections as many as the processor's
+// type lists slots for it. A port that the call leaves out is given none.
+inline void refuse_slots_that_the_call_does_not_fill(const GraphBeingRead& being_read,
+                                                     const GraphProcessor& processor,
+                                                     const ReadCall& call) {
+    for (const ReadSlotList& slot_list : being_read.slot_lists) {
+        if (slot_list.input.processor != processor.id) {
+            continue;
+        }
+        const auto given =
+            std::ranges::find(call.port_buffers, slot_list.input.port, &ReadPortBuffers::port_name);
+        const std::size_t given_count =
+            given == call.port_buffers.end() ? 0 : given->buffer_names.size();
+        if (given_count != slot_list.names.size()) {
+            refuse_at(call.line,
+                      std::format("the type of {} lists {} slots for its port {}, and its call "
+                                  "gives that port {} connections",
+                                  processor.name, slot_list.names.size(), slot_list.input.port,
+                                  given_count));
+        }
+    }
+}
+
+// Takes in what a call gives one port of a processor.
+inline void read_port_into(GraphBeingRead& being_read, CoreBeingRead& core,
+                           const GraphProcessor& processor, const ReadPortBuffers& port_buffers,
+                           std::size_t line) {
+    const auto port =
+        std::ranges::find(processor.type->ports, port_buffers.port_name, &PortDescription::name);
+    if (port == processor.type->ports.end()) {
+        refuse_at(line,
+                  std::format("a {} has no port {}", processor.type->name, port_buffers.port_name));
+    }
+    if (port->has_slots != port_buffers.is_in_braces) {
+        refuse_at(
+            line,
+            std::format("the port {} of a {} takes {}", port->name, processor.type->name,
+                        port->has_slots ? "several connections, which its call gives it in braces"
+                                        : "one connection, and its call gives it a list in "
+                                          "braces"));
+    }
+    const InputReference input{.processor = processor.id, .port = port_buffers.port_name};
+    const std::vector<std::string>* slot_names = slot_names_of_port(being_read, input);
+    for (std::size_t buffer_index = 0; buffer_index < port_buffers.buffer_names.size();
+         ++buffer_index) {
+        const std::string& buffer_name = port_buffers.buffer_names.at(buffer_index);
+        if (port->direction == PortDirection::Output) {
+            read_output_into(being_read, core,
+                             {.processor = processor.id, .port = port_buffers.port_name},
+                             buffer_name, line);
+            continue;
+        }
+        PendingInput pending{
+            .input = input,
+            .source_name = buffer_name,
+            .line = line,
+            .slot = std::nullopt,
+        };
+        if (slot_names != nullptr) {
+            pending.slot = ReadSlot{.index = buffer_index, .name = slot_names->at(buffer_index)};
+        }
+        read_input_into(being_read, core, std::move(pending));
+    }
 }
 
 // Takes in what one call says: what its outputs write, and the inputs still to connect.
@@ -996,29 +1215,17 @@ inline void read_call_into(GraphBeingRead& being_read, CoreBeingRead& core, cons
         refuse_at(call.line, std::format("{} is called here, and this function doesn't declare it",
                                          call.processor_name));
     }
-    for (const ReadPortBuffer& port_buffer : call.port_buffers) {
-        const auto port = std::ranges::find(processor->type->ports, port_buffer.port_name,
-                                            &PortDescription::name);
-        if (port == processor->type->ports.end()) {
-            refuse_at(call.line, std::format("a {} has no port {}", processor->type->name,
-                                             port_buffer.port_name));
-        }
-        if (port->direction == PortDirection::Output) {
-            read_output_into(being_read, core,
-                             {.processor = processor->id, .port = port_buffer.port_name},
-                             port_buffer, call.line);
-        } else {
-            read_input_into(being_read, core,
-                            {.processor = processor->id, .port = port_buffer.port_name},
-                            port_buffer, call.line);
-        }
+    refuse_slots_that_the_call_does_not_fill(being_read, *processor, call);
+    for (const ReadPortBuffers& port_buffers : call.port_buffers) {
+        read_port_into(being_read, core, *processor, port_buffers, call.line);
     }
 }
 
 // Connects an output to an input that a call gives the output's buffer or ring. Returns the
 // connection it made.
-inline GraphConnection& connect_in_graph(PipelineGraph& graph, const OutputReference& output,
+inline GraphConnection& connect_in_graph(GraphBeingRead& being_read, const OutputReference& output,
                                          const PendingInput& pending) {
+    PipelineGraph& graph = being_read.graph;
     const PortDescription* output_port =
         graph.find_port(output.processor, output.port, PortDirection::Output);
     const PortDescription* input_port =
@@ -1029,15 +1236,118 @@ inline GraphConnection& connect_in_graph(PipelineGraph& graph, const OutputRefer
     if (output_port->kind == PortKind::State) {
         refuse_at(pending.line, "the reader doesn't read a connection of a state value");
     }
-    if (input_port->has_slots) {
-        refuse_at(pending.line, "the reader doesn't read an input that takes several connections");
-    }
     const ConnectionVerdict verdict = graph.connection_verdict(output, pending.input);
     if (verdict != ConnectionVerdict::Fits || !graph.connect(output, pending.input)) {
         refuse_at(pending.line, std::format("the connection through {} doesn't fit: {}",
                                             pending.source_name, reason_of(verdict)));
     }
+    if (pending.slot.has_value()) {
+        being_read.slot_places.push_back({
+            .connection_index = graph.connections.size() - 1,
+            .slot_index = pending.slot->index,
+        });
+        being_read.output_names.push_back({
+            .output = output,
+            .name = pending.slot->name,
+            .line = pending.line,
+        });
+    }
     return graph.connections.back();
+}
+
+// Puts the connections into each port that takes several in the order its call lists them. They
+// were made as their writers became known, those through a buffer before those through a ring,
+// and a connection's place among those of its port is its slot.
+inline void order_slot_connections(GraphBeingRead& being_read) {
+    std::vector<GraphConnection>& connections = being_read.graph.connections;
+    std::vector<SlotPlace> places = being_read.slot_places;
+    std::ranges::stable_sort(places, {}, &SlotPlace::slot_index);
+    std::vector<bool> is_ordered(places.size(), false);
+    for (std::size_t first_place = 0; first_place < places.size(); ++first_place) {
+        if (is_ordered.at(first_place)) {
+            continue;
+        }
+        const InputReference input = connections.at(places.at(first_place).connection_index).input;
+        std::vector<std::size_t> indices_of_port;
+        std::vector<GraphConnection> in_slot_order;
+        for (std::size_t place = first_place; place < places.size(); ++place) {
+            const std::size_t connection_index = places.at(place).connection_index;
+            if (!is_ordered.at(place) && connections.at(connection_index).input == input) {
+                is_ordered.at(place) = true;
+                indices_of_port.push_back(connection_index);
+                in_slot_order.push_back(connections.at(connection_index));
+            }
+        }
+        std::ranges::sort(indices_of_port);
+        for (std::size_t slot = 0; slot < indices_of_port.size(); ++slot) {
+            connections.at(indices_of_port.at(slot)) = in_slot_order.at(slot);
+        }
+    }
+}
+
+// What a buffer or a ring is called after, where its name ends as the writer ends it: "spikes"
+// for "spikes_buffer" and the ending "_buffer". None for any other name, which says nothing of
+// what its output is called.
+[[nodiscard]] inline std::optional<std::string> name_in_front_of(std::string_view carrier_name,
+                                                                 std::string_view ending) {
+    if (!carrier_name.ends_with(ending) || carrier_name.size() == ending.size()) {
+        return std::nullopt;
+    }
+    return std::string(carrier_name.substr(0, carrier_name.size() - ending.size()));
+}
+
+// Notes what each ring is called after, for the output that writes it.
+inline void read_names_of_rings(GraphBeingRead& being_read) {
+    for (const auto& [ring_name, ring] : being_read.rings) {
+        if (!ring.writer.has_value() || !ring.reader_core_number.has_value()) {
+            continue;
+        }
+        const std::string ending =
+            std::format("_ring_to_core{}", ring.reader_core_number.value_or(0));
+        if (std::optional<std::string> name = name_in_front_of(ring_name, ending)) {
+            being_read.carrier_names.push_back({
+                .output = ring.writer.value_or(OutputReference{}),
+                .name = std::move(*name),
+                .line = ring.line,
+            });
+        }
+    }
+}
+
+// Gives each output the name that the file calls it, where that isn't its processor's name and
+// its own. What an output gives has one name, whichever port reads it: the one its slots call
+// it, and for an output that goes into no slot, the one its buffer or its ring is called after.
+// The writer makes all of them the same; where a file written by hand doesn't, the slots count.
+inline void name_outputs(GraphBeingRead& being_read) {
+    PipelineGraph& graph = being_read.graph;
+    std::vector<OutputReference> named_outputs;
+    for (const ReadOutputName& read_name : being_read.output_names) {
+        const std::string held_name = graph.name_of_output(read_name.output);
+        const bool is_named_already = std::ranges::contains(named_outputs, read_name.output);
+        named_outputs.push_back(read_name.output);
+        if (read_name.name == held_name) {
+            continue;
+        }
+        if (is_named_already) {
+            const GraphProcessor* writer = graph.find_processor(read_name.output.processor);
+            refuse_at(read_name.line,
+                      std::format("{}.{} is called {} by one slot and {} by another, and what an "
+                                  "output gives has one name",
+                                  writer == nullptr ? std::string() : writer->name,
+                                  read_name.output.port, held_name, read_name.name));
+        }
+        graph.renamed_outputs.push_back({.output = read_name.output, .name = read_name.name});
+    }
+    for (const ReadOutputName& carrier_name : being_read.carrier_names) {
+        if (std::ranges::contains(named_outputs, carrier_name.output)) {
+            continue;
+        }
+        named_outputs.push_back(carrier_name.output);
+        if (carrier_name.name != graph.name_of_output(carrier_name.output)) {
+            graph.renamed_outputs.push_back(
+                {.output = carrier_name.output, .name = carrier_name.name});
+        }
+    }
 }
 
 // Adds a core's function to the graph: its processors, and the connections that its calls make
@@ -1077,7 +1387,16 @@ inline void add_core_to_graph(GraphBeingRead& being_read, const ReadFile& file,
             refuse_at(pending.line,
                       std::format("no output writes the buffer {}", pending.source_name));
         }
-        connect_in_graph(graph, writer->second, pending);
+        connect_in_graph(being_read, writer->second, pending);
+    }
+    for (const auto& [buffer_name, output] : core_being_read.buffer_writers) {
+        if (std::optional<std::string> name = name_in_front_of(buffer_name, "_buffer")) {
+            being_read.carrier_names.push_back({
+                .output = output,
+                .name = std::move(*name),
+                .line = core.line,
+            });
+        }
     }
 }
 
@@ -1093,7 +1412,7 @@ inline void connect_ring_inputs(GraphBeingRead& being_read) {
         }
         const ReadRing& ring = found->second;
         GraphConnection& connection =
-            connect_in_graph(graph, ring.writer.value_or(OutputReference{}), pending);
+            connect_in_graph(being_read, ring.writer.value_or(OutputReference{}), pending);
         const GraphProcessor* reader = graph.find_processor(pending.input.processor);
         const auto reader_core = std::ranges::find(
             graph.cores, reader == nullptr ? 0 : reader->core_number, &GraphCore::number);
@@ -1190,6 +1509,9 @@ inline void connect_ring_inputs(GraphBeingRead& being_read) {
         add_core_to_graph(being_read, file, core, entry_of_core(file, core), processor_types);
     }
     connect_ring_inputs(being_read);
+    order_slot_connections(being_read);
+    read_names_of_rings(being_read);
+    name_outputs(being_read);
     return std::move(being_read.graph);
 }
 

@@ -49,6 +49,8 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - We are dealing with complex software architecture: there are no easy solutions, only trade-offs. If the answers were easy, I wouldn't brainstorm with you, so don't present a choice as obvious; work through the trade-offs with me.
 - In chat, always write "Ripple Neuromed" for the acquisition system, never "Ripple" alone: I mix it up with ripple detection.
 - One question or topic per message, never several. Queue the other pending points in the open questions of engine.md and raise them one per turn.
+- A hint or label in the UI is one short, plain line that says what the thing is for, e.g. "Label for this output in recordings and logs." (the user's pick on 22 November 2026). Never a paragraph that explains how Falcon works: one such hint was "terrible" and "compressed for no reason", and a longer, friendlier rewrite was "ai slop". Claude's reading: when unsure, write less.
+- Keep every chat message short: a few lines and one simple question that I can answer in seconds (said by the user on 22 November 2026, after messages that took minutes to read). Break a longer matter into pieces over several turns. Detail, lists of what changed and reasoning go into the docs, never into the chat unless I ask.
 
 ## Spec sessions
 Engine planning works only from the docs under **In progress** and this file.

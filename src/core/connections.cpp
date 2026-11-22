@@ -5,6 +5,7 @@
 #include <bit>
 #include <concepts>
 #include <cstddef>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 #include "events.cpp"
@@ -300,11 +301,68 @@ using StateInput = In<StateValue<StateType, default_value>>;
 template <StateValueType StateType, StateType initial_value>
 using StateOutput = Out<StateValue<StateType, initial_value>>;
 
+// --- Ports with slots ---
+
+// What a processor calls one connection of a port with slots, e.g. in a Recorder's file. A type a
+// template argument can hold. consteval, so a name with any other character is a compile error
+// where it is written, and no processor has to check one.
+struct SlotName {
+    Str text;
+
+    consteval SlotName(const char* name) : text(name) {
+        if (name[0] == '\0') {
+            throw std::invalid_argument("a slot's name can't be empty");
+        }
+        for (std::size_t character_index = 0; name[character_index] != '\0'; ++character_index) {
+            if (!is_letter_or_digit(name[character_index]) && name[character_index] != '_') {
+                throw std::invalid_argument("a slot's name holds only letters, digits and _");
+            }
+        }
+    }
+
+    [[nodiscard]] constexpr const char* c_str() const { return text.c_str(); }
+};
+
+// One slot of a port with slots: its name, and the kind of the connection it takes, a SampleBuffer
+// or an EventBuffer type.
+template <SlotName name, typename Kind>
+struct Slot {};
+
+// The slots of one port, in the order pipeline.cpp gives the port its connections. A processor
+// takes one such list as a template parameter for each of its ports with slots.
+template <typename... SlotTypes>
+struct Slots {};
+
+template <typename SlotList>
+struct SlotListParts {
+    static_assert(false, "the slots of a port are written Slots<Slot<\"name\", Kind>, ...>");
+};
+
+template <SlotName... names, typename... Kinds>
+struct SlotListParts<Slots<Slot<names, Kinds>...>> {
+    static constexpr std::array<SlotName, sizeof...(Kinds)> names_in_order{names...};
+    using Inputs = std::tuple<In<Kinds>...>;
+    using Outputs = std::tuple<Out<Kinds>...>;
+};
+
 // A port with slots: one member of Connections that takes as many connections as pipeline.cpp
-// gives it, each of its own kind (a SampleBuffer or an EventBuffer type). Its processor is a
-// template over those kinds and goes through them with `template for`, where each slot has its
-// own type.
-template <typename... Kinds>
-using InputSlots = std::tuple<In<Kinds>...>;
-template <typename... Kinds>
-using OutputSlots = std::tuple<Out<Kinds>...>;
+// gives it, each of its own kind. Its processor goes through them with `template for`, where each
+// slot has its own type.
+template <typename SlotList>
+using InputSlots = SlotListParts<SlotList>::Inputs;
+template <typename SlotList>
+using OutputSlots = SlotListParts<SlotList>::Outputs;
+
+// The names of a list's slots, in the order of the port's connections.
+template <typename SlotList>
+inline constexpr auto SLOT_NAMES = SlotListParts<SlotList>::names_in_order;
+
+template <typename SlotList>
+inline constexpr bool HAS_ONLY_EVENT_SLOTS = false;
+template <SlotName... names, std::derived_from<Event>... EventTypes, int... capacities>
+inline constexpr bool
+    HAS_ONLY_EVENT_SLOTS<Slots<Slot<names, EventBuffer<EventTypes, capacities>>...>> = true;
+
+// A list whose slots all take events, of any kind: what a port takes that has no use for samples.
+template <typename SlotList>
+concept EventSlots = HAS_ONLY_EVENT_SLOTS<SlotList>;

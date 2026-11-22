@@ -19,8 +19,7 @@
 using TestStream = StreamInfo<16, 1000.0, float>;
 
 // Connections between cores
-SampleRing<TestStream, 4> sample_source_to_slow_sample_counter_sample_ring{
-    "sample_source_to_slow_sample_counter_sample_ring"};
+SampleRing<TestStream, 4> sample_source_output_ring_to_core2{"sample_source_output_ring_to_core2"};
 
 void core1() {
     // Processors
@@ -33,7 +32,7 @@ void core1() {
         lifetime_reporter.process({});
         first_warner.process({});
         second_warner.process({});
-        sample_source.process({.output = sample_source_to_slow_sample_counter_sample_ring});
+        sample_source.process({.output = sample_source_output_ring_to_core2});
     }
 }
 
@@ -44,7 +43,7 @@ void core2() {
 
     while (next_pass()) {
         argument_logger.process({});
-        slow_sample_counter.process({.input = sample_source_to_slow_sample_counter_sample_ring});
+        slow_sample_counter.process({.input = sample_source_output_ring_to_core2});
     }
 }
 

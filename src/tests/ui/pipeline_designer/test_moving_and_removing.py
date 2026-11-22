@@ -6,7 +6,7 @@ def chain_and_lone_trigger(designer):
     """On core 0: an EventGenerator with an EventLogger under it, and a Trigger beside them."""
     generator = designer.add_processor("EventGenerator", core=0)
     logger = designer.add_processor("EventLogger", core=0)
-    designer.connect((generator, "output"), (logger, "input"))
+    designer.connect((generator, "output"), (logger, "inputs"))
     trigger = designer.add_processor("Trigger", core=0)
     assert designer.rows(0) == [[(generator, 0), (trigger, 1)], [(logger, 0)]]
     return generator, logger, trigger
@@ -22,7 +22,7 @@ def test_block_dragged_into_another_core_moves_that_processor_alone():
         assert processors[logger]["core"] == 1
         assert processors[generator]["core"] == 0 and processors[trigger]["core"] == 0
         # Its connections stay as they are.
-        assert designer.connections() == [(f"{generator}.output", f"{logger}.input")]
+        assert designer.connections() == [(f"{generator}.output", f"{logger}.inputs")]
         assert designer.core_list(1) == [logger]
 
 
@@ -53,7 +53,7 @@ def test_block_dragged_inside_its_core_moves_its_whole_chain():
         designer.drop()
 
         assert designer.rows(0) == [[(trigger, 0), (generator, 1)], [(logger, 1)]]
-        assert designer.connections() == [(f"{generator}.output", f"{logger}.input")]
+        assert designer.connections() == [(f"{generator}.output", f"{logger}.inputs")]
         assert all(processor["core"] == 0 for processor in designer.processors().values())
 
 
@@ -74,7 +74,7 @@ def test_remove_icon_removes_the_processor_and_its_connections():
         trigger = designer.add_processor("Trigger", core=0)
         logger = designer.add_processor("EventLogger", core=0)
         designer.connect((detector, "output"), (trigger, "input"))
-        designer.connect((trigger, "output"), (logger, "input"))
+        designer.connect((trigger, "output"), (logger, "inputs"))
 
         designer.click(f"block/{trigger}/remove")
         assert sorted(designer.processors()) == sorted([detector, logger])

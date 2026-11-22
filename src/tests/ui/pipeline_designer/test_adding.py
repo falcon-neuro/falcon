@@ -130,7 +130,7 @@ def test_a_drop_place_stands_left_of_each_chain_and_right_of_the_last():
     with Designer() as designer:
         generator = designer.add_processor("EventGenerator", core=0)
         logger = designer.add_processor("EventLogger", core=0)
-        designer.connect((generator, "output"), (logger, "input"))
+        designer.connect((generator, "output"), (logger, "inputs"))
         trigger = designer.add_processor("Trigger", core=0)
 
         # Two chains: the generator with its logger under it, and the trigger.

@@ -65,7 +65,8 @@ struct DesignerStateBesidesGraph {
                               : "null";
 }
 
-// A processor with the stream it starts and the stream it takes at its samples input.
+// A processor with the stream it starts, the stream it takes at its samples input, and the name
+// of what each of its outputs gives.
 [[nodiscard]] inline std::string processor_as_json(const PipelineGraph& graph,
                                                    const GraphProcessor& processor) {
     std::string options = "{";
@@ -81,10 +82,24 @@ struct DesignerStateBesidesGraph {
         ++option_index;
     }
     options += '}';
-    return std::format(
-        R"({{"name":{},"type":{},"core":{},"options":{},"stream":{},"takes_stream":{}}})",
-        json_text(processor.name), json_text(processor.type->name), processor.core_number, options,
-        stream_as_json(processor.stream), stream_as_json(graph.stream_taken_by(processor.id)));
+    std::string output_names = "{";
+    for (const PortDescription& port : processor.type->ports) {
+        if (port.direction != PortDirection::Output) {
+            continue;
+        }
+        if (output_names.size() > 1) {
+            output_names += ',';
+        }
+        output_names += std::format(
+            "{}:{}", json_text(port.name),
+            json_text(graph.name_of_output({.processor = processor.id, .port = port.name})));
+    }
+    output_names += '}';
+    return std::format(R"({{"name":{},"type":{},"core":{},"options":{},"stream":{},)"
+                       R"("takes_stream":{},"output_names":{}}})",
+                       json_text(processor.name), json_text(processor.type->name),
+                       processor.core_number, options, stream_as_json(processor.stream),
+                       stream_as_json(graph.stream_taken_by(processor.id)), output_names);
 }
 
 // A core's list, and its rows as the layout places them.

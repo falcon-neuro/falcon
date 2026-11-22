@@ -18,9 +18,8 @@
 using ComparisonTestStream = StreamInfo<2, 30000.0, float>;
 
 // Connections between cores
-SampleRing<ComparisonTestStream, 4>
-    signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring{
-        "signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring"};
+SampleRing<ComparisonTestStream, 4> signal_generator_output_ring_to_core5{
+    "signal_generator_output_ring_to_core5"};
 
 void core4() {
     // Processors
@@ -35,8 +34,7 @@ void core4() {
         signal_generator{"signal_generator"};
 
     while (next_pass()) {
-        signal_generator.process(
-            {.output = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring});
+        signal_generator.process({.output = signal_generator_output_ring_to_core5});
     }
 }
 
@@ -70,36 +68,37 @@ void core5() {
         ap_filter{"ap_filter"};
     SpikeDetector<ComparisonTestStream, {.threshold = -70}> filtered_spike_detector{
         "filtered_spike_detector"};
-    EventLogger<Spikes<ComparisonTestStream>, 1, {.style = LoggingStyle::CountPerSecond}>
+    EventLogger<
+        Slots<Slot<"filtered_spike_detector_output", EventBuffer<Spikes<ComparisonTestStream>, 1>>>,
+        {.style = LoggingStyle::CountPerSecond}>
         filtered_logger{"filtered_logger"};
     SpikeDetector<ComparisonTestStream, {.threshold = -70}> unfiltered_spike_detector{
         "unfiltered_spike_detector"};
-    EventLogger<Spikes<ComparisonTestStream>, 1, {.style = LoggingStyle::CountPerSecond}>
+    EventLogger<Slots<Slot<"unfiltered_spike_detector_output",
+                           EventBuffer<Spikes<ComparisonTestStream>, 1>>>,
+                {.style = LoggingStyle::CountPerSecond}>
         unfiltered_logger{"unfiltered_logger"};
 
     // Connections
-    SampleBuffer<ComparisonTestStream> ap_filter_to_filtered_spike_detector_sample_buffer;
-    EventBuffer<Spikes<ComparisonTestStream>, 1>
-        filtered_spike_detector_to_filtered_logger_event_buffer;
-    EventBuffer<Spikes<ComparisonTestStream>, 1>
-        unfiltered_spike_detector_to_unfiltered_logger_event_buffer;
+    SampleBuffer<ComparisonTestStream> ap_filter_output_buffer;
+    EventBuffer<Spikes<ComparisonTestStream>, 1> filtered_spike_detector_output_buffer;
+    EventBuffer<Spikes<ComparisonTestStream>, 1> unfiltered_spike_detector_output_buffer;
 
     while (next_pass()) {
         ap_filter.process({
-            .input = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring,
-            .output = ap_filter_to_filtered_spike_detector_sample_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = ap_filter_output_buffer,
         });
         filtered_spike_detector.process({
-            .input = ap_filter_to_filtered_spike_detector_sample_buffer,
-            .output = filtered_spike_detector_to_filtered_logger_event_buffer,
+            .input = ap_filter_output_buffer,
+            .output = filtered_spike_detector_output_buffer,
         });
-        filtered_logger.process({.input = filtered_spike_detector_to_filtered_logger_event_buffer});
+        filtered_logger.process({.inputs = {filtered_spike_detector_output_buffer}});
         unfiltered_spike_detector.process({
-            .input = signal_generator_to_ap_filter_and_unfiltered_spike_detector_sample_ring,
-            .output = unfiltered_spike_detector_to_unfiltered_logger_event_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = unfiltered_spike_detector_output_buffer,
         });
-        unfiltered_logger.process(
-            {.input = unfiltered_spike_detector_to_unfiltered_logger_event_buffer});
+        unfiltered_logger.process({.inputs = {unfiltered_spike_detector_output_buffer}});
     }
 }
 

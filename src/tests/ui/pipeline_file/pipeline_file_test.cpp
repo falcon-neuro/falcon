@@ -133,10 +133,44 @@ inline void connect_output_to_input(PipelineGraph& graph, ProcessorId writer, Pr
     }
 }
 
+// Connects a processor's port named output to a port of another that takes several connections.
+inline void connect_output_to_slots(PipelineGraph& graph, ProcessorId writer, ProcessorId reader,
+                                    std::string_view port_name) {
+    if (!graph.connect({.processor = writer, .port = "output"},
+                       {.processor = reader, .port = std::string(port_name)})) {
+        throw std::logic_error("the test makes a connection that the graph doesn't take");
+    }
+}
+
+// Gives what a processor's port named output gives a name of the test's own.
+inline void rename_output(PipelineGraph& graph, ProcessorId processor_id, std::string_view name) {
+    graph.renamed_outputs.push_back({
+        .output = {.processor = processor_id, .port = "output"},
+        .name = std::string(name),
+    });
+}
+
+// Which slot a connection is, as a text, for a connection into a port that takes several; empty
+// for any other connection.
+[[nodiscard]] inline std::string slot_text_of(const PipelineGraph& graph,
+                                              const GraphConnection& connection) {
+    const PortDescription* input_port =
+        graph.find_port(connection.input.processor, connection.input.port, PortDirection::Input);
+    if (input_port == nullptr || !input_port->has_slots) {
+        return {};
+    }
+    const std::vector<const GraphConnection*> connections_of_port =
+        graph.connections_into(connection.input);
+    return std::format(", slot {}",
+                       std::ranges::distance(connections_of_port.begin(),
+                                             std::ranges::find(connections_of_port, &connection)));
+}
+
 // A graph as a text that names everything it holds, with processors by their names, so that two
 // graphs can be held against each other and a difference be read. Its lines are sorted: the order
 // in which a graph came to hold its cores, processors and connections says nothing. The order of
-// a core's list does, and is kept.
+// a core's list does, and is kept; so does a connection's place among those of a port that takes
+// several, which is its slot and is named.
 [[nodiscard]] inline std::string described(const PipelineGraph& graph) {
     std::vector<std::string> lines;
     for (const GraphCore& core : graph.cores) {
@@ -162,12 +196,17 @@ inline void connect_output_to_input(PipelineGraph& graph, ProcessorId writer, Pr
     }
     for (const GraphConnection& connection : graph.connections) {
         lines.push_back(std::format(
-            "connection: {}.{} to {}.{}{}", processor_of(graph, connection.output.processor).name,
+            "connection: {}.{} to {}.{}{}{}", processor_of(graph, connection.output.processor).name,
             connection.output.port, processor_of(graph, connection.input.processor).name,
-            connection.input.port,
+            connection.input.port, slot_text_of(graph, connection),
             connection.ring_slot_count.has_value()
                 ? std::format(", ring of {} slots", connection.ring_slot_count.value_or(0))
                 : std::string()));
+    }
+    for (const RenamedOutput& renamed : graph.renamed_outputs) {
+        lines.push_back(std::format("output {}.{} is named {}",
+                                    processor_of(graph, renamed.output.processor).name,
+                                    renamed.output.port, renamed.name));
     }
     std::ranges::sort(lines);
     std::string text = std::format("name: {}\ndescription: {}\n", graph.name, graph.description);
@@ -188,7 +227,7 @@ inline void connect_output_to_input(PipelineGraph& graph, ProcessorId writer, Pr
     const ProcessorId logger =
         add_named(graph, {.type_name = "EventLogger", .name = "example_logger"});
     set_option(graph, generator, {.option_name = "rate", .value = "4"});
-    connect_output_to_input(graph, generator, logger);
+    connect_output_to_slots(graph, generator, logger, "inputs");
     return graph;
 }
 
@@ -199,13 +238,13 @@ inline constexpr std::string_view MONOTONOUS_EVENT_CODE = R"(#include "core/engi
 
 void core1() {
     EventGenerator<{.rate = 4}> dummy_generator{"dummy_generator"};
-    EventLogger<ScheduledEvent, 1, {.style = LoggingStyle::EveryEvent}> example_logger{"example_logger"};
+    EventLogger<Slots<Slot<"dummy_generator_output", EventBuffer<ScheduledEvent, 1>>>, {.style = LoggingStyle::EveryEvent}> example_logger{"example_logger"};
 
     EventBuffer<ScheduledEvent, 1> dummy_generator_output_buffer;
 
     while (next_pass()) {
         dummy_generator.process({.output = dummy_generator_output_buffer});
-        example_logger.process({.input = dummy_generator_output_buffer});
+        example_logger.process({.inputs = {dummy_generator_output_buffer}});
     }
 }
 
@@ -227,7 +266,8 @@ inline constexpr std::string_view MONOTONOUS_EVENT_BY_HAND =
 void first_core() {
     // Processors
     EventGenerator<{.rate = 4}> dummy_generator{"dummy_generator"};
-    EventLogger<ScheduledEvent, 1> example_logger{"example_logger"};
+    EventLogger<Slots<Slot<"dummy_generator_output", EventBuffer<ScheduledEvent, 1>>>>
+        example_logger{"example_logger"};
 
     // Connections
     EventBuffer<ScheduledEvent, 1> dummy_generator_to_example_logger_event_buffer;
@@ -235,7 +275,7 @@ void first_core() {
     while (next_pass()) {
         dummy_generator.process({.output = dummy_generator_to_example_logger_event_buffer});
         example_logger.process({
-            .input = dummy_generator_to_example_logger_event_buffer,  /* the one event */
+            .inputs = {dummy_generator_to_example_logger_event_buffer},  /* the one event */
         });
     }
 }
@@ -270,7 +310,29 @@ int main() {
     set_option(graph, generator, {.option_name = "frequency", .value = "5"});
     set_option(graph, detector, {.option_name = "threshold", .value = "-70"});
     connect_output_to_input(graph, generator, detector);
-    connect_output_to_input(graph, detector, logger);
+    connect_output_to_slots(graph, detector, logger, "inputs");
+    return graph;
+}
+
+// A signal and its spikes, recorded: a SignalGenerator on core 4, a SpikeDetector on core 5, and
+// on core 8, which isn't realtime, a Recorder that takes the signal as its first connection and
+// the spikes as its second.
+[[nodiscard]] inline PipelineGraph spike_recording_graph() {
+    PipelineGraph graph;
+    const ProcessorId generator = add_named(
+        graph, {.type_name = "SignalGenerator", .name = "signal_generator", .core_number = 4});
+    const ProcessorId detector = add_named(
+        graph, {.type_name = "SpikeDetector", .name = "spike_detector", .core_number = 5});
+    const ProcessorId recorder =
+        add_named(graph, {.type_name = "Recorder", .name = "recorder", .core_number = 8});
+    for (GraphCore& core : graph.cores) {
+        if (core.number == 8) {
+            core.is_realtime = false;
+        }
+    }
+    connect_output_to_input(graph, generator, detector);
+    connect_output_to_slots(graph, generator, recorder, "inputs");
+    connect_output_to_slots(graph, detector, recorder, "inputs");
     return graph;
 }
 
@@ -295,13 +357,13 @@ void core4() {
 
 void core5() {
     SpikeDetector<SignalGeneratorStream, {.threshold = -70}> spike_detector{"spike_detector"};
-    EventLogger<Spikes<SignalGeneratorStream>, 1, {.style = LoggingStyle::EveryEvent}> example_logger{"example_logger"};
+    EventLogger<Slots<Slot<"spike_detector_output", EventBuffer<Spikes<SignalGeneratorStream>, 1>>>, {.style = LoggingStyle::EveryEvent}> example_logger{"example_logger"};
 
     EventBuffer<Spikes<SignalGeneratorStream>, 1> spike_detector_output_buffer;
 
     while (next_pass()) {
         spike_detector.process({.input = signal_generator_output_ring_to_core5, .output = spike_detector_output_buffer});
-        example_logger.process({.input = spike_detector_output_buffer});
+        example_logger.process({.inputs = {spike_detector_output_buffer}});
     }
 }
 
@@ -341,7 +403,8 @@ void core1() {
 void core2() {
     // Processors
     SpikeDetector<TestStream, {.threshold = -70}> spike_detector{"spike_detector"};
-    EventLogger<Spikes<TestStream>, 1> example_logger{"example_logger"};
+    EventLogger<Slots<Slot<"spike_detector_output", EventBuffer<Spikes<TestStream>, 1>>>>
+        example_logger{"example_logger"};
 
     // Connections
     EventBuffer<Spikes<TestStream>, 1> spike_detector_to_example_logger_event_buffer;
@@ -351,7 +414,7 @@ void core2() {
             .input = signal_generator_to_spike_detector_sample_ring,
             .output = spike_detector_to_example_logger_event_buffer,
         });
-        example_logger.process({.input = spike_detector_to_example_logger_event_buffer});
+        example_logger.process({.inputs = {spike_detector_to_example_logger_event_buffer}});
     }
 }
 
@@ -688,16 +751,129 @@ inline void test_reader_reads_a_filter_written_by_hand(Failures& failures) {
 }
 
 // A pipeline of the repository, and why the reader refuses it; an empty reason for one it reads.
+inline void test_writer_writes_a_recorder_with_its_slots(Failures& failures) {
+    const PipelineGraph graph = spike_recording_graph();
+    const WrittenText written = write_pipeline(graph);
+    const std::string text = written.has_value() ? *written : written.error();
+    expect_text_holds(
+        failures, "the recorder's declaration", text,
+        "    Recorder<Slots<Slot<\"signal_generator_output\", "
+        "SampleBuffer<SignalGeneratorStream>>, "
+        "Slot<\"spike_detector_output\", EventBuffer<Spikes<SignalGeneratorStream>, 1>>>, "
+        "{.file_name = \"recording.bin\"}> recorder{\"recorder\"};\n");
+    expect_text_holds(failures, "the recorder's call", text,
+                      "        recorder.process({.inputs = {signal_generator_output_ring_to_core8, "
+                      "spike_detector_output_ring_to_core8}});\n");
+    expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
+                       described(graph));
+    expect_text_holds(failures, "the graph's description", described(graph),
+                      "connection: spike_detector.output to recorder.inputs, slot 1\n");
+
+    PipelineGraph with_nothing_connected;
+    add_named(with_nothing_connected, {.type_name = "Recorder", .name = "recorder"});
+    const WrittenText written_unconnected = write_pipeline(with_nothing_connected);
+    const std::string unconnected_text =
+        written_unconnected.has_value() ? *written_unconnected : written_unconnected.error();
+    expect_text_holds(
+        failures, "a recorder with nothing connected", unconnected_text,
+        "    Recorder<Slots<>, {.file_name = \"recording.bin\"}> recorder{\"recorder\"};\n");
+    expect_text_holds(failures, "its call", unconnected_text, "        recorder.process({});\n");
+    expect_equal_texts(failures, "the unconnected graph that was read back",
+                       described_after_round_trip(with_nothing_connected),
+                       described(with_nothing_connected));
+}
+
+inline void test_slots_keep_their_order(Failures& failures) {
+    // The recorder's first connection comes through a ring and its second from a buffer of its
+    // own core, which the reader connects in the other order.
+    PipelineGraph graph;
+    const ProcessorId generator = add_named(
+        graph, {.type_name = "SignalGenerator", .name = "signal_generator", .core_number = 4});
+    const ProcessorId detector = add_named(
+        graph, {.type_name = "SpikeDetector", .name = "spike_detector", .core_number = 8});
+    const ProcessorId recorder =
+        add_named(graph, {.type_name = "Recorder", .name = "recorder", .core_number = 8});
+    connect_output_to_input(graph, generator, detector);
+    connect_output_to_slots(graph, generator, recorder, "inputs");
+    connect_output_to_slots(graph, detector, recorder, "inputs");
+    const WrittenText written = write_pipeline(graph);
+    expect_text_holds(failures, "the recorder's call",
+                      written.has_value() ? *written : written.error(),
+                      "recorder.process({.inputs = {signal_generator_output_ring_to_core8, "
+                      "spike_detector_output_buffer}});");
+    expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
+                       described(graph));
+    expect_text_holds(failures, "the graph's description", described(graph),
+                      "connection: signal_generator.output to recorder.inputs, slot 0\n");
+}
+
+inline void test_reader_keeps_a_slot_name_of_its_own(Failures& failures) {
+    const WrittenText written = write_pipeline(spike_recording_graph());
+    const ReadPipeline read = read_pipeline(
+        replaced_in(written.has_value() ? *written : written.error(),
+                    {.part = "Slot<\"spike_detector_output\", ", .with = "Slot<\"spikes\", "}),
+        ALL_PROCESSORS);
+    if (!read.has_value()) {
+        failures.push_back(std::format("the text wasn't read: {}", read.error()));
+        return;
+    }
+    expect_text_holds(failures, "the graph that was read", described(*read),
+                      "output spike_detector.output is named spikes\n");
+    const WrittenText written_again = write_pipeline(*read);
+    expect_text_holds(failures, "the text that was written again",
+                      written_again.has_value() ? *written_again : written_again.error(),
+                      "Slot<\"spikes\", EventBuffer<Spikes<SignalGeneratorStream>, 1>>");
+    expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(*read),
+                       described(*read));
+}
+
+inline void test_renamed_output_names_its_buffer_and_its_rings(Failures& failures) {
+    // The first two processors of spike_detector_graph() are its signal generator, whose output
+    // goes through a ring into no slot, and its spike detector, whose output a logger's slot
+    // reads from a buffer.
+    PipelineGraph graph = spike_detector_graph();
+    rename_output(graph, graph.processors.at(0).id, "raw_signal");
+    rename_output(graph, graph.processors.at(1).id, "spikes");
+    const WrittenText written = write_pipeline(graph);
+    const std::string text = written.has_value() ? *written : written.error();
+    expect_text_holds(failures, "the ring's declaration", text,
+                      "SampleRing<SignalGeneratorStream, 64> raw_signal_ring_to_core5"
+                      "{\"raw_signal_ring_to_core5\"};\n");
+    expect_text_holds(failures, "the generator's call", text,
+                      "signal_generator.process({.output = raw_signal_ring_to_core5});");
+    expect_text_holds(failures, "the buffer's declaration", text,
+                      "    EventBuffer<Spikes<SignalGeneratorStream>, 1> spikes_buffer;\n");
+    expect_text_holds(failures, "the logger's slot", text,
+                      "Slot<\"spikes\", EventBuffer<Spikes<SignalGeneratorStream>, 1>>");
+    expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
+                       described(graph));
+    expect_text_holds(failures, "the graph's description", described(graph),
+                      "output signal_generator.output is named raw_signal\n");
+
+    // An output that only an input of its own core reads has its name in its buffer's alone.
+    PipelineGraph on_one_core;
+    const ProcessorId generator =
+        add_named(on_one_core,
+                  {.type_name = "SignalGenerator", .name = "signal_generator", .core_number = 4});
+    const ProcessorId detector = add_named(
+        on_one_core, {.type_name = "SpikeDetector", .name = "spike_detector", .core_number = 4});
+    connect_output_to_input(on_one_core, generator, detector);
+    rename_output(on_one_core, generator, "raw_signal");
+    const WrittenText written_on_one_core = write_pipeline(on_one_core);
+    expect_text_holds(
+        failures, "the buffer of an output without a slot",
+        written_on_one_core.has_value() ? *written_on_one_core : written_on_one_core.error(),
+        "    SampleBuffer<SignalGeneratorStream> raw_signal_buffer;\n");
+    expect_equal_texts(failures, "the graph on one core that was read back",
+                       described_after_round_trip(on_one_core), described(on_one_core));
+}
+
 struct RepositoryPipeline {
     std::string_view file_name;
     std::string_view refusal;
 };
 
 inline void test_repository_pipelines_are_read_or_refused(Failures& failures) {
-    // A Recorder's call gives its one input a buffer for each connection, which is what the
-    // reader meets first of all it doesn't read of a Recorder.
-    constexpr std::string_view recorder_refusal =
-        "the reader doesn't read a port that is given several buffers";
     const std::vector<RepositoryPipeline> pipelines{
         {.file_name = "monotonous_event_pipeline.cpp", .refusal = ""},
         {.file_name = "spike_detector_pipeline.cpp", .refusal = ""},
@@ -708,9 +884,9 @@ inline void test_repository_pipelines_are_read_or_refused(Failures& failures) {
             .file_name = "fir_chain_latency_pipeline.cpp",
             .refusal = "the reader reads `using` for a stream alone",
         },
-        {.file_name = "ripple_bursts_recording_pipeline.cpp", .refusal = recorder_refusal},
-        {.file_name = "ripple_detector_pipeline.cpp", .refusal = recorder_refusal},
-        {.file_name = "spike_recording_pipeline.cpp", .refusal = recorder_refusal},
+        {.file_name = "ripple_bursts_recording_pipeline.cpp", .refusal = ""},
+        {.file_name = "ripple_detector_pipeline.cpp", .refusal = ""},
+        {.file_name = "spike_recording_pipeline.cpp", .refusal = ""},
     };
     for (const RepositoryPipeline& pipeline : pipelines) {
         const ReadPipeline read = read_pipeline(
@@ -771,13 +947,12 @@ inline void test_reader_refuses_what_it_can_not_read(Failures& failures) {
         "line 13: no output writes the buffer dummy_generator_output_buffer");
     expect_text_holds(
         failures, "a processor that the loop doesn't call",
-        refusal_of_text(replaced_in(
-            MONOTONOUS_EVENT_CODE,
-            {
-                .part =
-                    "        example_logger.process({.input = dummy_generator_output_buffer});\n",
-                .with = "",
-            })),
+        refusal_of_text(replaced_in(MONOTONOUS_EVENT_CODE,
+                                    {
+                                        .part = "        example_logger.process({.inputs = "
+                                                "{dummy_generator_output_buffer}});\n",
+                                        .with = "",
+                                    })),
         "example_logger is declared, and the loop never calls it");
     expect_text_holds(failures, "a stream that the file doesn't name",
                       refusal_of_text(replaced_in(
@@ -813,16 +988,79 @@ inline void test_reader_refuses_what_it_can_not_read(Failures& failures) {
                                                   })),
                       "main() names core2, which the file doesn't define");
     expect_text_holds(
-        failures, "a processor that takes an argument for each connection",
-        refusal_of_text(replaced_in(
-            MONOTONOUS_EVENT_CODE,
-            {
-                .part = "EventLogger<ScheduledEvent, 1, {.style = LoggingStyle::EveryEvent}>",
-                .with = "Recorder<RecorderOptions<1>{.file_name = \"events.bin\", .slot_names = "
-                        "{\"events\"}}, EventBuffer<ScheduledEvent, 1>>",
-            })),
-        "line 7: the reader doesn't read a Recorder, whose type takes an argument for each of its "
+        failures, "a list in braces for a port that takes one connection",
+        refusal_of_text(replaced_in(SPIKE_DETECTOR_CODE,
+                                    {
+                                        .part = ".input = signal_generator_output_ring_to_core5",
+                                        .with = ".input = {signal_generator_output_ring_to_core5}",
+                                    })),
+        "the port input of a SpikeDetector takes one connection, and its call gives it a list in "
+        "braces");
+
+    const WrittenText written_recording = write_pipeline(spike_recording_graph());
+    const std::string recording_code =
+        written_recording.has_value() ? *written_recording : written_recording.error();
+    expect_text_holds(
+        failures, "fewer connections than the type lists slots",
+        refusal_of_text(
+            replaced_in(recording_code,
+                        {
+                            .part = ".inputs = {signal_generator_output_ring_to_core8, ",
+                            .with = ".inputs = {",
+                        })),
+        "the type of recorder lists 2 slots for its port inputs, and its call gives that port 1 "
         "connections");
+    PipelineGraph with_one_slot;
+    const ProcessorId lone_generator =
+        add_named(with_one_slot,
+                  {.type_name = "SignalGenerator", .name = "signal_generator", .core_number = 4});
+    const ProcessorId lone_recorder =
+        add_named(with_one_slot, {.type_name = "Recorder", .name = "recorder", .core_number = 8});
+    connect_output_to_slots(with_one_slot, lone_generator, lone_recorder, "inputs");
+    const WrittenText written_one_slot = write_pipeline(with_one_slot);
+    expect_text_holds(
+        failures, "one connection without braces for a port that takes several",
+        refusal_of_text(
+            replaced_in(written_one_slot.has_value() ? *written_one_slot : written_one_slot.error(),
+                        {
+                            .part = ".inputs = {signal_generator_output_ring_to_core8}",
+                            .with = ".inputs = signal_generator_output_ring_to_core8",
+                        })),
+        "the port inputs of a Recorder takes several connections, which its call gives it in "
+        "braces");
+    expect_text_holds(failures, "a list of slots that isn't written as one",
+                      refusal_of_text(replaced_in(recording_code,
+                                                  {
+                                                      .part = "Slot<\"spike_detector_output\", ",
+                                                      .with = "Named<\"spike_detector_output\", ",
+                                                  })),
+                      "the slots of recorder's port inputs must be written as "
+                      "Slots<Slot<\"name\", Kind>, ...>");
+    expect_text_holds(failures, "a slot's name with a space",
+                      refusal_of_text(replaced_in(recording_code,
+                                                  {
+                                                      .part = "Slot<\"spike_detector_output\", ",
+                                                      .with = "Slot<\"the spikes\", ",
+                                                  })),
+                      "\"the spikes\" can't be a slot's name");
+
+    PipelineGraph with_two_recorders = spike_recording_graph();
+    const ProcessorId second_recorder = add_named(
+        with_two_recorders, {.type_name = "Recorder", .name = "second_recorder", .core_number = 8});
+    connect_output_to_slots(with_two_recorders, with_two_recorders.processors.front().id,
+                            second_recorder, "inputs");
+    const WrittenText written_two_recorders = write_pipeline(with_two_recorders);
+    expect_text_holds(
+        failures, "one output that two slots call differently",
+        refusal_of_text(replaced_in(written_two_recorders.has_value()
+                                        ? *written_two_recorders
+                                        : written_two_recorders.error(),
+                                    {
+                                        .part = "Slot<\"signal_generator_output\", ",
+                                        .with = "Slot<\"raw_signal\", ",
+                                    })),
+        "signal_generator.output is called raw_signal by one slot and signal_generator_output by "
+        "another, and what an output gives has one name");
     expect_text_holds(failures, "a header block without its end",
                       refusal_of_text(std::format("{}\n// Name: Unfinished\n{}",
                                                   PIPELINE_HEADER_START, MONOTONOUS_EVENT_CODE)),
@@ -840,8 +1078,8 @@ inline void test_writer_calls_a_processor_after_those_it_reads_from(Failures& fa
         add_named(graph, {.type_name = "EventGenerator", .name = "first_generator"});
     const ProcessorId second_generator =
         add_named(graph, {.type_name = "EventGenerator", .name = "second_generator"});
-    connect_output_to_input(graph, first_generator, first_logger);
-    connect_output_to_input(graph, second_generator, second_logger);
+    connect_output_to_slots(graph, first_generator, first_logger, "inputs");
+    connect_output_to_slots(graph, second_generator, second_logger, "inputs");
     const WrittenText written = write_pipeline(graph);
     if (!written.has_value()) {
         failures.push_back(std::format("the graph wasn't written: {}", written.error()));
@@ -851,19 +1089,29 @@ inline void test_writer_calls_a_processor_after_those_it_reads_from(Failures& fa
         failures, "the loop that was written", *written,
         "    while (next_pass()) {\n"
         "        first_generator.process({.output = first_generator_output_buffer});\n"
-        "        first_logger.process({.input = first_generator_output_buffer});\n"
+        "        first_logger.process({.inputs = {first_generator_output_buffer}});\n"
         "        second_generator.process({.output = second_generator_output_buffer});\n"
-        "        second_logger.process({.input = second_generator_output_buffer});\n"
+        "        second_logger.process({.inputs = {second_generator_output_buffer}});\n"
         "    }\n");
 }
 
 inline void test_writer_refuses_what_it_can_not_write(Failures& failures) {
-    PipelineGraph with_recorder = monotonous_event_graph();
-    add_named(with_recorder, {.type_name = "Recorder", .name = "recorder"});
-    expect_text_holds(failures, "a processor that takes an argument for each connection",
-                      refusal_of_graph(with_recorder),
-                      "recorder: the writer doesn't write a Recorder, whose type takes an argument "
-                      "for each of its connections");
+    // The first processor of spike_recording_graph() is its signal generator.
+    PipelineGraph with_one_name_for_two_outputs = spike_recording_graph();
+    rename_output(with_one_name_for_two_outputs,
+                  with_one_name_for_two_outputs.processors.front().id, "spike_detector_output");
+    expect_text_holds(failures, "two outputs with one name",
+                      refusal_of_graph(with_one_name_for_two_outputs),
+                      "signal_generator.output and spike_detector.output are both named "
+                      "spike_detector_output");
+
+    PipelineGraph with_a_name_that_is_none = spike_recording_graph();
+    rename_output(with_a_name_that_is_none, with_a_name_that_is_none.processors.front().id,
+                  "raw signal");
+    expect_text_holds(failures, "an output's name with a space",
+                      refusal_of_graph(with_a_name_that_is_none),
+                      "signal_generator.output is named \"raw signal\", which can't be an output's "
+                      "name");
 
     PipelineGraph with_list_without_braces = monotonous_event_graph();
     const ProcessorId filter =
@@ -980,6 +1228,22 @@ struct NamedTest {
         {
             .name = "reader_reads_a_filter_written_by_hand",
             .run = test_reader_reads_a_filter_written_by_hand,
+        },
+        {
+            .name = "writer_writes_a_recorder_with_its_slots",
+            .run = test_writer_writes_a_recorder_with_its_slots,
+        },
+        {
+            .name = "slots_keep_their_order",
+            .run = test_slots_keep_their_order,
+        },
+        {
+            .name = "reader_keeps_a_slot_name_of_its_own",
+            .run = test_reader_keeps_a_slot_name_of_its_own,
+        },
+        {
+            .name = "renamed_output_names_its_buffer_and_its_rings",
+            .run = test_renamed_output_names_its_buffer_and_its_rings,
         },
         {
             .name = "repository_pipelines_are_read_or_refused",

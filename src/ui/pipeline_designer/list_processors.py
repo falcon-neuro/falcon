@@ -236,8 +236,8 @@ def read_port(source, field, where, problems):
         problems.append("%s: the connection `%s` has no doc comment (///) saying what it expects or gives" % (where, field["name"]))
     direction, port_kind, has_slots = kind
     # What the connection carries, as written: an event type, a template parameter that stands for
-    # one, or the parameter that stands for the kinds of a port with slots.
-    carried = template_arguments(inner_type)[0].removesuffix("...").strip() if port_kind in ("Events", "Any") else ""
+    # one, or the parameter that stands for the list of slots of a port with slots.
+    carried = template_arguments(inner_type)[0].strip() if port_kind in ("Events", "Any") else ""
     return {"name": field["name"], "direction": direction, "kind": port_kind, "is_optional": is_optional,
             "has_slots": has_slots, "type": written_type, "description": description,
             "stream": stream_of_port(field["name"], direction, port_kind, inner_type, where, problems),
@@ -357,8 +357,8 @@ def find_event_kinds_of_ports(clang, clang_flags, output, processors, events, pr
                     problems.append("%s: the connection `%s` gives `%s`, which is no event type of a processor's file" % (
                         port["where"], port["name"], carried))
                 continue
-            # A port with slots is asked about the buffer of events one of its slots would take.
-            asked_type = "EventBuffer<%s, 1>" if port["kind"] == "Any" else "%s"
+            # A port with slots is asked about a list of one slot that takes a buffer of those events.
+            asked_type = 'Slots<Slot<"asked", EventBuffer<%s, 1>>>' if port["kind"] == "Any" else "%s"
             if carried in processor["constraints"]:
                 constraint = processor["constraints"][carried]
                 if constraint is None:

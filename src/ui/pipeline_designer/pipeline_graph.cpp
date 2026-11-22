@@ -14,6 +14,20 @@
 
 using ProcessorId = std::uint32_t;
 
+// The characters that a name in pipeline.cpp holds: a processor's, an output's, a variable's.
+inline constexpr std::string_view IDENTIFIER_CHARACTERS =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+
+[[nodiscard]] inline bool is_identifier_character(char character) {
+    return IDENTIFIER_CHARACTERS.contains(character);
+}
+
+// Whether a text can be a variable's name in pipeline.cpp.
+[[nodiscard]] inline bool is_identifier(std::string_view text) {
+    return !text.empty() && (text.front() < '0' || text.front() > '9') &&
+           std::ranges::all_of(text, is_identifier_character);
+}
+
 // What a samples connection carries besides its samples, which are float32: how many channels,
 // and how many samples of each a second. A processor that starts a stream begins with these values.
 struct GraphStream {
@@ -56,6 +70,13 @@ struct GraphConnection {
     // cores and the user has set one. None for the number such a ring has otherwise (see
     // usual_ring_slot_count()), and for a connection on one core, which goes through no ring.
     std::optional<int> ring_slot_count;
+};
+
+// What an output gives under a name of the user's own, e.g. filtered_signal, in place of its
+// processor's name and its own.
+struct RenamedOutput {
+    OutputReference output;
+    std::string name;
 };
 
 // The number of slots a ring has while the user has set none. A reader that isn't realtime may
@@ -108,6 +129,7 @@ public:
     std::vector<GraphCore> cores;
     std::vector<GraphProcessor> processors;
     std::vector<GraphConnection> connections;
+    std::vector<RenamedOutput> renamed_outputs;
 
     // A new processor of this type at this place of a core's list, unconnected, with its type's
     // default options.
@@ -154,6 +176,9 @@ public:
             return connection.output.processor == processor_id ||
                    connection.input.processor == processor_id;
         });
+        std::erase_if(renamed_outputs, [processor_id](const RenamedOutput& renamed) {
+            return renamed.output.processor == processor_id;
+        });
         processors.erase(processor);
         return true;
     }
@@ -181,6 +206,58 @@ public:
                 return port.direction == direction && port_name == port.name;
             });
         return found == processor->type->ports.end() ? nullptr : &*found;
+    }
+
+    // What a port that takes several connections calls the one an output feeds it, e.g. in a
+    // Recorder's file: the name the user gave what the output gives, or else its processor's name
+    // and its own, e.g. spike_detector_output.
+    [[nodiscard]] std::string name_of_output(const OutputReference& output) const {
+        const auto renamed = std::ranges::find(renamed_outputs, output, &RenamedOutput::output);
+        return renamed == renamed_outputs.end() ? own_name_of_output(output) : renamed->name;
+    }
+
+    // What an output is called while the user has given it no name: its processor's name and its
+    // own.
+    [[nodiscard]] std::string own_name_of_output(const OutputReference& output) const {
+        const GraphProcessor* processor = find_processor(output.processor);
+        return std::format("{}_{}", processor == nullptr ? std::string() : processor->name,
+                           output.port);
+    }
+
+    // Gives what an output gives a name of the user's. The output's own name takes the user's
+    // away again.
+    void rename_output(const OutputReference& output, std::string_view output_name) {
+        std::erase_if(renamed_outputs,
+                      [&output](const RenamedOutput& renamed) { return renamed.output == output; });
+        if (output_name != own_name_of_output(output)) {
+            renamed_outputs.push_back({.output = output, .name = std::string(output_name)});
+        }
+    }
+
+    // Whether another output of the pipeline has the name this one has. Two of one name can't be
+    // told apart in what processors make of them, e.g. a Recorder's file.
+    [[nodiscard]] bool is_output_name_shared(const OutputReference& output) const {
+        const std::string output_name = name_of_output(output);
+        return std::ranges::any_of(processors, [&](const GraphProcessor& processor) {
+            return std::ranges::any_of(processor.type->ports, [&](const PortDescription& port) {
+                const OutputReference other{.processor = processor.id, .port = port.name};
+                return port.direction == PortDirection::Output && other != output &&
+                       name_of_output(other) == output_name;
+            });
+        });
+    }
+
+    // The connections into an input, in the order they were made. For a port that takes several,
+    // a connection's place among them is its slot.
+    [[nodiscard]] std::vector<const GraphConnection*> connections_into(
+        const InputReference& input) const {
+        std::vector<const GraphConnection*> found;
+        for (const GraphConnection& connection : connections) {
+            if (connection.input == input) {
+                found.push_back(&connection);
+            }
+        }
+        return found;
     }
 
     // The stream an output carries: the one its processor starts, or the one its processor takes

@@ -35,17 +35,6 @@ inline constexpr std::string_view OPTIONS_PARAMETER_NAME = "options";
 // The template parameter through which a processor's type takes the stream it starts.
 inline constexpr std::string_view OUTPUT_STREAM_PARAMETER_NAME = "OutputStreamInfo";
 
-[[nodiscard]] inline bool is_identifier_character(char character) {
-    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-           (character >= '0' && character <= '9') || character == '_';
-}
-
-// Whether a text can be a variable's name in pipeline.cpp.
-[[nodiscard]] inline bool is_identifier(std::string_view text) {
-    return !text.empty() && (text.front() < '0' || text.front() > '9') &&
-           std::ranges::all_of(text, is_identifier_character);
-}
-
 // Whether a text fits on one line of a comment. A line break in it would end the comment, and
 // what follows would be compiled as code.
 [[nodiscard]] inline bool is_one_line(std::string_view text) {
@@ -442,6 +431,23 @@ using TemplateArguments = std::expected<std::vector<TemplateArgument>, std::stri
     return std::format("{}<{}>{}", options_type_of(*processor.type), list_length.value_or(0), text);
 }
 
+// The type of the buffer that an output of this type writes, e.g. "EventBuffer<ScheduledEvent, 1>"
+// for "EventOutputBuffer<ScheduledEvent, 1>".
+[[nodiscard]] inline WrittenText buffer_type_of(std::string_view resolved_output_type_text) {
+    constexpr std::string_view event_output_start = "EventOutputBuffer<";
+    constexpr std::string_view sample_output_start = "SampleOutputBuffer<";
+    if (resolved_output_type_text.starts_with(event_output_start)) {
+        return std::format("EventBuffer<{}",
+                           resolved_output_type_text.substr(event_output_start.size()));
+    }
+    if (resolved_output_type_text.starts_with(sample_output_start)) {
+        return std::format("SampleBuffer<{}",
+                           resolved_output_type_text.substr(sample_output_start.size()));
+    }
+    return std::unexpected(
+        std::format("no buffer is known for an output of type {}", resolved_output_type_text));
+}
+
 // Gives a processor's template parameters what one connection into it says about them: where the
 // input's type names a parameter, the parameter is what the connected output's type has at the
 // same place. Returns why not, when two connections say different things of one parameter.
@@ -508,9 +514,61 @@ using TemplateArguments = std::expected<std::vector<TemplateArgument>, std::stri
     return with_parameters_replaced(port->type, *arguments);
 }
 
+// The list of slots that a port which takes several connections gives its processor's type: a
+// name and a kind for each connection into it, in their order, e.g. `Slots<Slot<"ripples",
+// EventBuffer<Ripple, 1>>>`.
+[[nodiscard]] inline WrittenText slots_text_of(const PipelineGraph& graph,
+                                               const GraphProcessor& processor,
+                                               const PortDescription& port,
+                                               std::size_t steps_left) {
+    std::string slots;
+    const InputReference input{.processor = processor.id, .port = port.name};
+    for (const GraphConnection* connection : graph.connections_into(input)) {
+        const WrittenText output_type = resolved_output_type(graph, connection->output, steps_left);
+        if (!output_type.has_value()) {
+            return output_type;
+        }
+        const WrittenText kind = buffer_type_of(*output_type);
+        if (!kind.has_value()) {
+            return std::unexpected(std::format("{}: {}", processor.name, kind.error()));
+        }
+        slots += std::format("{}Slot<\"{}\", {}>", slots.empty() ? "" : ", ",
+                             graph.name_of_output(connection->output), *kind);
+    }
+    return std::format("Slots<{}>", slots);
+}
+
+// Gives a processor's template parameters the list of slots of each of its ports that take
+// several connections. Returns why not, for a port whose list the type doesn't take.
+[[nodiscard]] inline std::optional<std::string> bind_slots(std::vector<TemplateArgument>& arguments,
+                                                           const PipelineGraph& graph,
+                                                           const GraphProcessor& processor,
+                                                           std::size_t steps_left) {
+    for (const PortDescription& port : processor.type->ports) {
+        if (!port.has_slots || port.direction != PortDirection::Input) {
+            continue;
+        }
+        const std::vector<std::string> port_type_arguments = type_arguments(port.type);
+        const auto argument = port_type_arguments.empty()
+                                  ? arguments.end()
+                                  : std::ranges::find(arguments, port_type_arguments.front(),
+                                                      &TemplateArgument::parameter_name);
+        if (argument == arguments.end()) {
+            return std::format("{}: the type of a {} takes no list of slots for its port {}",
+                               processor.name, processor.type->name, port.name);
+        }
+        const WrittenText slots = slots_text_of(graph, processor, port, steps_left);
+        if (!slots.has_value()) {
+            return slots.error();
+        }
+        argument->text = *slots;
+    }
+    return std::nullopt;
+}
+
 // What each template parameter of a processor's type is given: its options, the stream it starts,
-// and what follows from the outputs connected to its inputs. A parameter that nothing gives stays
-// without a text.
+// the slots of a port that takes several connections, and what follows from the outputs connected
+// to its other inputs. A parameter that nothing gives stays without a text.
 [[nodiscard]] inline TemplateArguments template_arguments_of(const PipelineGraph& graph,
                                                              const GraphProcessor& processor,
                                                              std::size_t steps_left) {
@@ -528,7 +586,9 @@ using TemplateArguments = std::expected<std::vector<TemplateArgument>, std::stri
     for (const GraphConnection& connection : graph.connections) {
         const PortDescription* input_port =
             graph.find_port(processor.id, connection.input.port, PortDirection::Input);
-        if (connection.input.processor != processor.id || input_port == nullptr) {
+        // A port that takes several connections names no parameter that one of them alone gives.
+        if (connection.input.processor != processor.id || input_port == nullptr ||
+            input_port->has_slots) {
             continue;
         }
         const WrittenText output_type = resolved_output_type(graph, connection.output, steps_left);
@@ -539,6 +599,10 @@ using TemplateArguments = std::expected<std::vector<TemplateArgument>, std::stri
                 bind_from_connection(arguments, *input_port, *output_type, processor)) {
             return std::unexpected(*conflict);
         }
+    }
+    if (const std::optional<std::string> refusal =
+            bind_slots(arguments, graph, processor, steps_left)) {
+        return std::unexpected(*refusal);
     }
     return arguments;
 }
@@ -563,28 +627,11 @@ using TemplateArguments = std::expected<std::vector<TemplateArgument>, std::stri
     return text;
 }
 
-// The name of the buffer an output writes: its processor and the output, so that it stays the
-// same whichever processors read it.
-[[nodiscard]] inline std::string buffer_name_of(std::string_view processor_name,
-                                                std::string_view output_name) {
-    return std::format("{}_{}_buffer", processor_name, output_name);
-}
-
-// The type of the buffer that an output of this type writes, e.g. "EventBuffer<ScheduledEvent, 1>"
-// for "EventOutputBuffer<ScheduledEvent, 1>".
-[[nodiscard]] inline WrittenText buffer_type_of(std::string_view resolved_output_type_text) {
-    constexpr std::string_view event_output_start = "EventOutputBuffer<";
-    constexpr std::string_view sample_output_start = "SampleOutputBuffer<";
-    if (resolved_output_type_text.starts_with(event_output_start)) {
-        return std::format("EventBuffer<{}",
-                           resolved_output_type_text.substr(event_output_start.size()));
-    }
-    if (resolved_output_type_text.starts_with(sample_output_start)) {
-        return std::format("SampleBuffer<{}",
-                           resolved_output_type_text.substr(sample_output_start.size()));
-    }
-    return std::unexpected(
-        std::format("no buffer is known for an output of type {}", resolved_output_type_text));
+// The name of the buffer an output writes: the name of what the output gives, so that it stays
+// the same whichever processors read it.
+[[nodiscard]] inline std::string buffer_name_of(const PipelineGraph& graph,
+                                                const OutputReference& output) {
+    return std::format("{}_buffer", graph.name_of_output(output));
 }
 
 [[nodiscard]] inline bool has_reader(const PipelineGraph& graph, const OutputReference& output) {
@@ -645,11 +692,14 @@ struct RingPlace {
     int reader_core_number = 0;
 };
 
-// The name of a ring: its writer's output, and the core that reads it, since an output has a ring
-// for each such core and the log names the ring that is full.
-[[nodiscard]] inline std::string ring_name_of(const RingPlace& ring) {
-    return std::format("{}_{}_ring_to_core{}", ring.writer.name, ring.output_name,
-                       ring.reader_core_number);
+// The name of a ring: the name of what its writer's output gives, and the core that reads it,
+// since an output has a ring for each such core and the log names the ring that is full.
+[[nodiscard]] inline std::string ring_name_of(const PipelineGraph& graph, const RingPlace& ring) {
+    const OutputReference output{
+        .processor = ring.writer.id,
+        .port = std::string(ring.output_name),
+    };
+    return std::format("{}_ring_to_core{}", graph.name_of_output(output), ring.reader_core_number);
 }
 
 // The number of slots of a ring: the largest that the user set on a connection through it, or
@@ -717,7 +767,8 @@ struct RingPlace {
             if (!ring_type.has_value()) {
                 return std::unexpected(std::format("{}: {}", processor.name, ring_type.error()));
             }
-            declarations += std::format("{0} {1}{{\"{1}\"}};\n", *ring_type, ring_name_of(ring));
+            declarations +=
+                std::format("{0} {1}{{\"{1}\"}};\n", *ring_type, ring_name_of(graph, ring));
         }
     }
     return declarations;
@@ -799,15 +850,14 @@ struct RingPlace {
         std::string ring_names;
         for (const int ring_core : ring_cores_of(graph, output)) {
             ring_names += std::format("{}{}", ring_names.empty() ? "" : ", ",
-                                      ring_name_of({
-                                          .writer = processor,
-                                          .output_name = port.name,
-                                          .reader_core_number = ring_core,
-                                      }));
+                                      ring_name_of(graph, {
+                                                              .writer = processor,
+                                                              .output_name = port.name,
+                                                              .reader_core_number = ring_core,
+                                                          }));
         }
-        declarations +=
-            std::format("    {} {}{};\n", *buffer_type, buffer_name_of(processor.name, port.name),
-                        ring_names.empty() ? "" : std::format("{{{}}}", ring_names));
+        declarations += std::format("    {} {}{};\n", *buffer_type, buffer_name_of(graph, output),
+                                    ring_names.empty() ? "" : std::format("{{{}}}", ring_names));
     }
     return declarations;
 }
@@ -822,38 +872,58 @@ struct RingPlace {
         return std::nullopt;
     }
     if (writes_straight_into_ring(graph, output)) {
-        return ring_name_of({
-            .writer = processor,
-            .output_name = port.name,
-            .reader_core_number = ring_cores_of(graph, output).front(),
-        });
+        return ring_name_of(graph, {
+                                       .writer = processor,
+                                       .output_name = port.name,
+                                       .reader_core_number = ring_cores_of(graph, output).front(),
+                                   });
     }
-    return buffer_name_of(processor.name, port.name);
+    return buffer_name_of(graph, output);
 }
 
-// The buffer or ring that an input of a processor is given in its call: its writer's buffer where
-// the writer lies on the same core, and else the ring that carries the writer's output to this
-// core. None for an input that nothing is connected to, which the call leaves out.
-[[nodiscard]] inline std::optional<std::string> given_to_input(const PipelineGraph& graph,
-                                                               const GraphProcessor& processor,
-                                                               const PortDescription& port) {
-    const InputReference input{.processor = processor.id, .port = port.name};
-    const auto connection = std::ranges::find(graph.connections, input, &GraphConnection::input);
-    if (connection == graph.connections.end()) {
-        return std::nullopt;
-    }
-    const GraphProcessor* writer = graph.find_processor(connection->output.processor);
+// The buffer or ring through which a connection reaches its reader: its writer's buffer where the
+// writer lies on the reader's core, and else the ring that carries the writer's output to that
+// core. None for a writer the graph doesn't hold.
+[[nodiscard]] inline std::optional<std::string> source_of_connection(
+    const PipelineGraph& graph, const GraphProcessor& reader, const GraphConnection& connection) {
+    const GraphProcessor* writer = graph.find_processor(connection.output.processor);
     if (writer == nullptr) {
         return std::nullopt;
     }
-    if (writer->core_number == processor.core_number) {
-        return buffer_name_of(writer->name, connection->output.port);
+    if (writer->core_number == reader.core_number) {
+        return buffer_name_of(graph, connection.output);
     }
-    return ring_name_of({
-        .writer = *writer,
-        .output_name = connection->output.port,
-        .reader_core_number = processor.core_number,
-    });
+    return ring_name_of(graph, {
+                                   .writer = *writer,
+                                   .output_name = connection.output.port,
+                                   .reader_core_number = reader.core_number,
+                               });
+}
+
+// What an input of a processor is given in its call: the buffer or ring of its connection, or, for
+// a port that takes several connections, theirs in braces and in their order. None for an input
+// that nothing is connected to, which the call leaves out.
+[[nodiscard]] inline std::optional<std::string> given_to_input(const PipelineGraph& graph,
+                                                               const GraphProcessor& processor,
+                                                               const PortDescription& port) {
+    const std::vector<const GraphConnection*> connections =
+        graph.connections_into({.processor = processor.id, .port = port.name});
+    if (connections.empty()) {
+        return std::nullopt;
+    }
+    if (!port.has_slots) {
+        return source_of_connection(graph, processor, *connections.front());
+    }
+    std::string sources;
+    for (const GraphConnection* connection : connections) {
+        const std::optional<std::string> source =
+            source_of_connection(graph, processor, *connection);
+        if (!source.has_value()) {
+            return std::nullopt;
+        }
+        sources += std::format("{}{}", sources.empty() ? "" : ", ", *source);
+    }
+    return std::format("{{{}}}", sources);
 }
 
 // The line of a core's loop that calls a processor, with its ports in the order its type
@@ -979,23 +1049,65 @@ struct RingPlace {
     return std::nullopt;
 }
 
-// Whether a kind of processor takes a template argument for each of its connections, as a
-// Recorder does for the kind of each thing it records.
-[[nodiscard]] inline bool takes_argument_for_each_connection(const ProcessorDescription& type) {
-    return std::ranges::any_of(type.template_parameters, [](const char* parameter) {
-        return std::string_view(parameter).contains("...");
-    });
+// Whether a text can be a slot's name, which the engine checks when the file is compiled.
+[[nodiscard]] inline bool is_slot_name(std::string_view text) {
+    return !text.empty() && std::ranges::all_of(text, is_identifier_character);
+}
+
+// Why a processor's ports that take several connections can't be written, or none if they can,
+// and for a processor without such a port.
+[[nodiscard]] inline std::optional<std::string> refusal_of_slots(const GraphProcessor& processor) {
+    for (const PortDescription& port : processor.type->ports) {
+        if (port.has_slots && port.direction == PortDirection::Output) {
+            return std::format(
+                "{}: the writer doesn't write an output that takes several connections, as {} of "
+                "a {} is",
+                processor.name, port.name, processor.type->name);
+        }
+    }
+    return std::nullopt;
+}
+
+// Why the names of the pipeline's outputs can't be written, or none if they can. A name is the
+// start of its output's buffer and rings, so it has to be one that a variable can have, and what
+// processors make of two outputs, e.g. a Recorder's file, couldn't tell two of one name apart.
+[[nodiscard]] inline std::optional<std::string> refusal_of_output_names(
+    const PipelineGraph& graph) {
+    struct NamedOutput {
+        std::string name;
+        std::string place;  // its processor and port, for the refusal
+    };
+    std::vector<NamedOutput> named_outputs;
+    for (const GraphProcessor& processor : graph.processors) {
+        for (const PortDescription& port : processor.type->ports) {
+            if (port.direction != PortDirection::Output) {
+                continue;
+            }
+            NamedOutput output{
+                .name = graph.name_of_output({.processor = processor.id, .port = port.name}),
+                .place = std::format("{}.{}", processor.name, port.name),
+            };
+            if (!is_identifier(output.name)) {
+                return std::format(
+                    "{} is named \"{}\", which can't be an output's name: a name holds letters, "
+                    "digits and _ only, and doesn't start with a digit",
+                    output.place, output.name);
+            }
+            const auto same_name =
+                std::ranges::find(named_outputs, output.name, &NamedOutput::name);
+            if (same_name != named_outputs.end()) {
+                return std::format("{} and {} are both named {}", same_name->place, output.place,
+                                   output.name);
+            }
+            named_outputs.push_back(std::move(output));
+        }
+    }
+    return std::nullopt;
 }
 
 // Why a processor's options that are lists can't be written, or none if they can, and for a
 // processor without one.
 [[nodiscard]] inline std::optional<std::string> refusal_of_lists(const GraphProcessor& processor) {
-    if (takes_argument_for_each_connection(*processor.type)) {
-        return std::format(
-            "{}: the writer doesn't write a {}, whose type takes an argument for "
-            "each of its connections",
-            processor.name, processor.type->name);
-    }
     std::size_t list_count = 0;
     for (std::size_t option_index = 0; option_index < processor.type->options.size();
          ++option_index) {
@@ -1052,6 +1164,9 @@ struct RingPlace {
     if (std::optional<std::string> refusal = refusal_of_stream(graph, processor)) {
         return refusal;
     }
+    if (std::optional<std::string> refusal = refusal_of_slots(processor)) {
+        return refusal;
+    }
     return refusal_of_lists(processor);
 }
 
@@ -1071,10 +1186,6 @@ struct RingPlace {
                                          reader->name, input_port->name);
     if (output_port->kind == PortKind::State) {
         return std::format("{}: the writer doesn't write a connection of a state value", ends);
-    }
-    if (input_port->has_slots) {
-        return std::format("{}: the writer doesn't write an input that takes several connections",
-                           ends);
     }
     return std::nullopt;
 }
@@ -1097,7 +1208,7 @@ struct RingPlace {
             return refusal;
         }
     }
-    return std::nullopt;
+    return refusal_of_output_names(graph);
 }
 
 // The text of a pipeline's pipeline.cpp, or why the graph can't be written.

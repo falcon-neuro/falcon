@@ -9,8 +9,8 @@
 using TestStream = StreamInfo<32, 30000.0, float>;
 
 // Connections between cores
-SampleRing<TestStream, 64> signal_generator_to_spike_detector_sample_ring{
-    "signal_generator_to_spike_detector_sample_ring"};
+SampleRing<TestStream, 64> signal_generator_output_ring_to_core5{
+    "signal_generator_output_ring_to_core5"};
 
 void core1() {
     // Processors
@@ -18,24 +18,25 @@ void core1() {
         signal_generator{"signal_generator"};
 
     while (next_pass()) {
-        signal_generator.process({.output = signal_generator_to_spike_detector_sample_ring});
+        signal_generator.process({.output = signal_generator_output_ring_to_core5});
     }
 }
 
 void core2() {
     // Processors
     SpikeDetector<TestStream, {.threshold = -70}> spike_detector{"spike_detector"};
-    EventLogger<Spikes<TestStream>, 1> example_logger{"example_logger"};
+    EventLogger<Slots<Slot<"spike_detector_output", EventBuffer<Spikes<TestStream>, 1>>>>
+        example_logger{"example_logger"};
 
     // Connections
-    EventBuffer<Spikes<TestStream>, 1> spike_detector_to_example_logger_event_buffer;
+    EventBuffer<Spikes<TestStream>, 1> spike_detector_output_buffer;
 
     while (next_pass()) {
         spike_detector.process({
-            .input = signal_generator_to_spike_detector_sample_ring,
-            .output = spike_detector_to_example_logger_event_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = spike_detector_output_buffer,
         });
-        example_logger.process({.input = spike_detector_to_example_logger_event_buffer});
+        example_logger.process({.inputs = {spike_detector_output_buffer}});
     }
 }
 
