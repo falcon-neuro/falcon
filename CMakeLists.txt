@@ -132,6 +132,7 @@ target_compile_definitions(falcon PRIVATE
     _GLIBCXX_ASSERTIONS=1
     LIBCXX_ENABLE_HARDENING=1
     FALCON_VERSION="v${PROJECT_VERSION}"
+    FALCON_BUILD_DIRECTORY="${CMAKE_BINARY_DIR}"
 )
 
 target_include_directories(falcon PRIVATE src)
@@ -185,6 +186,21 @@ add_dependencies(pipeline_file_test falcon_all_processors)
 # finds the UI's libraries. With a second command in the list it would borrow this one for
 # some of the UI's files, and not find them.
 set_target_properties(pipeline_file_test PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
+
+# The pipeline that the app's Compile button builds (see src/ui/pipeline_designer/pipeline_build.cpp).
+# The app copies a pipeline's pipeline.cpp to this one place and builds this target, so the build
+# never configures itself again for another pipeline. It isn't built with the rest.
+set(FALCON_PIPELINE_SOURCE "${CMAKE_BINARY_DIR}/pipeline/pipeline.cpp")
+set_source_files_properties(${FALCON_PIPELINE_SOURCE} PROPERTIES GENERATED TRUE)
+add_executable(falcon_pipeline EXCLUDE_FROM_ALL ${FALCON_PIPELINE_SOURCE})
+target_compile_options(falcon_pipeline PRIVATE $<TARGET_PROPERTY:falcon,COMPILE_OPTIONS>)
+target_compile_definitions(falcon_pipeline PRIVATE
+    $<TARGET_PROPERTY:falcon,COMPILE_DEFINITIONS>
+)
+target_link_options(falcon_pipeline PRIVATE $<TARGET_PROPERTY:falcon,LINK_OPTIONS>)
+target_include_directories(falcon_pipeline PRIVATE src)
+target_link_libraries(falcon_pipeline PRIVATE pthread rt uring)
+set_target_properties(falcon_pipeline PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
 
 # Each extension may bring a CMakeLists.txt that adds its own include directories and libraries.
 file(GLOB FALCON_EXTENSION_CMAKE_FILES ${CMAKE_SOURCE_DIR}/src/processors/custom/*/CMakeLists.txt)

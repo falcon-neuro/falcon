@@ -1,10 +1,13 @@
 #pragma once
+#include <deque>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 #include "../ui_driver/ui_driver_targets.cpp"
+#include "build_problems.cpp"
 #include "core_layout.cpp"
 #include "pipeline_graph.cpp"
 #include "processor_list.cpp"
@@ -21,6 +24,17 @@ struct DesignerStateBesidesGraph {
     const InputReference* picked_input = nullptr;
     std::vector<int> shown_core_numbers;
     std::vector<int> offered_core_numbers;
+    // How the last compilation went: none, running, succeeded or failed.
+    std::string_view build_state = "none";
+    std::string build_text;  // what the compiler wrote, or why nothing was compiled
+    std::span<const BuildProblem> problems;
+    bool is_problems_panel_open = false;
+    bool is_raw_output_shown = false;
+    std::string_view keeping_note;  // why the pipeline isn't kept as it stands, or empty
+    // How far the pipeline's run is: none, starting, running, stopping, start_failed or failed.
+    std::string_view run_state = "none";
+    std::string_view bar_text;  // what the bar at the bottom says of the pipeline
+    const std::deque<std::string>* run_lines = nullptr;  // what the run's program wrote
 };
 
 // Joins JSON values into a JSON array.
@@ -164,10 +178,36 @@ struct DesignerStateBesidesGraph {
     const std::string selected = state.selected_processor.has_value()
                                      ? processor_name_as_json(graph, *state.selected_processor)
                                      : "null";
-    return std::format(R"({{"processors":{},"cores":{},"connections":{},"selected":{},"picked":{},)"
-                       R"("shown_cores":{},"offered_cores":{}}})",
-                       json_array(processors), json_array(cores), json_array(connections), selected,
-                       picked_port_as_json(graph, state),
-                       json_array_of_numbers(state.shown_core_numbers),
-                       json_array_of_numbers(state.offered_core_numbers));
+    std::vector<std::string> problems;
+    problems.reserve(state.problems.size());
+    for (const BuildProblem& problem : state.problems) {
+        problems.push_back(std::format(
+            R"({{"title":{},"body":{},"place":{},"processor":{}}})", json_text(problem.title),
+            json_text(problem.body), json_text(problem.place), json_text(problem.processor_name)));
+    }
+    // The latest lines only: a test reads this text in every frame.
+    constexpr std::size_t most_lines_told = 200;
+    std::vector<std::string> run_lines;
+    if (state.run_lines != nullptr) {
+        const std::size_t first_line = state.run_lines->size() > most_lines_told
+                                           ? state.run_lines->size() - most_lines_told
+                                           : 0;
+        for (std::size_t line_index = first_line; line_index < state.run_lines->size();
+             ++line_index) {
+            run_lines.push_back(json_text(state.run_lines->at(line_index)));
+        }
+    }
+    const std::string build = std::format(
+        R"({{"state":{},"text":{},"problems":{},"is_panel_open":{},"is_raw_shown":{}}})",
+        json_text(state.build_state), json_text(state.build_text), json_array(problems),
+        state.is_problems_panel_open ? "true" : "false",
+        state.is_raw_output_shown ? "true" : "false");
+    return std::format(
+        R"({{"screen":"designer","processors":{},"cores":{},"connections":{},"selected":{},"picked":{},)"
+        R"("shown_cores":{},"offered_cores":{},"build":{},"keeping_note":{},)"
+        R"("run":{{"state":{},"lines":{}}},"bar":{}}})",
+        json_array(processors), json_array(cores), json_array(connections), selected,
+        picked_port_as_json(graph, state), json_array_of_numbers(state.shown_core_numbers),
+        json_array_of_numbers(state.offered_core_numbers), build, json_text(state.keeping_note),
+        json_text(state.run_state), json_array(run_lines), json_text(state.bar_text));
 }

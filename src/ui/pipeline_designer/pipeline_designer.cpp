@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <filesystem>
 #include <format>
 #include <limits>
 #include <memory>
@@ -19,13 +21,22 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include "../common/colours.cpp"
 #include "../common/fonts.cpp"
+#include "../common/icons.cpp"
+#include "../common/remembered_numbers.cpp"
 #include "../ui_driver/ui_driver_targets.cpp"
 #include "all_processors.cpp"
+#include "build_problems.cpp"
 #include "core_layout.cpp"
 #include "cpu_cores.cpp"
 #include "designer_state_json.cpp"
+#include "opened_pipeline.cpp"
+#include "pipeline_build.cpp"
 #include "pipeline_graph.cpp"
+#include "pipeline_reader.cpp"
+#include "pipeline_run.cpp"
+#include "pipeline_writer.cpp"
 #include "processors_panel.cpp"
 #include "tooltip.cpp"
 
@@ -40,25 +51,95 @@ inline constexpr const char* PROCESSOR_MOVE_PAYLOAD = "falcon_processor_move";
 // from the graph.
 class PipelineDesigner {
 public:
-    // The environment variable FALCON_EXAMPLE_PIPELINE fills the designer with a small pipeline at
-    // its start, so that a picture of the window (see FALCON_SCREENSHOT in falcon_ui.cpp) shows
-    // more than an empty box. Its value "selected" also opens the options of one processor.
-    PipelineDesigner() {
-        if (const char* example = std::getenv("FALCON_EXAMPLE_PIPELINE")) {
-            add_example_pipeline(std::string_view(example) == "selected");
+    // A small pipeline that lies in no folder, for a picture of the window (see FALCON_SCREENSHOT
+    // in falcon_ui.cpp), which then shows more than an empty box. Nothing of it is kept.
+    struct ExamplePipeline {
+        bool is_one_selected = false;  // the options of one processor are open too
+    };
+
+    // `remembered` holds what the app keeps between two sessions, the sizes of this designer's
+    // panels among it, and must outlive the designer.
+    PipelineDesigner(OpenedPipeline pipeline, RememberedNumbers& remembered)
+        : remembered_(&remembered) {
+        right_panel_width_ = remembered.value_or(right_panel_width_name, right_panel_width_);
+        log_panel_height_ = remembered.value_or(log_panel_height_name, log_panel_height_);
+        graph_ = std::move(pipeline.graph);
+        directory_ = std::move(pipeline.directory);
+        compiled_text_ = std::move(pipeline.compiled_text);
+        // A pipeline that was read is kept already: its file is written when the user changes
+        // something, never by opening it. A new one has no file, and gets it with the first frame.
+        if (!pipeline.is_new) {
+            last_kept_text_ = write_pipeline_to_keep(graph_).value_or(std::string());
         }
     }
 
+    explicit PipelineDesigner(ExamplePipeline example) {
+        add_example_pipeline(example.is_one_selected);
+    }
+
+    // Whether the user asked to go back to the list of pipelines.
+    [[nodiscard]] bool is_leaving_asked() const { return is_leaving_asked_; }
+
     void render() {
-        const ImVec2 space = ImGui::GetContentRegionAvail();
+        const ImVec2 whole_space = ImGui::GetContentRegionAvail();
+        const BuildOutcome build_outcome = build_.outcome();
+        // The Problems panel comes up by itself when a compilation fails, and goes when one
+        // succeeds.
+        if (build_outcome.state != last_build_state_) {
+            problems_ = problems_of_outcome(build_outcome);
+            name_processors_of(problems_, compiled_pipeline_source(),
+                               compiled_processors_of_lines_);
+            if (build_outcome.state == BuildState::Failed) {
+                open_problems_panel();
+            } else if (build_outcome.state == BuildState::Succeeded) {
+                is_problems_panel_open_ = false;
+                compiled_text_ = text_being_compiled_;
+            }
+            last_build_state_ = build_outcome.state;
+        }
+        const PipelineState pipeline_state{
+            .build = build_outcome.state,
+            .run = run_.state(),
+            .is_compiled_current = is_compiled_pipeline_current(),
+        };
+        take_new_run_lines();
+        const float row_gap = ImGui::GetStyle().ItemSpacing.y;
+        const float bar_height = ImGui::GetFrameHeight() + (2.0f * bar_vertical_padding);
+        // Between a bar of buttons at the top and a bar at the bottom that says how things went.
+        const float height_between_bars = whole_space.y - (2.0f * (bar_height + row_gap));
+        // The Log panel leaves the cores' area a height worth working in, also in a low window.
+        const float log_panel_frame = row_gap + panel_edge_width;
+        log_panel_height_ = std::clamp(
+            log_panel_height_, lowest_log_panel,
+            std::max(lowest_log_panel, height_between_bars - log_panel_frame - lowest_cores_area));
+        const ImVec2 space{
+            whole_space.x,
+            height_between_bars - (is_log_panel_open_ ? log_panel_frame + log_panel_height_ : 0.0f),
+        };
         if (selected_processor_.has_value() &&
             std::as_const(graph_).find_processor(*selected_processor_) == nullptr) {
             selected_processor_.reset();
         }
-        const float options_panel_width_now =
-            selected_processor_.has_value() ? options_panel_width : 0.0f;
+        // The right side holds a processor's options or the problems, never both: a processor
+        // that is selected takes the place of the problems.
+        if (selected_processor_ != last_selected_processor_) {
+            if (selected_processor_.has_value()) {
+                is_problems_panel_open_ = false;
+            }
+            last_selected_processor_ = selected_processor_;
+        }
+        const bool is_right_panel_shown =
+            is_problems_panel_open_ || selected_processor_.has_value();
+        // The panel keeps the cores' area a width worth working in, also in a window made narrow.
+        right_panel_width_ =
+            std::clamp(right_panel_width_, narrowest_right_panel,
+                       std::max(narrowest_right_panel,
+                                space.x - processors_panel_width - narrowest_cores_area));
+        const float right_panel_width_now =
+            is_right_panel_shown ? right_panel_width_ + panel_edge_width : 0.0f;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+        render_top_bar(pipeline_state, ImVec2(whole_space.x, bar_height));
         // ImGui's flags are signed ints by its API
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
         ImGui::BeginChild("ProcessorsPanel", ImVec2(processors_panel_width, space.y),
@@ -69,10 +150,10 @@ public:
 
         // ImGui's flags are signed ints by its API
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
-        ImGui::BeginChild(
-            "Cores", ImVec2(space.x - processors_panel_width - options_panel_width_now, space.y),
-            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-            ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::BeginChild("Cores",
+                          ImVec2(space.x - processors_panel_width - right_panel_width_now, space.y),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_HorizontalScrollbar);
         render_isolation_note();
         core_under_drag_ = core_under_dragged_processor();
         core_rectangles_.clear();
@@ -92,48 +173,88 @@ public:
 
         // The panel's width was settled before the cores were drawn, so a processor picked in
         // this frame gets its panel in the next one.
-        if (options_panel_width_now > 0.0f) {
+        if (is_right_panel_shown) {
             ImGui::SameLine(0.0f, 0.0f);
+            render_right_panel_edge(space.y);
+            ImGui::SameLine(0.0f, 0.0f);
+            const bool is_showing_problems = is_problems_panel_open_;
             // ImGui's flags are signed ints by its API
             // NOLINTNEXTLINE(bugprone-signed-bitwise)
-            ImGui::BeginChild("OptionsPanel", ImVec2(options_panel_width_now, space.y),
+            ImGui::BeginChild(is_showing_problems ? "ProblemsPanel" : "OptionsPanel",
+                              ImVec2(right_panel_width_, space.y),
                               ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-            render_options_panel();
+            if (is_showing_problems) {
+                render_problems_panel(build_outcome);
+            } else {
+                render_options_panel();
+            }
             ImGui::EndChild();
-            name_last_item_for_ui_driver({"options_panel"});
+            name_last_item_for_ui_driver(
+                {is_showing_problems ? "problems_panel" : "options_panel"});
         }
+        if (is_log_panel_open_) {
+            render_log_panel_edge(whole_space.x);
+            render_log_panel(ImVec2(whole_space.x, log_panel_height_));
+        }
+        render_bottom_bar(pipeline_state, ImVec2(whole_space.x, bar_height));
         ImGui::PopStyleVar();
         remove_requested_processor();
-        hand_state_to_ui_driver();
+        keep_pipeline_if_changed();
+        remember_panel_sizes();
+        hand_state_to_ui_driver(build_outcome, pipeline_state);
     }
 
 private:
     static constexpr float processors_panel_width = 380.0f;
-    static constexpr float options_panel_width = 360.0f;
+    static constexpr float narrowest_right_panel = 240.0f;
+    static constexpr float narrowest_cores_area = 300.0f;
+    static constexpr float panel_edge_width = 6.0f;
+    static constexpr std::string_view right_panel_width_name = "right_panel_width";
+    static constexpr std::string_view log_panel_height_name = "log_panel_height";
+    static constexpr float lowest_log_panel = 90.0f;
+    static constexpr float lowest_cores_area = 200.0f;
+    static constexpr std::size_t most_run_lines = 10'000;
+    static constexpr float border_line_width = 1.0f;
+    static constexpr float grabbed_edge_line_width = 3.0f;
     static constexpr float padding = 10.0f;
+    static constexpr float bar_vertical_padding = 3.0f;
     static constexpr float block_width = 220.0f;
     static constexpr float gap_between_rows = 40.0f;
     static constexpr float core_rounding = 12.0f;
-    static constexpr float block_rounding = 8.0f;
+    static constexpr float block_rounding = CARD_ROUNDING;
     static constexpr ImVec4 core_colour{0.949f, 0.949f, 0.953f, 1.0f};
     static constexpr ImVec4 not_isolated_core_colour{1.0f, 0.90f, 0.72f, 1.0f};
     static constexpr ImVec4 warning_colour{0.78f, 0.30f, 0.0f, 1.0f};
-    static constexpr ImVec4 block_colour{1.0f, 1.0f, 1.0f, 1.0f};
-    static constexpr ImVec4 block_border_colour{0.84f, 0.84f, 0.86f, 1.0f};
+    static constexpr ImVec4 idle_state_colour{0.55f, 0.55f, 0.57f, 1.0f};
+    static constexpr ImVec4 busy_state_colour{0.85f, 0.55f, 0.05f, 1.0f};
+    static constexpr ImVec4 ready_state_colour{0.18f, 0.45f, 0.80f, 1.0f};
+    static constexpr ImVec4 running_state_colour{0.13f, 0.55f, 0.27f, 1.0f};
+    static constexpr ImVec4 failed_state_colour = FAILURE_COLOUR;
+    static constexpr ImVec4 text_on_state_colour{1.0f, 1.0f, 1.0f, 1.0f};
+    static constexpr ImVec4 hovered_on_state_colour{1.0f, 1.0f, 1.0f, 0.35f};
+    static constexpr ImVec4 block_colour = CARD_COLOUR;
+    static constexpr ImVec4 block_border_colour = CARD_BORDER_COLOUR;
     static constexpr ImVec4 block_separator_colour{0.90f, 0.90f, 0.92f, 1.0f};
-    static constexpr ImVec4 hovered_row_colour{0.93f, 0.94f, 0.96f, 1.0f};
+    static constexpr ImVec4 hovered_row_colour = HOVERED_CARD_COLOUR;
     static constexpr ImVec4 pressed_row_colour{0.88f, 0.90f, 0.94f, 1.0f};
-    static constexpr ImVec4 faint_colour{0.45f, 0.45f, 0.45f, 1.0f};
+    static constexpr ImVec4 faint_colour = FAINT_TEXT_COLOUR;
     static constexpr ImVec4 samples_colour{0.18f, 0.49f, 0.88f, 1.0f};
     static constexpr ImVec4 events_colour{0.85f, 0.33f, 0.17f, 1.0f};
     static constexpr ImVec4 state_colour{0.10f, 0.58f, 0.28f, 1.0f};
     static constexpr ImVec4 any_kind_colour{0.40f, 0.40f, 0.40f, 1.0f};
     static constexpr ImVec4 marked_port_colour{0.78f, 0.93f, 0.78f, 1.0f};
     static constexpr ImVec4 drop_place_colour{0.10f, 0.58f, 0.28f, 1.0f};
-    static constexpr ImVec4 selected_block_colour{0.12f, 0.31f, 0.63f, 1.0f};
-    static constexpr ImVec4 input_colour{0.92f, 0.92f, 0.94f, 1.0f};
-    static constexpr ImVec4 input_hovered_colour{0.88f, 0.88f, 0.91f, 1.0f};
-    static constexpr ImVec4 input_active_colour{0.84f, 0.86f, 0.92f, 1.0f};
+    static constexpr ImVec4 selected_block_colour = SELECTED_COLOUR;
+    static constexpr ImVec4 input_colour = INPUT_COLOUR;
+    static constexpr ImVec4 input_hovered_colour = HOVERED_INPUT_COLOUR;
+    static constexpr ImVec4 input_active_colour = ACTIVE_INPUT_COLOUR;
+
+    // What the bars show of the pipeline in one frame.
+    struct PipelineState {
+        BuildState build = BuildState::None;
+        RunState run = RunState::None;
+        bool is_compiled_current = false;  // the executable was built from the graph as it stands
+    };
 
     // Where a block was drawn in this frame, on the screen.
     struct BlockRectangle {
@@ -151,6 +272,46 @@ private:
 
     PipelineGraph graph_;
     CpuCores cpu_cores_;
+    // What the app keeps between two sessions; null for the example pipeline of a picture.
+    RememberedNumbers* remembered_ = nullptr;
+    // The width of the panel at the right, which the user changes by dragging its left edge.
+    float right_panel_width_ = 360.0f;
+    PipelineBuild build_;
+    BackgroundFileWriter file_writer_;
+    // The Problems panel: what the last compilation that failed says is wrong, as a list or as
+    // the compiler wrote it.
+    std::vector<BuildProblem> problems_;
+    // The processor of each line of the pipeline.cpp that was compiled last, by which a
+    // compiler's error finds its processor. The graph may have changed since.
+    std::vector<std::string> compiled_processors_of_lines_;
+    bool is_problems_panel_open_ = false;
+    bool is_raw_output_shown_ = false;
+    // The processor that the last frame saw selected, to tell when the user selects another.
+    std::optional<ProcessorId> last_selected_processor_;
+    // The state of the compilation as the last frame saw it, to tell when it changes.
+    BuildState last_build_state_ = BuildState::None;
+    // The pipeline.cpp that the prototype's directory holds, as this designer wrote or read it.
+    std::string last_kept_text_;
+    // The last text that wasn't kept, so that the same one isn't tried again in every frame.
+    std::string last_refused_text_;
+    // Why the pipeline isn't kept as it stands, for the bar; empty while it is.
+    std::string keeping_note_;
+    // The pipeline's directory, which holds its pipeline.cpp, its executable and its runs. None
+    // for the example pipeline of a picture, which is neither kept, compiled nor run.
+    std::optional<std::filesystem::path> directory_;
+    bool is_leaving_asked_ = false;
+    // The pipeline.cpp that the directory's executable was built from; empty while there is no
+    // executable. The pipeline can be run while the graph would still be written as this text.
+    std::string compiled_text_;
+    // The text that is being compiled, which becomes the compiled one if that goes well.
+    std::string text_being_compiled_;
+    PipelineRun run_;
+    // What the pipeline's program wrote in its last run, the latest lines of it.
+    std::deque<std::string> run_lines_;
+    // The Log panel, at the bottom, which shows those lines. The user changes its height by
+    // dragging its top edge.
+    bool is_log_panel_open_ = false;
+    float log_panel_height_ = 220.0f;
     // The boxes of the frame before, until this frame's are drawn.
     std::vector<CoreRectangle> core_rectangles_;
     // The core over whose box a processor is dragged, which shows its drop places.
@@ -183,8 +344,41 @@ private:
 
     void forget_picked_port() { picked_port_ = std::monostate{}; }
 
+    [[nodiscard]] static std::string_view build_state_name(BuildState state) {
+        switch (state) {
+            case BuildState::None:
+                return "none";
+            case BuildState::Running:
+                return "running";
+            case BuildState::Succeeded:
+                return "succeeded";
+            case BuildState::Failed:
+                return "failed";
+        }
+        return "none";
+    }
+
+    [[nodiscard]] static std::string_view run_state_name(RunState state) {
+        switch (state) {
+            case RunState::None:
+                return "none";
+            case RunState::Starting:
+                return "starting";
+            case RunState::Running:
+                return "running";
+            case RunState::Stopping:
+                return "stopping";
+            case RunState::StartFailed:
+                return "start_failed";
+            case RunState::Failed:
+                return "failed";
+        }
+        return "none";
+    }
+
     // For a test that drives the UI (see ../ui_driver/ui_driver.cpp); nothing unless one does.
-    void hand_state_to_ui_driver() const {
+    void hand_state_to_ui_driver(const BuildOutcome& build_outcome,
+                                 const PipelineState& pipeline_state) const {
         if (!ui_driver_targets().is_on()) {
             return;
         }
@@ -195,7 +389,516 @@ private:
                                                .picked_input = picked_input(),
                                                .shown_core_numbers = shown_core_numbers(),
                                                .offered_core_numbers = cpu_cores_.offered(),
+                                               .build_state = build_state_name(build_outcome.state),
+                                               .build_text = build_outcome.text,
+                                               .problems = problems_,
+                                               .is_problems_panel_open = is_problems_panel_open_,
+                                               .is_raw_output_shown = is_raw_output_shown_,
+                                               .keeping_note = keeping_note_,
+                                               .run_state = run_state_name(pipeline_state.run),
+                                               .bar_text = bar_state_of(pipeline_state).text,
+                                               .run_lines = &run_lines_,
                                            }));
+    }
+
+    // What the pipeline is called in the top bar: its name, or its folder's where it has none.
+    [[nodiscard]] std::string shown_pipeline_name() const {
+        if (!graph_.name.empty() || !directory_.has_value()) {
+            return graph_.name;
+        }
+        return directory_->filename().string();
+    }
+
+    // Whether the executable was built from the graph as it stands.
+    [[nodiscard]] bool is_compiled_pipeline_current() const {
+        if (compiled_text_.empty()) {
+            return false;
+        }
+        const WrittenText written = write_pipeline(graph_);
+        return written.has_value() && *written == compiled_text_;
+    }
+
+    // Has the panels' sizes remembered once the user has let go of an edge, not at every step of
+    // a drag.
+    void remember_panel_sizes() {
+        if (remembered_ == nullptr || ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            return;
+        }
+        remembered_->remember(right_panel_width_name, right_panel_width_);
+        remembered_->remember(log_panel_height_name, log_panel_height_);
+    }
+
+    // Starts the directory's executable beside this thread. Its lines take the place of the last
+    // run's.
+    void start_run() {
+        if (directory_.has_value()) {
+            run_lines_.clear();
+            is_log_panel_open_ = true;
+            run_.start(*directory_ / "pipeline");
+        }
+    }
+
+    // Adds what the pipeline's program wrote since the last frame. Only the latest lines are
+    // held: a run may last for days.
+    void take_new_run_lines() {
+        for (std::string& line : run_.take_new_lines()) {
+            run_lines_.push_back(std::move(line));
+        }
+        while (run_lines_.size() > most_run_lines) {
+            run_lines_.pop_front();
+        }
+    }
+
+    // Keeps the graph as the pipeline.cpp of the pipeline's directory as soon as it has changed,
+    // so that no action is lost, also while the graph isn't finished. A text that can't be read
+    // back is not kept, and the file stays what it was: a value that is half typed, e.g. a text
+    // whose quote isn't closed yet, would else leave a file that no longer opens.
+    void keep_pipeline_if_changed() {
+        if (!directory_.has_value()) {
+            return;
+        }
+        WrittenText written = write_pipeline_to_keep(graph_);
+        if (!written.has_value()) {
+            keeping_note_ = std::format("Not saved: {}", sentence_of(written.error()));
+            return;
+        }
+        if (*written == last_kept_text_) {
+            keeping_note_ =
+                file_writer_.has_failed()
+                    ? std::format("Not saved: {} can't be written to.", directory_->string())
+                    : std::string();
+            return;
+        }
+        if (*written == last_refused_text_) {
+            return;
+        }
+        const ReadPipeline read_back = read_pipeline(*written, ALL_PROCESSORS);
+        if (!read_back.has_value()) {
+            keeping_note_ = std::format("Not saved: {}", read_back.error());
+            last_refused_text_ = std::move(*written);
+            return;
+        }
+        // The file is written beside this thread: a disk may be slow for a moment.
+        file_writer_.write(*directory_ / "pipeline.cpp", *written);
+        last_kept_text_ = std::move(*written);
+        keeping_note_.clear();
+    }
+
+    // Writes the graph as its pipeline.cpp and starts compiling it beside this thread. A graph
+    // that can't be written fails at once, with the reason.
+    void start_build() {
+        // So that a failure counts as a change of state also where the last one failed too.
+        last_build_state_ = BuildState::None;
+        run_.forget_last_run();
+        if (!directory_.has_value()) {
+            build_.fail({
+                .title = "The pipeline has no folder",
+                .body = "This pipeline is an example and lies in no folder.",
+                .place = {},
+                .found_at = {},
+                .required_from = {},
+                .processor_name = {},
+            });
+            return;
+        }
+        WrittenText written = write_pipeline(graph_);
+        if (!written.has_value()) {
+            PipelineProblem& problem = written.error();
+            build_.fail({
+                .title = std::move(problem.title),
+                .body = std::move(problem.body),
+                .place = {},
+                .found_at = {},
+                .required_from = {},
+                .processor_name = std::move(problem.processor_name),
+            });
+            return;
+        }
+        compiled_processors_of_lines_ = processors_of_lines(*written, graph_);
+        text_being_compiled_ = *written;
+        build_.start(std::move(*written), *directory_);
+    }
+
+    // The bar at the top of the window, which holds the buttons at its right end: Compile, which
+    // can't be clicked while a compilation runs. Its left end is kept for a menu.
+    void render_top_bar(const PipelineState& state, ImVec2 size) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, bar_vertical_padding));
+        // ImGui's flags are signed ints by its API
+        // NOLINTNEXTLINE(bugprone-signed-bitwise)
+        ImGui::BeginChild("TopBar", size,
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
+        const bool is_running = is_run_on(state.run);
+        const bool is_compiling = state.build == BuildState::Running;
+        // Leaving ends this designer, which would wait for a compilation or a run to end.
+        ImGui::BeginDisabled(is_compiling || is_running);
+        if (ImGui::Button("Pipelines")) {
+            is_leaving_asked_ = true;
+        }
+        ImGui::EndDisabled();
+        name_last_item_for_ui_driver({"top_bar", "pipelines"});
+        render_item_tooltip("Back to the list of pipelines.");
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        push_bold_font();
+        ImGui::TextUnformatted(shown_pipeline_name().c_str());
+        ImGui::PopFont();
+        name_last_item_for_ui_driver({"top_bar", "pipeline_name"});
+        ImGui::SameLine();
+        // One button starts the pipeline and stops it again: it never offers both.
+        const char* const run_label = is_running ? "Stop" : "Run";
+        const char* const compile_label = "Compile";
+        const float frame_padding = 2.0f * ImGui::GetStyle().FramePadding.x;
+        const float run_width = ImGui::CalcTextSize(run_label).x + frame_padding;
+        const float compile_width = ImGui::CalcTextSize(compile_label).x + frame_padding;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - run_width -
+                             ImGui::GetStyle().ItemSpacing.x - compile_width);
+        // A run that is stopping can't be stopped again, and only the pipeline that was compiled
+        // from the graph as it stands is run.
+        const bool is_run_button_usable = is_running ? state.run != RunState::Stopping
+                                                     : (state.is_compiled_current && !is_compiling);
+        ImGui::BeginDisabled(!is_run_button_usable);
+        const bool is_run_button_clicked = ImGui::Button(run_label);
+        ImGui::EndDisabled();
+        name_last_item_for_ui_driver({"top_bar", "run"});
+        ImGui::SameLine();
+        // A compilation would replace the executable under the run that uses it.
+        ImGui::BeginDisabled(is_compiling || is_running);
+        const bool is_compile_asked_for = ImGui::Button(compile_label);
+        ImGui::EndDisabled();
+        name_last_item_for_ui_driver({"top_bar", "compile"});
+        ImGui::PopStyleColor(3);
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        // The bar's border lies where the panels under it begin, so that their edges meet it.
+        const float border_height =
+            ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y - border_line_width;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x, border_height),
+                                            ImVec2(ImGui::GetItemRectMax().x, border_height),
+                                            ImGui::GetColorU32(block_border_colour),
+                                            border_line_width);
+        if (is_compile_asked_for) {
+            start_build();
+        }
+        if (is_run_button_clicked) {
+            if (is_running) {
+                run_.stop();
+            } else {
+                start_run();
+            }
+        }
+    }
+
+    // What the bar at the bottom says of the pipeline, and in which colour: amber while something
+    // is going on, red after a failure, green while the pipeline runs, blue for one that is
+    // compiled and ready to run, and grey before any of it.
+    struct BarState {
+        const char* text = "";
+        ImVec4 colour;
+    };
+
+    // A run that is on comes first, then a compilation that is on, then the failure of the last
+    // run, and then what stands: the last compilation's failure, or whether the executable is the
+    // graph's.
+    [[nodiscard]] static BarState bar_state_of(const PipelineState& state) {
+        switch (state.run) {
+            case RunState::Starting:
+                return {.text = "Starting", .colour = busy_state_colour};
+            case RunState::Running:
+                return {.text = "Running", .colour = running_state_colour};
+            case RunState::Stopping:
+                return {.text = "Stopping", .colour = busy_state_colour};
+            case RunState::None:
+            case RunState::StartFailed:
+            case RunState::Failed:
+                break;
+        }
+        if (state.build == BuildState::Running) {
+            return {.text = "Compiling", .colour = busy_state_colour};
+        }
+        if (state.run == RunState::StartFailed) {
+            return {.text = "Start failed", .colour = failed_state_colour};
+        }
+        if (state.run == RunState::Failed) {
+            return {.text = "Run failed", .colour = failed_state_colour};
+        }
+        if (state.build == BuildState::Failed) {
+            return {.text = "Compile failed", .colour = failed_state_colour};
+        }
+        return state.is_compiled_current
+                   ? BarState{.text = "Compiled", .colour = ready_state_colour}
+                   : BarState{.text = "Not compiled yet", .colour = idle_state_colour};
+    }
+
+    // The bar at the bottom of the window: a warning with the number of problems, which opens
+    // and closes the Problems panel, and how the last compilation went, in that state's colour.
+    void render_bottom_bar(const PipelineState& state, ImVec2 size) {
+        const BarState bar_state = bar_state_of(state);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, bar_state.colour);
+        ImGui::PushStyleColor(ImGuiCol_Text, text_on_state_colour);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hovered_on_state_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, hovered_on_state_colour);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, bar_vertical_padding));
+        // ImGui's flags are signed ints by its API
+        // NOLINTNEXTLINE(bugprone-signed-bitwise)
+        ImGui::BeginChild("BottomBar", size,
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        render_problems_toggle();
+        ImGui::SameLine();
+        if (ImGui::Button("Log")) {
+            is_log_panel_open_ = !is_log_panel_open_;
+        }
+        name_last_item_for_ui_driver({"bottom_bar", "log"});
+        render_item_tooltip("Show or hide what the running pipeline writes.");
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(bar_state.text);
+        name_last_item_for_ui_driver({"bottom_bar", "state"});
+        if (!keeping_note_.empty()) {
+            ImGui::SameLine(0.0f, 2.0f * padding);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(keeping_note_.c_str());
+            name_last_item_for_ui_driver({"bottom_bar", "keeping_note"});
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(5);
+    }
+
+    // What a compilation that failed says is wrong: the designer's own problem where it has
+    // one, e.g. for a graph that can't be written, and else what the compiler's text names.
+    [[nodiscard]] static std::vector<BuildProblem> problems_of_outcome(
+        const BuildOutcome& build_outcome) {
+        if (build_outcome.state != BuildState::Failed) {
+            return {};
+        }
+        if (build_outcome.problem.has_value()) {
+            return {*build_outcome.problem};
+        }
+        return problems_of(build_outcome.text);
+    }
+
+    // Whether a problem of the list is about this processor, which then shows it on its block.
+    [[nodiscard]] bool has_problem(const GraphProcessor& processor) const {
+        return std::ranges::contains(problems_, processor.name, &BuildProblem::processor_name);
+    }
+
+    // The border of a block whose processor has a problem: it goes from the border's own colour
+    // to red and back, again and again.
+    [[nodiscard]] static ImVec4 problem_border_colour() {
+        constexpr double seconds_there_and_back = 1.6;
+        const double phase =
+            std::fmod(ImGui::GetTime(), seconds_there_and_back) / seconds_there_and_back;
+        const auto red_share = static_cast<float>(1.0 - std::abs((2.0 * phase) - 1.0));
+        const auto mixed = [red_share](float own, float red) {
+            return own + ((red - own) * red_share);
+        };
+        return {
+            mixed(block_border_colour.x, failed_state_colour.x),
+            mixed(block_border_colour.y, failed_state_colour.y),
+            mixed(block_border_colour.z, failed_state_colour.z),
+            1.0f,
+        };
+    }
+
+    // The left edge of the panel at the right: dragged, it makes the panel wider or narrower. A
+    // line shows it while the mouse is on it.
+    void render_right_panel_edge(float height) {
+        ImGui::InvisibleButton("right_panel_edge", ImVec2(panel_edge_width, height));
+        name_last_item_for_ui_driver({"right_panel_edge"});
+        const bool is_dragged = ImGui::IsItemActive();
+        const bool is_under_mouse = is_dragged || ImGui::IsItemHovered();
+        const ImVec2 top_left = ImGui::GetItemRectMin();
+        const ImVec2 bottom_right = ImGui::GetItemRectMax();
+        const float middle = (top_left.x + bottom_right.x) / 2.0f;
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(middle, top_left.y), ImVec2(middle, bottom_right.y),
+            ImGui::GetColorU32(is_under_mouse ? selected_block_colour : block_border_colour),
+            is_under_mouse ? grabbed_edge_line_width : border_line_width);
+        if (!is_under_mouse) {
+            return;
+        }
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        if (is_dragged) {
+            right_panel_width_ -= ImGui::GetIO().MouseDelta.x;
+        }
+    }
+
+    // The top edge of the Log panel, which is dragged to make the panel higher or lower.
+    void render_log_panel_edge(float width) {
+        ImGui::InvisibleButton("log_panel_edge", ImVec2(width, panel_edge_width));
+        name_last_item_for_ui_driver({"log_panel_edge"});
+        const bool is_dragged = ImGui::IsItemActive();
+        const bool is_under_mouse = is_dragged || ImGui::IsItemHovered();
+        const ImVec2 top_left = ImGui::GetItemRectMin();
+        const ImVec2 bottom_right = ImGui::GetItemRectMax();
+        const float middle = (top_left.y + bottom_right.y) / 2.0f;
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(top_left.x, middle), ImVec2(bottom_right.x, middle),
+            ImGui::GetColorU32(is_under_mouse ? selected_block_colour : block_border_colour),
+            is_under_mouse ? grabbed_edge_line_width : border_line_width);
+        // The panel lies right under its edge, without the gap between two rows.
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y);
+        if (!is_under_mouse) {
+            return;
+        }
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (is_dragged) {
+            log_panel_height_ -= ImGui::GetIO().MouseDelta.y;
+        }
+    }
+
+    // The Log panel, at the bottom over the window's whole width: what the pipeline's program
+    // wrote in its last run. It stays at its newest line while the user hasn't scrolled away
+    // from it.
+    void render_log_panel(ImVec2 size) {
+        // ImGui's flags are signed ints by its API
+        // NOLINTNEXTLINE(bugprone-signed-bitwise)
+        ImGui::BeginChild("LogPanel", size,
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        const float icon_size = ImGui::GetTextLineHeight();
+        push_bold_font();
+        ImGui::TextUnformatted("Log");
+        ImGui::PopFont();
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - icon_size);
+        if (render_cross_button("close_log", icon_size, "Close this panel.")) {
+            is_log_panel_open_ = false;
+        }
+        name_last_item_for_ui_driver({"log_panel", "close"});
+        ImGui::Separator();
+        if (run_lines_.empty()) {
+            ImGui::TextColored(faint_colour, "Nothing has run yet.");
+        } else {
+            ImGui::BeginChild("LogLines", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(run_lines_.size()));
+            while (clipper.Step()) {
+                for (int line_index = clipper.DisplayStart; line_index < clipper.DisplayEnd;
+                     ++line_index) {
+                    const std::string& line = run_lines_.at(static_cast<std::size_t>(line_index));
+                    ImGui::TextUnformatted(line.data(), line.data() + line.size());
+                }
+            }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
+        }
+        ImGui::EndChild();
+        name_last_item_for_ui_driver({"log_panel"});
+    }
+
+    // Opens the Problems panel in the place of a processor's options, with its list.
+    void open_problems_panel() {
+        is_problems_panel_open_ = true;
+        is_raw_output_shown_ = false;
+        selected_processor_.reset();
+        last_selected_processor_.reset();
+    }
+
+    // A warning with the number of problems, always in the bar: a click opens the Problems
+    // panel, and another closes it.
+    void render_problems_toggle() {
+        const std::string label = std::format("{} {}", icon("alert-fill"), problems_.size());
+        const bool is_clicked = ImGui::Button(label.c_str());
+        name_last_item_for_ui_driver({"bottom_bar", "warning"});
+        render_item_tooltip("Show or hide the problems.");
+        if (!is_clicked) {
+            return;
+        }
+        if (is_problems_panel_open_) {
+            is_problems_panel_open_ = false;
+        } else {
+            open_problems_panel();
+        }
+    }
+
+    // The Problems panel, at the right in the place of a processor's options: what the last
+    // compilation that failed says is wrong, as a list of problems, or as the compiler wrote it
+    // where the user asks for that.
+    void render_problems_panel(const BuildOutcome& build_outcome) {
+        const float icon_size = ImGui::GetTextLineHeight();
+        push_bold_font();
+        ImGui::TextUnformatted("Problems");
+        ImGui::PopFont();
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - icon_size);
+        if (render_cross_button("close", icon_size, "Close this panel.")) {
+            is_problems_panel_open_ = false;
+        }
+        name_last_item_for_ui_driver({"problems_panel", "close"});
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (problems_.empty()) {
+            ImGui::TextColored(faint_colour, "No problems.");
+            return;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
+        if (ImGui::SmallButton(is_raw_output_shown_ ? "Show the list" : "Show the raw output")) {
+            is_raw_output_shown_ = !is_raw_output_shown_;
+        }
+        ImGui::PopStyleColor(3);
+        name_last_item_for_ui_driver({"problems_panel", "raw"});
+        ImGui::Spacing();
+        if (is_raw_output_shown_) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(build_outcome.text.c_str());
+            ImGui::PopTextWrapPos();
+            return;
+        }
+        for (std::size_t problem_index = 0; problem_index < problems_.size(); ++problem_index) {
+            render_problem(problem_index, problems_.at(problem_index));
+        }
+    }
+
+    // One problem of the list, in a box of its own: what is wrong, and under it where the
+    // compiler found it.
+    static void render_problem(std::size_t problem_index, const BuildProblem& problem) {
+        ImGui::PushID(static_cast<int>(problem_index));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, block_colour);
+        ImGui::PushStyleColor(ImGuiCol_Border, block_border_colour);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, block_rounding);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+        // ImGui's flags are signed ints by its API
+        // NOLINTBEGIN(bugprone-signed-bitwise)
+        const ImGuiChildFlags box_flags = ImGuiChildFlags_Borders |
+                                          ImGuiChildFlags_AlwaysUseWindowPadding |
+                                          ImGuiChildFlags_AutoResizeY;
+        // NOLINTEND(bugprone-signed-bitwise)
+        ImGui::BeginChild("Problem", ImVec2(0.0f, 0.0f), box_flags);
+        ImGui::TextColored(failed_state_colour, "%s", icon("alert-fill"));
+        ImGui::SameLine();
+        push_bold_font();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(problem.title.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopFont();
+        std::string about = problem.body;
+        if (!problem.processor_name.empty()) {
+            about = about.empty() ? problem.processor_name
+                                  : std::format("{}: {}", problem.processor_name, about);
+        }
+        if (!about.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(about.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        if (!problem.place.empty()) {
+            render_faint_wrapped(problem.place.c_str());
+        }
+        ImGui::EndChild();
+        name_last_item_for_ui_driver({"problems_panel", "problem", std::to_string(problem_index)});
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+        ImGui::Spacing();
+        ImGui::PopID();
     }
 
     // A generator on one core, a chain that fans out on a second, and a recorder on a third.
@@ -593,13 +1296,18 @@ private:
         const bool is_selected = selected_processor_ == processor.id;
         ImGui::PushID(static_cast<int>(processor.id));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, block_colour);
-        ImGui::PushStyleColor(ImGuiCol_Border,
-                              is_selected ? selected_block_colour : block_border_colour);
+        const bool is_marked = has_problem(processor);
+        ImVec4 border_colour = is_selected ? selected_block_colour : block_border_colour;
+        if (is_marked) {
+            border_colour = problem_border_colour();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Border, border_colour);
         ImGui::PushStyleColor(ImGuiCol_Separator, block_separator_colour);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, block_rounding);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize,
-                            is_selected ? selected_border_thickness : border_thickness);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, is_selected || is_marked
+                                                               ? selected_border_thickness
+                                                               : border_thickness);
         // ImGui's flags are signed ints by its API
         // NOLINTBEGIN(bugprone-signed-bitwise)
         const ImGuiChildFlags block_flags = ImGuiChildFlags_Borders |
@@ -1494,14 +2202,26 @@ private:
 
     // Called inside the cores' area, after its blocks: a line for each connection, leaving its
     // output downward and entering its input from above, and one between the picked port and the
-    // mouse.
+    // mouse. The lines are drawn in a window of their own that lies over the cores' area and takes
+    // no mouse: the blocks are windows inside that area, so the area's own drawing lies under
+    // them, and the drawing in front of every window would cover a tooltip too.
     void render_connections() const {
         const ImVec2 area_top_left = ImGui::GetWindowPos();
         const ImVec2 area_size = ImGui::GetWindowSize();
-        ImDrawList* draw_list = ImGui::GetForegroundDrawList();
+        ImGui::SetNextWindowPos(area_top_left);
+        ImGui::SetNextWindowSize(area_size);
+        // ImGui's flags are signed ints by its API
+        // NOLINTBEGIN(bugprone-signed-bitwise)
+        const ImGuiWindowFlags line_window_flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoMove;
+        // NOLINTEND(bugprone-signed-bitwise)
+        ImGui::Begin("##connection_lines", nullptr, line_window_flags);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
         draw_list->PushClipRect(
             area_top_left, ImVec2(area_top_left.x + area_size.x, area_top_left.y + area_size.y),
-            true);
+            false);
         for (const GraphConnection& connection : graph_.connections) {
             const PortDescription* output_port = graph_.find_port(
                 connection.output.processor, connection.output.port, PortDirection::Output);
@@ -1536,6 +2256,7 @@ private:
             }
         }
         draw_list->PopClipRect();
+        ImGui::End();
     }
 
     // The two ends of a connection's line on the screen: each at its port or, while that port

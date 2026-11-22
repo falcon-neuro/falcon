@@ -12,6 +12,8 @@ drew each named thing in the last frame, and hands over the graph it holds.
 import json
 import os
 import queue
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -73,9 +75,21 @@ def port(processor, direction, name):
 
 
 class Designer:
-    """One run of Falcon with the driver on. Use it in a with statement."""
+    """One run of Falcon with the driver on. Use it in a with statement.
 
-    def __init__(self):
+    Falcon keeps its pipelines under the home directory, so each run gets a home directory of
+    its own, empty and removed at the end. A test that wants a second run to find what the first
+    left gives both the same directory as `home`.
+
+    Falcon starts on its welcome screen. A run of this class starts on the designer instead, with
+    the pipeline of the home's folder falcon/prototype_folder, which holds nothing at first;
+    `starts_on_welcome_screen` leaves Falcon on the welcome screen, for the tests of that.
+    """
+
+    def __init__(self, home=None, starts_on_welcome_screen=False):
+        self._starts_on_welcome_screen = starts_on_welcome_screen
+        self.home = Path(home) if home is not None else None
+        self._is_home_its_own = home is None
         self._process = None
         self._answers = queue.Queue()
         self._stop_timer = None
@@ -85,9 +99,14 @@ class Designer:
         falcon = OUTPUT_DIRECTORY / "falcon"
         if not falcon.exists():
             raise DesignerError(f"{falcon} is missing: build Falcon first (sh scripts/make.sh)")
-        environment = dict(os.environ, FALCON_UI_DRIVER="1")
+        if self._is_home_its_own:
+            self.home = Path(tempfile.mkdtemp(prefix="falcon_ui_test_home_"))
+        environment = dict(os.environ, FALCON_UI_DRIVER="1", HOME=str(self.home))
         environment.pop("FALCON_SCREENSHOT", None)
         environment.pop("FALCON_EXAMPLE_PIPELINE", None)
+        environment.pop("FALCON_OPEN_PIPELINE", None)
+        if not self._starts_on_welcome_screen:
+            environment["FALCON_OPEN_PIPELINE"] = str(self.home / "falcon" / "prototype_folder")
         self._process = subprocess.Popen(
             [str(falcon)], cwd=OUTPUT_DIRECTORY, env=environment, text=True,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -106,6 +125,17 @@ class Designer:
                 self.picture(PICTURE_ON_FAILURE)
             except (DesignerError, OSError, ValueError):
                 pass  # the failure being reported is the test's, not the picture's
+        self.close_falcon()
+        self._kill_programs_of_the_home()
+        if self._is_home_its_own:
+            shutil.rmtree(self.home, ignore_errors=True)
+        return False
+
+    def close_falcon(self):
+        """Closes Falcon as its user would and waits for it to end. The with statement does this
+        at its end; a test that looks at what a closed Falcon left calls it before."""
+        if self._process.poll() is not None:
+            return
         try:
             self._process.stdin.write("quit\n")
             self._process.stdin.flush()
@@ -114,7 +144,23 @@ class Designer:
             # Only ever the Falcon this object started.
             self._process.kill()
             self._process.wait()
-        return False
+
+    def _kill_programs_of_the_home(self):
+        """Kills whatever still runs from under the home directory: a pipeline that Falcon started
+        and, having been killed itself, never stopped would keep its cores busy for ever."""
+        home = str(self.home.resolve()) + os.sep
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                program = os.readlink(entry / "exe")
+            except OSError:
+                continue  # gone meanwhile, or another user's
+            if program.startswith(home):
+                try:
+                    os.kill(int(entry.name), signal.SIGKILL)
+                except OSError:
+                    pass
 
     def _read_answers(self):
         for line in self._process.stdout:

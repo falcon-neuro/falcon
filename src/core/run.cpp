@@ -31,6 +31,7 @@
 #include <typeinfo>
 #include <vector>
 #include "rings.cpp"
+#include "run_log_lines.cpp"
 
 // Engine, part 5 of 5: a run's cores, names and directory, its reporting, and its start and stop.
 
@@ -321,11 +322,17 @@ sigset_t stop_signals() {
 
 // Waits for a stop signal while the cores run, then clears `is_pipeline_running`, reporting the
 // cores' messages and the rings' drops at every wake-up. The timeout ends the wait when
-// `is_pipeline_running` was cleared without a signal (a processor threw).
+// `is_pipeline_running` was cleared without a signal (a processor threw). Says once that the
+// pipeline is running, at the first wake-up after every core has passed the start barrier.
 void wait_for_stop_signal(const sigset_t& signals, std::span<MessageChannelReader> readers) {
+    bool is_running_reported = false;
     while (is_pipeline_running) {
         const timespec timeout{.tv_sec = 0, .tv_nsec = 100'000'000};  // MESSAGE_INTERVAL_SECONDS
         const int signal_number = sigtimedwait(&signals, nullptr, &timeout);
+        if (!is_running_reported && start_barrier->try_wait() && !has_startup_failed) {
+            log_engine(MessageType::Log, PIPELINE_IS_RUNNING_LINE);
+            is_running_reported = true;
+        }
         if (signal_number > 0) {
             log_engine(MessageType::Log, "{} received, stopping",
                        signal_number == SIGINT ? "Ctrl+C" : "SIGTERM");
@@ -471,6 +478,13 @@ int run_on_cores(int argument_count, char** arguments,
     }
     // What the loops raised after the last poll.
     report_everything(readers);
+    if (has_startup_failed) {
+        log_engine(MessageType::Error, "the pipeline didn't start");
+    } else if (has_run_failed) {
+        log_engine(MessageType::Error, "the run ended because a processor failed");
+    } else {
+        log_engine(MessageType::Log, "the run ended");
+    }
     logger.close();
     give_run_files_to_owner(run_directory_path, owner);
     return (has_startup_failed || has_run_failed) ? 1 : 0;

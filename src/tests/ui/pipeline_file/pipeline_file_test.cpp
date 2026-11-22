@@ -44,6 +44,11 @@ inline std::filesystem::path repository_directory;
 // What a test found wrong, one text for each finding. A test that leaves it empty has passed.
 using Failures = std::vector<std::string>;
 
+// What the writer wrote, or its problem as one sentence, for a check on either.
+[[nodiscard]] inline std::string text_or_problem_of(const WrittenText& written) {
+    return written.has_value() ? *written : sentence_of(written.error());
+}
+
 inline void expect_equal_texts(Failures& failures, std::string_view what, std::string_view found,
                                std::string_view expected) {
     if (found != expected) {
@@ -148,6 +153,19 @@ inline void rename_output(PipelineGraph& graph, ProcessorId processor_id, std::s
         .output = {.processor = processor_id, .port = "output"},
         .name = std::string(name),
     });
+}
+
+// Adds an EventLogger on the processor's core that reads the processor's port named output: a
+// graph is written only when every output is read.
+inline void add_logger_of(PipelineGraph& graph, ProcessorId processor_id) {
+    const GraphProcessor& processor = processor_of(graph, processor_id);
+    const std::string logger_name = std::format("{}_logger", processor.name);
+    const ProcessorId logger = add_named(graph, {
+                                                    .type_name = "EventLogger",
+                                                    .name = logger_name,
+                                                    .core_number = processor.core_number,
+                                                });
+    connect_output_to_slots(graph, processor_id, logger, "inputs");
 }
 
 // Which slot a connection is, as a text, for a connection into a port that takes several; empty
@@ -466,7 +484,7 @@ int main(int argument_count, char** arguments) {
 // The reason a graph isn't written, or "it was written" for a graph that is.
 [[nodiscard]] inline std::string refusal_of_graph(const PipelineGraph& graph) {
     const WrittenText written = write_pipeline(graph);
-    return written.has_value() ? std::string("it was written") : written.error();
+    return written.has_value() ? std::string("it was written") : sentence_of(written.error());
 }
 
 // A part of a text, and what is to stand in its place.
@@ -492,7 +510,7 @@ struct Replacement {
 [[nodiscard]] inline std::string described_after_round_trip(const PipelineGraph& graph) {
     const WrittenText written = write_pipeline(graph);
     if (!written.has_value()) {
-        return std::format("the graph wasn't written: {}", written.error());
+        return std::format("the graph wasn't written: {}", sentence_of(written.error()));
     }
     const ReadPipeline read = read_pipeline(*written, ALL_PROCESSORS);
     return read.has_value() ? described(*read)
@@ -502,7 +520,8 @@ struct Replacement {
 inline void test_writer_writes_the_monotonous_event_pipeline(Failures& failures) {
     const WrittenText written = write_pipeline(monotonous_event_graph());
     if (!written.has_value()) {
-        failures.push_back(std::format("the graph wasn't written: {}", written.error()));
+        failures.push_back(
+            std::format("the graph wasn't written: {}", sentence_of(written.error())));
         return;
     }
     expect_equal_texts(failures, "the text that was written", *written,
@@ -513,7 +532,8 @@ inline void test_reader_reads_back_what_the_writer_wrote(Failures& failures) {
     const PipelineGraph graph = monotonous_event_graph();
     const WrittenText written = write_pipeline(graph);
     if (!written.has_value()) {
-        failures.push_back(std::format("the graph wasn't written: {}", written.error()));
+        failures.push_back(
+            std::format("the graph wasn't written: {}", sentence_of(written.error())));
         return;
     }
     const ReadPipeline read = read_pipeline(*written, ALL_PROCESSORS);
@@ -525,8 +545,7 @@ inline void test_reader_reads_back_what_the_writer_wrote(Failures& failures) {
                        described(graph));
     const WrittenText written_again = write_pipeline(*read);
     expect_equal_texts(failures, "the text written from the graph that was read back",
-                       written_again.has_value() ? *written_again : written_again.error(),
-                       *written);
+                       text_or_problem_of(written_again), *written);
 }
 
 inline void test_reader_ignores_the_layout(Failures& failures) {
@@ -571,15 +590,15 @@ inline void test_reader_takes_a_core_that_is_not_realtime(Failures& failures) {
     expect_text_holds(failures, "the graph that was read", described(*read),
                       "core 8 (not realtime): dummy_generator example_logger");
     const WrittenText written = write_pipeline(*read);
-    expect_text_holds(failures, "the text written from it",
-                      written.has_value() ? *written : written.error(),
+    expect_text_holds(failures, "the text written from it", text_or_problem_of(written),
                       "{.core_number = 8, .entry_point = core8, .is_realtime = false},");
 }
 
 inline void test_writer_writes_a_stream_and_a_ring_between_two_cores(Failures& failures) {
     const WrittenText written = write_pipeline(spike_detector_graph());
     if (!written.has_value()) {
-        failures.push_back(std::format("the graph wasn't written: {}", written.error()));
+        failures.push_back(
+            std::format("the graph wasn't written: {}", sentence_of(written.error())));
         return;
     }
     expect_equal_texts(failures, "the text that was written", *written,
@@ -598,7 +617,7 @@ inline void test_reader_reads_back_a_stream_and_a_ring(Failures& failures) {
     }
     const WrittenText written_again = write_pipeline(*read);
     expect_equal_texts(failures, "the text written from the graph that was read",
-                       written_again.has_value() ? *written_again : written_again.error(),
+                       text_or_problem_of(written_again),
                        header_without_name() + std::string(SPIKE_DETECTOR_CODE));
 }
 
@@ -617,7 +636,7 @@ inline void test_ring_keeps_the_slots_that_the_user_set(Failures& failures) {
     graph.connections.front().ring_slot_count = 512;
     const WrittenText written = write_pipeline(graph);
     expect_text_holds(
-        failures, "the text that was written", written.has_value() ? *written : written.error(),
+        failures, "the text that was written", text_or_problem_of(written),
         "SampleRing<SignalGeneratorStream, 512> signal_generator_output_ring_to_core5");
     expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
                        described(graph));
@@ -634,7 +653,7 @@ inline void test_ring_to_a_core_that_is_not_realtime_has_more_slots(Failures& fa
     }
     const WrittenText written = write_pipeline(graph);
     expect_text_holds(
-        failures, "the text that was written", written.has_value() ? *written : written.error(),
+        failures, "the text that was written", text_or_problem_of(written),
         "SampleRing<SignalGeneratorStream, 16384> signal_generator_output_ring_to_core5");
     // The connection holds no number of slots of its own, before and after.
     expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
@@ -651,17 +670,19 @@ inline void test_buffer_that_also_feeds_a_ring(Failures& failures) {
         add_named(graph, {.type_name = "SpikeDetector", .name = "far_detector", .core_number = 5});
     connect_output_to_input(graph, generator, near_detector);
     connect_output_to_input(graph, generator, far_detector);
+    add_logger_of(graph, near_detector);
+    add_logger_of(graph, far_detector);
     const WrittenText written = write_pipeline(graph);
-    const std::string text = written.has_value() ? *written : written.error();
+    const std::string text = text_or_problem_of(written);
     expect_text_holds(failures, "the buffer's declaration", text,
                       "    SampleBuffer<SignalGeneratorStream> signal_generator_output_buffer"
                       "{signal_generator_output_ring_to_core5};\n");
     expect_text_holds(failures, "the writer's call", text,
                       "signal_generator.process({.output = signal_generator_output_buffer});");
     expect_text_holds(failures, "the call of the reader on the same core", text,
-                      "near_detector.process({.input = signal_generator_output_buffer});");
+                      "near_detector.process({.input = signal_generator_output_buffer, ");
     expect_text_holds(failures, "the call of the reader on the other core", text,
-                      "far_detector.process({.input = signal_generator_output_ring_to_core5});");
+                      "far_detector.process({.input = signal_generator_output_ring_to_core5, ");
     expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
                        described(graph));
 }
@@ -717,9 +738,9 @@ inline void test_writer_writes_a_filter_with_its_list(Failures& failures) {
     set_option(graph, filter, {.option_name = "taps", .value = "{0.5, 0.5}"});
     connect_output_to_input(graph, generator, filter);
     connect_output_to_input(graph, filter, detector);
+    add_logger_of(graph, detector);
     const WrittenText written = write_pipeline(graph);
-    expect_text_holds(failures, "the filter's declaration",
-                      written.has_value() ? *written : written.error(),
+    expect_text_holds(failures, "the filter's declaration", text_or_problem_of(written),
                       "    FirFilter<SignalGeneratorStream, FirFilterOptions<2>{.design_rate = "
                       "30000.0, .taps = {{0.5, 0.5}}}> fir_filter{\"fir_filter\"};\n");
     expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
@@ -743,8 +764,7 @@ inline void test_reader_reads_a_filter_written_by_hand(Failures& failures) {
                                   sections));
     const WrittenText written = write_pipeline(*read);
     expect_text_holds(
-        failures, "the filter as it is written again",
-        written.has_value() ? *written : written.error(),
+        failures, "the filter as it is written again", text_or_problem_of(written),
         std::format("IirFilter<SignalGeneratorStream, IirFilterOptions<2>{{.design_rate = 30000.0, "
                     ".gain = 0.175014382674721, .sections = {{{{{}}}}}}}> ap_filter",
                     sections));
@@ -754,7 +774,7 @@ inline void test_reader_reads_a_filter_written_by_hand(Failures& failures) {
 inline void test_writer_writes_a_recorder_with_its_slots(Failures& failures) {
     const PipelineGraph graph = spike_recording_graph();
     const WrittenText written = write_pipeline(graph);
-    const std::string text = written.has_value() ? *written : written.error();
+    const std::string text = text_or_problem_of(written);
     expect_text_holds(
         failures, "the recorder's declaration", text,
         "    Recorder<Slots<Slot<\"signal_generator_output\", "
@@ -772,8 +792,7 @@ inline void test_writer_writes_a_recorder_with_its_slots(Failures& failures) {
     PipelineGraph with_nothing_connected;
     add_named(with_nothing_connected, {.type_name = "Recorder", .name = "recorder"});
     const WrittenText written_unconnected = write_pipeline(with_nothing_connected);
-    const std::string unconnected_text =
-        written_unconnected.has_value() ? *written_unconnected : written_unconnected.error();
+    const std::string unconnected_text = text_or_problem_of(written_unconnected);
     expect_text_holds(
         failures, "a recorder with nothing connected", unconnected_text,
         "    Recorder<Slots<>, {.file_name = \"recording.bin\"}> recorder{\"recorder\"};\n");
@@ -797,8 +816,7 @@ inline void test_slots_keep_their_order(Failures& failures) {
     connect_output_to_slots(graph, generator, recorder, "inputs");
     connect_output_to_slots(graph, detector, recorder, "inputs");
     const WrittenText written = write_pipeline(graph);
-    expect_text_holds(failures, "the recorder's call",
-                      written.has_value() ? *written : written.error(),
+    expect_text_holds(failures, "the recorder's call", text_or_problem_of(written),
                       "recorder.process({.inputs = {signal_generator_output_ring_to_core8, "
                       "spike_detector_output_buffer}});");
     expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(graph),
@@ -810,7 +828,7 @@ inline void test_slots_keep_their_order(Failures& failures) {
 inline void test_reader_keeps_a_slot_name_of_its_own(Failures& failures) {
     const WrittenText written = write_pipeline(spike_recording_graph());
     const ReadPipeline read = read_pipeline(
-        replaced_in(written.has_value() ? *written : written.error(),
+        replaced_in(text_or_problem_of(written),
                     {.part = "Slot<\"spike_detector_output\", ", .with = "Slot<\"spikes\", "}),
         ALL_PROCESSORS);
     if (!read.has_value()) {
@@ -821,7 +839,7 @@ inline void test_reader_keeps_a_slot_name_of_its_own(Failures& failures) {
                       "output spike_detector.output is named spikes\n");
     const WrittenText written_again = write_pipeline(*read);
     expect_text_holds(failures, "the text that was written again",
-                      written_again.has_value() ? *written_again : written_again.error(),
+                      text_or_problem_of(written_again),
                       "Slot<\"spikes\", EventBuffer<Spikes<SignalGeneratorStream>, 1>>");
     expect_equal_texts(failures, "the graph that was read back", described_after_round_trip(*read),
                        described(*read));
@@ -835,7 +853,7 @@ inline void test_renamed_output_names_its_buffer_and_its_rings(Failures& failure
     rename_output(graph, graph.processors.at(0).id, "raw_signal");
     rename_output(graph, graph.processors.at(1).id, "spikes");
     const WrittenText written = write_pipeline(graph);
-    const std::string text = written.has_value() ? *written : written.error();
+    const std::string text = text_or_problem_of(written);
     expect_text_holds(failures, "the ring's declaration", text,
                       "SampleRing<SignalGeneratorStream, 64> raw_signal_ring_to_core5"
                       "{\"raw_signal_ring_to_core5\"};\n");
@@ -858,14 +876,66 @@ inline void test_renamed_output_names_its_buffer_and_its_rings(Failures& failure
     const ProcessorId detector = add_named(
         on_one_core, {.type_name = "SpikeDetector", .name = "spike_detector", .core_number = 4});
     connect_output_to_input(on_one_core, generator, detector);
+    add_logger_of(on_one_core, detector);
     rename_output(on_one_core, generator, "raw_signal");
     const WrittenText written_on_one_core = write_pipeline(on_one_core);
-    expect_text_holds(
-        failures, "the buffer of an output without a slot",
-        written_on_one_core.has_value() ? *written_on_one_core : written_on_one_core.error(),
-        "    SampleBuffer<SignalGeneratorStream> raw_signal_buffer;\n");
+    expect_text_holds(failures, "the buffer of an output without a slot",
+                      text_or_problem_of(written_on_one_core),
+                      "    SampleBuffer<SignalGeneratorStream> raw_signal_buffer;\n");
     expect_equal_texts(failures, "the graph on one core that was read back",
                        described_after_round_trip(on_one_core), described(on_one_core));
+}
+
+// What a graph gives when it is written to keep, read back, and described; or why that didn't
+// work.
+[[nodiscard]] inline std::string described_after_keeping(const PipelineGraph& graph) {
+    const WrittenText written = write_pipeline_to_keep(graph);
+    if (!written.has_value()) {
+        return std::format("the graph wasn't written: {}", sentence_of(written.error()));
+    }
+    const ReadPipeline read = read_pipeline(*written, ALL_PROCESSORS);
+    return read.has_value() ? described(*read)
+                            : std::format("what was written wasn't read: {}", read.error());
+}
+
+inline void test_unfinished_graph_is_kept(Failures& failures) {
+    // A generator that nothing reads, and a detector that nothing feeds, with a logger on it.
+    PipelineGraph graph;
+    add_named(graph,
+              {.type_name = "SignalGenerator", .name = "signal_generator", .core_number = 4});
+    const ProcessorId detector = add_named(
+        graph, {.type_name = "SpikeDetector", .name = "spike_detector", .core_number = 5});
+    add_logger_of(graph, detector);
+    expect_text_holds(failures, "the text to compile", refusal_of_graph(graph),
+                      "isn't connected to anything");
+    const WrittenText kept = write_pipeline_to_keep(graph);
+    const std::string kept_text = text_or_problem_of(kept);
+    expect_text_holds(failures, "a type that nothing gives yet", kept_text,
+                      "    SpikeDetector<InputStreamInfo, {.threshold = -50}> "
+                      "spike_detector{\"spike_detector\"};\n");
+    expect_text_holds(failures, "a call without its output", kept_text,
+                      "        signal_generator.process({});\n");
+    expect_equal_texts(failures, "the graph that was read back", described_after_keeping(graph),
+                       described(graph));
+
+    const PipelineGraph without_processors;
+    expect_equal_texts(failures, "a graph without a processor",
+                       described_after_keeping(without_processors), described(without_processors));
+
+    // A connection of a state value has no text yet: the graph is kept without it.
+    PipelineGraph with_state_value;
+    const ProcessorId first_detector =
+        add_named(with_state_value, {.type_name = "RippleDetector", .name = "first_detector"});
+    const ProcessorId second_detector =
+        add_named(with_state_value, {.type_name = "RippleDetector", .name = "second_detector"});
+    PipelineGraph without_the_connection = with_state_value;
+    if (!with_state_value.connect({.processor = first_detector, .port = "is_in_lockout"},
+                                  {.processor = second_detector, .port = "is_detection_enabled"})) {
+        throw std::logic_error("the test makes a connection that the graph doesn't take");
+    }
+    expect_equal_texts(failures, "a graph with a connection of a state value",
+                       described_after_keeping(with_state_value),
+                       described(without_the_connection));
 }
 
 struct RepositoryPipeline {
@@ -998,8 +1068,7 @@ inline void test_reader_refuses_what_it_can_not_read(Failures& failures) {
         "braces");
 
     const WrittenText written_recording = write_pipeline(spike_recording_graph());
-    const std::string recording_code =
-        written_recording.has_value() ? *written_recording : written_recording.error();
+    const std::string recording_code = text_or_problem_of(written_recording);
     expect_text_holds(
         failures, "fewer connections than the type lists slots",
         refusal_of_text(
@@ -1020,12 +1089,11 @@ inline void test_reader_refuses_what_it_can_not_read(Failures& failures) {
     const WrittenText written_one_slot = write_pipeline(with_one_slot);
     expect_text_holds(
         failures, "one connection without braces for a port that takes several",
-        refusal_of_text(
-            replaced_in(written_one_slot.has_value() ? *written_one_slot : written_one_slot.error(),
-                        {
-                            .part = ".inputs = {signal_generator_output_ring_to_core8}",
-                            .with = ".inputs = signal_generator_output_ring_to_core8",
-                        })),
+        refusal_of_text(replaced_in(text_or_problem_of(written_one_slot),
+                                    {
+                                        .part = ".inputs = {signal_generator_output_ring_to_core8}",
+                                        .with = ".inputs = signal_generator_output_ring_to_core8",
+                                    })),
         "the port inputs of a Recorder takes several connections, which its call gives it in "
         "braces");
     expect_text_holds(failures, "a list of slots that isn't written as one",
@@ -1052,9 +1120,7 @@ inline void test_reader_refuses_what_it_can_not_read(Failures& failures) {
     const WrittenText written_two_recorders = write_pipeline(with_two_recorders);
     expect_text_holds(
         failures, "one output that two slots call differently",
-        refusal_of_text(replaced_in(written_two_recorders.has_value()
-                                        ? *written_two_recorders
-                                        : written_two_recorders.error(),
+        refusal_of_text(replaced_in(text_or_problem_of(written_two_recorders),
                                     {
                                         .part = "Slot<\"signal_generator_output\", ",
                                         .with = "Slot<\"raw_signal\", ",
@@ -1082,7 +1148,8 @@ inline void test_writer_calls_a_processor_after_those_it_reads_from(Failures& fa
     connect_output_to_slots(graph, second_generator, second_logger, "inputs");
     const WrittenText written = write_pipeline(graph);
     if (!written.has_value()) {
-        failures.push_back(std::format("the graph wasn't written: {}", written.error()));
+        failures.push_back(
+            std::format("the graph wasn't written: {}", sentence_of(written.error())));
         return;
     }
     expect_text_holds(
@@ -1161,6 +1228,14 @@ inline void test_writer_refuses_what_it_can_not_write(Failures& failures) {
     expect_text_holds(failures, "a name of two lines", refusal_of_graph(with_a_name_of_two_lines),
                       "must each fit on one line");
 
+    PipelineGraph with_an_output_that_nothing_reads;
+    add_named(with_an_output_that_nothing_reads,
+              {.type_name = "SignalGenerator", .name = "signal_generator"});
+    expect_text_holds(failures, "an output that nothing reads",
+                      refusal_of_graph(with_an_output_that_nothing_reads),
+                      "signal_generator: its output output isn't connected to anything, and a "
+                      "SignalGenerator needs it connected");
+
     expect_text_holds(failures, "a pipeline without a processor", refusal_of_graph({}),
                       "the pipeline holds no processor");
 }
@@ -1171,6 +1246,40 @@ struct NamedTest {
 };
 
 // Runs every test and prints its outcome. Returns how many failed.
+// The lines of a written pipeline.cpp that are a processor's: the one that declares it and the
+// one that calls it, and no other.
+inline void test_writer_s_lines_of_each_processor_are_its_declaration_and_its_call(
+    Failures& failures) {
+    const PipelineGraph graph = spike_recording_graph();
+    const std::string text = text_or_problem_of(write_pipeline(graph));
+    const std::vector<std::string> processor_names = processors_of_lines(text, graph);
+    std::string found;
+    std::size_t line_start = 0;
+    for (const std::string& processor_name : processor_names) {
+        const std::size_t line_end = std::min(text.find('\n', line_start), text.size());
+        if (!processor_name.empty()) {
+            std::string_view line =
+                std::string_view(text).substr(line_start, line_end - line_start);
+            line.remove_prefix(std::min(line.find_first_not_of(' '), line.size()));
+            // How the line begins says which of the two it is: a type's name or a call.
+            found +=
+                std::format("{}: {}\n", processor_name, line.substr(0, line.find_first_of("<(")));
+        }
+        line_start = line_end + 1;
+    }
+    expect_equal_texts(failures, "the lines that are a processor's", found,
+                       "signal_generator: SignalGenerator\n"
+                       "signal_generator: signal_generator.process\n"
+                       "spike_detector: SpikeDetector\n"
+                       "spike_detector: spike_detector.process\n"
+                       "recorder: Recorder\n"
+                       "recorder: recorder.process\n");
+    if (std::ranges::count(text, '\n') != static_cast<std::ptrdiff_t>(processor_names.size())) {
+        failures.push_back(std::format("the text has {} lines, and {} were told of",
+                                       std::ranges::count(text, '\n'), processor_names.size()));
+    }
+}
+
 [[nodiscard]] inline std::size_t run_tests() {
     const std::vector<NamedTest> tests{
         {
@@ -1246,6 +1355,10 @@ struct NamedTest {
             .run = test_renamed_output_names_its_buffer_and_its_rings,
         },
         {
+            .name = "unfinished_graph_is_kept",
+            .run = test_unfinished_graph_is_kept,
+        },
+        {
             .name = "repository_pipelines_are_read_or_refused",
             .run = test_repository_pipelines_are_read_or_refused,
         },
@@ -1260,6 +1373,10 @@ struct NamedTest {
         {
             .name = "writer_refuses_what_it_can_not_write",
             .run = test_writer_refuses_what_it_can_not_write,
+        },
+        {
+            .name = "writer_s_lines_of_each_processor_are_its_declaration_and_its_call",
+            .run = test_writer_s_lines_of_each_processor_are_its_declaration_and_its_call,
         },
     };
     std::size_t failed_count = 0;
