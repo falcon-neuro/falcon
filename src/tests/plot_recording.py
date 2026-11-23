@@ -10,7 +10,7 @@ was in memory, and the first line lists its fields, each with its name, type, pl
 a field of the event's header is named header.sample_number and so on. All little-endian. A file of
 version 1, where an event's record is its header alone, is read too.
 
-    uv run src/tests/plot_recording.py ~/falcon/runs/<run>/ripple_detector.bin
+    uv run src/tests/plot_recording.py <the program's folder>/runs/<run>/ripple_detector.bin
 
 One sample slot is plotted, a panel per channel: the first one, or the one named with --samples.
 Every event slot whose events have a sample number is drawn as vertical lines, a colour per slot. An

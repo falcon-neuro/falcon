@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Writes a PNG picture of Falcon's UI, drawn into a window that isn't shown.
 
-usage: python3 src/tests/ui/screenshot.py <picture.png> [--empty | --selected]
+usage: python3 src/tests/ui/screenshot.py <picture.png> [--empty | --selected | --welcome]
 
-By default the pipeline designer holds a small example pipeline. --empty leaves it empty, and
---selected also opens the options of one processor. Falcon has to be built first.
+By default the pipeline designer holds a small example pipeline. --empty leaves it empty,
+--selected also opens the options of one processor, and --welcome shows the welcome screen, which
+Falcon starts on, without a pipeline. Falcon has to be built first.
 """
 import os
 import struct
@@ -47,16 +48,23 @@ def main():
     arguments = sys.argv[1:]
     options = [argument for argument in arguments if argument.startswith("--")]
     paths = [argument for argument in arguments if not argument.startswith("--")]
-    if len(paths) != 1 or any(option not in ("--empty", "--selected") for option in options):
+    if len(paths) != 1 or any(option not in ("--empty", "--selected", "--welcome") for option in options):
         sys.exit(__doc__)
     picture_path = Path(paths[0]).resolve()
 
     environment = dict(os.environ)
-    if "--empty" not in options:
-        environment["FALCON_EXAMPLE_PIPELINE"] = "selected" if "--selected" in options else "1"
+    environment.pop("FALCON_EXAMPLE_PIPELINE", None)
+    environment.pop("FALCON_OPEN_PIPELINE", None)
     with tempfile.TemporaryDirectory() as directory:
         ppm_path = Path(directory) / "falcon.ppm"
         environment["FALCON_SCREENSHOT"] = str(ppm_path)
+        # Falcon lists the pipelines it keeps under the home directory: a picture shows none of
+        # the user's.
+        environment["HOME"] = directory
+        if "--empty" in options:
+            environment["FALCON_OPEN_PIPELINE"] = str(Path(directory) / "falcon" / "a_pipeline")
+        elif "--welcome" not in options:
+            environment["FALCON_EXAMPLE_PIPELINE"] = "selected" if "--selected" in options else "1"
         subprocess.run([str(OUTPUT_DIRECTORY / "falcon")], cwd=OUTPUT_DIRECTORY, env=environment,
                        timeout=TIME_LIMIT_SECONDS, check=True, stdout=subprocess.DEVNULL)
         width, height, pixels = read_ppm(ppm_path)

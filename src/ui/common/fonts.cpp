@@ -106,3 +106,16 @@ inline void push_ui_font(int size, FontStyle style) {
 inline void pop_ui_font() {
     ImGui::PopFont();
 }
+
+// The size of the text in a side panel, and of the smaller notes that go with it.
+inline constexpr int PANEL_TEXT_SIZE = 16;
+inline constexpr int PANEL_NOTE_SIZE = 14;
+
+// Text in a size, a style and a colour of its own, wrapped where a wrap position is set.
+inline void render_styled_text(const char* text, int size, FontStyle style, const ImVec4& colour) {
+    push_ui_font(size, style);
+    ImGui::PushStyleColor(ImGuiCol_Text, colour);
+    ImGui::TextUnformatted(text);
+    ImGui::PopStyleColor();
+    pop_ui_font();
+}

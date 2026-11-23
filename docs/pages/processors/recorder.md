@@ -14,6 +14,8 @@ Writing to a file can stall for a moment. The recorder should therefore run on a
 |------|---------|
 | `inputs` | Any number of connections, at least one. Each brings samples, or events of any kind. |
 
+Each connection has a name, by which the file calls it (see [The file](#the-file)). A name holds letters, digits and `_` only, and can't be empty.
+
 The recorder has no output.
 
 ## Options
@@ -21,7 +23,6 @@ The recorder has no output.
 | Option | Meaning | Default |
 |--------|---------|---------|
 | `file_name` | The name of the file, in the run's directory. It is a name only, without a folder. | `recording.bin` |
-| `slot_names` | The names the file gives the connections: one for each, in the order in which they are connected. A name holds letters, digits, `_` and `-` only, and can't be empty. | Required: one name for each connection. |
 
 The file must not exist yet, so two recorders in one graph need different file names.
 

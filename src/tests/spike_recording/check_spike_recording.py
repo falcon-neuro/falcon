@@ -8,7 +8,7 @@ and every such crossing must have its spike. It judges the whole way a spike tak
 the list of the event's fields in the first line, the event's bytes, the channel mask as the reader
 decodes it, and the sample numbers of the two slots.
 
-    uv run src/tests/spike_recording/check_spike_recording.py ~/falcon/runs/<run>/spike_recording.bin
+    uv run src/tests/spike_recording/check_spike_recording.py <the program's folder>/runs/<run>/spike_recording.bin
 
 Build the pipeline and run it for a few seconds first. The threshold and the spike rate below are
 the pipeline's: the file doesn't hold them.

@@ -7,7 +7,7 @@ site_dir = "build"
 repo_url = "https://github.com/falcon-neuro/falcon"
 repo_name = "falcon-neuro/falcon"
 extra_css = ["stylesheets/extra.css"]
-extra_javascript = ["javascripts/search_dialog.js"]
+extra_javascript = ["javascripts/search_dialog.js", "javascripts/api_in_new_tab.js"]
 
 nav = [
   { "Home" = "index.md" },
@@ -21,6 +21,7 @@ nav = [
       "processors/iir_filter.md",
       "processors/latency_benchmark.md",
       "processors/level_crossing_detector.md",
+      "processors/neuralynx_input.md",
       "processors/pcie_parallel_output.md",
       "processors/recorder.md",
       "processors/ripple_detector.md",

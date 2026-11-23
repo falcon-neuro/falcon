@@ -22,7 +22,7 @@ def test_input_is_greyed_for_a_kind_of_event_it_does_not_take():
         assert note_of(designer, port(trigger, "input", "input")) == (
             "This input takes LevelCrossings or Spikes events, and the picked output gives Ripple "
             "events.\n\n" + TRIGGER_INPUT)
-        assert note_of(designer, port(logger, "input", "input")) == ""
+        assert note_of(designer, port(logger, "input", "inputs")) == ""
 
 
 def test_click_on_an_input_that_does_not_take_the_event_connects_nothing():

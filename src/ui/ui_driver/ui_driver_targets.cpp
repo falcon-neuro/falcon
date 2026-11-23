@@ -58,15 +58,19 @@ public:
     }
 
     void set_state(std::string state_as_json) { state_as_json_ = std::move(state_as_json); }
+    void set_window_title(std::string window_title) { window_title_ = std::move(window_title); }
 
     [[nodiscard]] const std::vector<UiDriverTarget>& targets() const { return targets_; }
     // JSON, or empty before the first frame.
     [[nodiscard]] const std::string& state() const { return state_as_json_; }
+    // The title the window has on the desktop, which no frame shows; empty before the first one.
+    [[nodiscard]] const std::string& window_title() const { return window_title_; }
 
 private:
     bool is_on_ = false;
     std::vector<UiDriverTarget> targets_;
     std::string state_as_json_;
+    std::string window_title_;
 };
 
 // One for the whole program: the UI's parts name their things from wherever they are drawn.

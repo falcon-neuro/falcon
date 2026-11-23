@@ -16,7 +16,7 @@ description: "What Falcon's documentation means by channel, sample, stream, even
 - **Connection**: a link from one processor's output to another processor's input, drawn as a line in the graph editor. It carries one kind of data: samples, events or a state value.
 - **Buffer**: the memory through which a connection hands its data from one processor to the next when both run on the same core: the first writes into it, the second reads from it. A sample buffer holds one sample or none; an event buffer holds the events produced on this pass, zero or more.
 - **Ring**: the memory through which a connection hands its data from one core to another: a circular row of slots that the writing core fills in turn and the reading core reads in the same order.
-- **Slot**: one sample's place in a ring.
+- **Slot**: a place that holds one thing among several of its kind. The word has two uses. In a ring, a slot is one sample's place. On an input that takes several connections, a slot is one connection's place, and has a name.
 - **Hop**: a sample's move from one core to another through a ring. It takes time, because the data must travel between the two cores' caches.
 - **Graph**: the processors and connections that make up one experiment, as the user designs it in the editor.
 - **Pipeline**: a graph written in C++ as its own program, `pipeline.cpp`: generated from the graph the user designs in the editor, or written by hand.

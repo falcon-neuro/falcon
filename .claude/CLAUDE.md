@@ -20,6 +20,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Engine: [docs/ongoing_work/engine.md](../docs/ongoing_work/engine.md).
 - Generator: [docs/ongoing_work/generator.md](../docs/ongoing_work/generator.md).
 - Pipeline designer: [docs/ongoing_work/pipeline_designer.md](../docs/ongoing_work/pipeline_designer.md).
+- UI design (how the whole app looks): [docs/ongoing_work/ui_design.md](../docs/ongoing_work/ui_design.md).
 - After the prototype: [docs/ongoing_work/beyond_prototype.md](../docs/ongoing_work/beyond_prototype.md).
 - Graph shapes atlas: [docs/ongoing_work/graph_shapes.md](../docs/ongoing_work/graph_shapes.md).
 - Differences from Falcon 1: [docs/ongoing_work/falcon1_differences.md](../docs/ongoing_work/falcon1_differences.md).
@@ -28,6 +29,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Website: [docs/ongoing_work/website.md](../docs/ongoing_work/website.md).
 - Release (how Falcon is packed and installed): [docs/ongoing_work/release.md](../docs/ongoing_work/release.md).
 - Assets (fonts, icons and their licences): [docs/ongoing_work/assets.md](../docs/ongoing_work/assets.md).
+- Security: [docs/ongoing_work/security.md](../docs/ongoing_work/security.md).
 
 ## Guidelines
 - Before deep thinking, get the higher level picture first and collaborate with me so I can give you directions to dive into.
@@ -48,6 +50,9 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - We are dealing with complex software architecture: there are no easy solutions, only trade-offs. If the answers were easy, I wouldn't brainstorm with you, so don't present a choice as obvious; work through the trade-offs with me.
 - In chat, always write "Ripple Neuromed" for the acquisition system, never "Ripple" alone: I mix it up with ripple detection.
 - One question or topic per message, never several. Queue the other pending points in the open questions of engine.md and raise them one per turn.
+- What the UI knows about a processor is asked of the compiler, never guessed from how its code is written (found on 22 November 2026: a table in the script that lists the processors said that every input with several connections takes samples and events, true of the Recorder alone, so the designer let a SignalGenerator be connected to an EventLogger; the user: "unacceptable", "just common sense"). When a processor's connections change, a test of the designer must try what the processor refuses, not only what it takes, and `test_what_inputs_take.py` holds what every input takes. The wording of this rule is Claude's, not yet confirmed by the user.
+- A hint or label in the UI is one short, plain line that says what the thing is for, e.g. "Label for this output in recordings and logs." (the user's pick on 22 November 2026). Never a paragraph that explains how Falcon works: one such hint was "terrible" and "compressed for no reason", and a longer, friendlier rewrite was "ai slop". Claude's reading: when unsure, write less.
+- Keep every chat message short: a few lines and one simple question that I can answer in seconds. Break a longer matter into pieces over several turns. Detail, lists of what changed and reasoning go into the docs, never into the chat unless I ask. But avoid compressed messages while doing that. Chat should be simple to read. User may be multitasking and the message should be ok to read coming from a context switch.
 
 ## Spec sessions
 Engine planning works only from the docs under **In progress** and this file.

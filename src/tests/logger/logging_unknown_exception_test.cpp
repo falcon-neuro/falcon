@@ -11,10 +11,6 @@ void core1() {
     LifetimeReporter<{.failure = TestFailure::NonStdExceptionInProcess}> throwing_processor{
         "throwing_processor"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         same_core_neighbour.process({});
         throwing_processor.process({});
@@ -25,17 +21,13 @@ void core2() {
     // Processors
     LifetimeReporter<> other_core_processor{"other_core_processor"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         other_core_processor.process({});
     }
 }
 
-int main() {
-    return run_on_cores("logging_unknown_exception_test",
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments,
                         {
                             {.core_number = 1, .entry_point = core1},
                             {.core_number = 2, .entry_point = core2},

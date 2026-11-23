@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
-project(falcon LANGUAGES C CXX)
+# Falcon's version, set by hand before a release: the release's date as year, month and day. The
+# release's tag is this with a v in front.
+project(falcon VERSION 26.11.21 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,6 +75,25 @@ target_link_libraries(imgui PUBLIC
     glad_gl_core_46
 )
 
+# The decoder of the PNG pictures the UI loads (see src/ui/common/pictures.cpp). stb_image.h holds
+# its code beside its declarations: the code is compiled once, here, apart from Falcon's own
+# warnings, and for PNG alone.
+FetchContent_Declare(
+    stb
+    URL https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.zip
+)
+FetchContent_MakeAvailable(stb)
+set(FALCON_STB_IMAGE_CODE "${CMAKE_BINARY_DIR}/generated/stb_image_code.c")
+file(CONFIGURE OUTPUT ${FALCON_STB_IMAGE_CODE} CONTENT
+"#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include <stb_image.h>
+" @ONLY)
+add_library(stb_image STATIC ${FALCON_STB_IMAGE_CODE})
+target_include_directories(stb_image SYSTEM PUBLIC ${stb_SOURCE_DIR})
+# Kept out of the list the lint reads, as pipeline_file_test is, for the reason given there.
+set_target_properties(stb_image PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
+
 add_executable(falcon
     src/main.cpp
 )
@@ -129,6 +150,8 @@ endif()
 target_compile_definitions(falcon PRIVATE
     _GLIBCXX_ASSERTIONS=1
     LIBCXX_ENABLE_HARDENING=1
+    FALCON_VERSION="v${PROJECT_VERSION}"
+    FALCON_BUILD_DIRECTORY="${CMAKE_BINARY_DIR}"
 )
 
 target_include_directories(falcon PRIVATE src)
@@ -161,10 +184,43 @@ target_include_directories(falcon PRIVATE ${CMAKE_BINARY_DIR}/generated)
 
 target_link_libraries(falcon PRIVATE
     imgui
+    stb_image
     pthread
     rt
     uring
 )
+
+# The test of the pipeline's writer and reader, a program of its own that needs none of the UI's
+# libraries. It is built as falcon is, and src/tests/ui/pipeline_file/run.py runs it.
+add_executable(pipeline_file_test
+    src/tests/ui/pipeline_file/pipeline_file_test.cpp
+)
+target_compile_options(pipeline_file_test PRIVATE $<TARGET_PROPERTY:falcon,COMPILE_OPTIONS>)
+target_compile_definitions(pipeline_file_test PRIVATE
+    $<TARGET_PROPERTY:falcon,COMPILE_DEFINITIONS>
+)
+target_link_options(pipeline_file_test PRIVATE $<TARGET_PROPERTY:falcon,LINK_OPTIONS>)
+target_include_directories(pipeline_file_test PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+add_dependencies(pipeline_file_test falcon_all_processors)
+# The lint borrows falcon's compile command for every file that has none of its own, which
+# finds the UI's libraries. With a second command in the list it would borrow this one for
+# some of the UI's files, and not find them.
+set_target_properties(pipeline_file_test PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
+
+# The pipeline that the app's Compile button builds (see src/ui/pipeline_designer/pipeline_build.cpp).
+# The app copies a pipeline's pipeline.cpp to this one place and builds this target, so the build
+# never configures itself again for another pipeline. It isn't built with the rest.
+set(FALCON_PIPELINE_SOURCE "${CMAKE_BINARY_DIR}/pipeline/pipeline.cpp")
+set_source_files_properties(${FALCON_PIPELINE_SOURCE} PROPERTIES GENERATED TRUE)
+add_executable(falcon_pipeline EXCLUDE_FROM_ALL ${FALCON_PIPELINE_SOURCE})
+target_compile_options(falcon_pipeline PRIVATE $<TARGET_PROPERTY:falcon,COMPILE_OPTIONS>)
+target_compile_definitions(falcon_pipeline PRIVATE
+    $<TARGET_PROPERTY:falcon,COMPILE_DEFINITIONS>
+)
+target_link_options(falcon_pipeline PRIVATE $<TARGET_PROPERTY:falcon,LINK_OPTIONS>)
+target_include_directories(falcon_pipeline PRIVATE src)
+target_link_libraries(falcon_pipeline PRIVATE pthread rt uring)
+set_target_properties(falcon_pipeline PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
 
 # Each extension may bring a CMakeLists.txt that adds its own include directories and libraries.
 file(GLOB FALCON_EXTENSION_CMAKE_FILES ${CMAKE_SOURCE_DIR}/src/processors/custom/*/CMakeLists.txt)

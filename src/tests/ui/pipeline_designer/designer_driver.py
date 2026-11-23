@@ -12,6 +12,8 @@ drew each named thing in the last frame, and hands over the graph it holds.
 import json
 import os
 import queue
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,9 @@ SECONDS_FOR_A_RUN = 180
 
 LEFT_BUTTON = 0
 RIGHT_BUTTON = 1
+# The window's top left corner, in the top bar.
+PLACE_OVER_NO_BLOCK = (1.0, 1.0)
+FRAMES_UNTIL_BLOCKS_STAND = 4
 
 # Where a picture of the window is written when a test fails inside a with Designer(), so that
 # what the test saw can be looked at; run.py sets it for each test. None writes no picture.
@@ -73,9 +78,22 @@ def port(processor, direction, name):
 
 
 class Designer:
-    """One run of Falcon with the driver on. Use it in a with statement."""
+    """One run of Falcon with the driver on. Use it in a with statement.
 
-    def __init__(self):
+    Falcon keeps its pipelines under the home directory, so each run gets a home directory of
+    its own, empty and removed at the end. A test that wants a second run to find what the first
+    left gives both the same directory as `home`.
+
+    A run of this class starts on the designer, with the pipeline of the home's folder
+    falcon/prototype_folder, which holds nothing at first. `is_started_as_by_a_user` names no
+    pipeline to Falcon, which then starts as it does for a user: on the pipeline that was open
+    when it was last closed with this home, or on its welcome screen where none was.
+    """
+
+    def __init__(self, home=None, is_started_as_by_a_user=False):
+        self._is_started_as_by_a_user = is_started_as_by_a_user
+        self.home = Path(home) if home is not None else None
+        self._is_home_its_own = home is None
         self._process = None
         self._answers = queue.Queue()
         self._stop_timer = None
@@ -85,9 +103,14 @@ class Designer:
         falcon = OUTPUT_DIRECTORY / "falcon"
         if not falcon.exists():
             raise DesignerError(f"{falcon} is missing: build Falcon first (sh scripts/make.sh)")
-        environment = dict(os.environ, FALCON_UI_DRIVER="1")
+        if self._is_home_its_own:
+            self.home = Path(tempfile.mkdtemp(prefix="falcon_ui_test_home_"))
+        environment = dict(os.environ, FALCON_UI_DRIVER="1", HOME=str(self.home))
         environment.pop("FALCON_SCREENSHOT", None)
         environment.pop("FALCON_EXAMPLE_PIPELINE", None)
+        environment.pop("FALCON_OPEN_PIPELINE", None)
+        if not self._is_started_as_by_a_user:
+            environment["FALCON_OPEN_PIPELINE"] = str(self.home / "falcon" / "prototype_folder")
         self._process = subprocess.Popen(
             [str(falcon)], cwd=OUTPUT_DIRECTORY, env=environment, text=True,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -106,6 +129,17 @@ class Designer:
                 self.picture(PICTURE_ON_FAILURE)
             except (DesignerError, OSError, ValueError):
                 pass  # the failure being reported is the test's, not the picture's
+        self.close_falcon()
+        self._kill_programs_of_the_home()
+        if self._is_home_its_own:
+            shutil.rmtree(self.home, ignore_errors=True)
+        return False
+
+    def close_falcon(self):
+        """Closes Falcon as its user would and waits for it to end. The with statement does this
+        at its end; a test that looks at what a closed Falcon left calls it before."""
+        if self._process.poll() is not None:
+            return
         try:
             self._process.stdin.write("quit\n")
             self._process.stdin.flush()
@@ -114,7 +148,23 @@ class Designer:
             # Only ever the Falcon this object started.
             self._process.kill()
             self._process.wait()
-        return False
+
+    def _kill_programs_of_the_home(self):
+        """Kills whatever still runs from under the home directory: a pipeline that Falcon started
+        and, having been killed itself, never stopped would keep its cores busy for ever."""
+        home = str(self.home.resolve()) + os.sep
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                program = os.readlink(entry / "exe")
+            except OSError:
+                continue  # gone meanwhile, or another user's
+            if program.startswith(home):
+                try:
+                    os.kill(int(entry.name), signal.SIGKILL)
+                except OSError:
+                    pass
 
     def _read_answers(self):
         for line in self._process.stdout:
@@ -154,17 +204,48 @@ class Designer:
         return targets
 
     def target(self, name):
+        self._show_port(name)
         targets = self.targets()
         if name not in targets:
             raise DesignerError(f"nothing is named {name}; named are: {sorted(targets)}")
         return targets[name]
 
     def has_target(self, name):
+        self._show_port(name)
         return name in self.targets()
+
+    def show_ports_of(self, processor):
+        """Brings the mouse over a processor's block: a block shows its ports only while the
+        mouse is over it, so a port is named in a frame only then. The mouse goes by way of a
+        place over no block, where the block it was over hides its ports again and the blocks
+        under that one move back up. A block opens and closes a frame after the mouse came or
+        left, and the blocks have their places in that frame."""
+        self.move_to(PLACE_OVER_NO_BLOCK)
+        self.frames(FRAMES_UNTIL_BLOCKS_STAND)
+        targets = self.targets()
+        handle = f"block/{processor}/handle"
+        if handle in targets:
+            self.move_to(targets[handle].point())
+            self.frames(FRAMES_UNTIL_BLOCKS_STAND)
+
+    def port_names(self, processor, direction):
+        """The names of a processor's ports of one direction, "input" or "output"."""
+        self.show_ports_of(processor)
+        start = f"port/{processor}/{direction}/"
+        return sorted(name[len(start):] for name in self.targets() if name.startswith(start))
+
+    def _show_port(self, name):
+        """Asked for a port that no frame names yet, the driver shows its block's ports first."""
+        if name.startswith("port/") and name not in self.targets():
+            self.show_ports_of(name.split("/")[1])
 
     def state(self):
         """What the designer holds: its graph, the picked port, the selected processor, ..."""
         return self.command("state")["state"]
+
+    def window_title(self):
+        """The title the window has on the desktop, which no picture shows."""
+        return self.command("window_title")["window_title"]
 
     def picture(self, png_path):
         """Writes a picture of the window as it is now."""
@@ -195,7 +276,16 @@ class Designer:
         self.frames(3)
 
     def click(self, name, button=LEFT_BUTTON, across=0.5, down=0.5):
-        self.click_at(self.target(name).point(across, down), button)
+        self.click_at(self._place_under_the_mouse(name, across, down), button)
+
+    def _place_under_the_mouse(self, name, across, down):
+        """Where the named thing is once the mouse is over it. A block shows its ports as soon as
+        the mouse is over it, and its name, its remove icon and whatever lies under it move down
+        by the rows of its inputs. So the mouse goes to the thing, as a hand does, and the thing
+        is clicked or pressed where it then is."""
+        self.move_to(self.target(name).point(across, down))
+        self.frames(FRAMES_UNTIL_BLOCKS_STAND)
+        return self.target(name).point(across, down)
 
     def right_click(self, name):
         self.click(name, RIGHT_BUTTON)
@@ -211,7 +301,7 @@ class Designer:
 
     def start_drag(self, name, across=0.5, down=0.5):
         """Presses on the named thing and moves far enough for a drag to begin."""
-        point = self.target(name).point(across, down)
+        point = self._place_under_the_mouse(name, across, down)
         self.move_to(point)
         self.frames(1)
         self.command(f"mouse_down {LEFT_BUTTON}")

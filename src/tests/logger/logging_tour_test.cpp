@@ -19,8 +19,7 @@
 using TestStream = StreamInfo<16, 1000.0, float>;
 
 // Connections between cores
-SampleRing<TestStream, 4> sample_source_to_slow_sample_counter_sample_ring{
-    "sample_source_to_slow_sample_counter_sample_ring"};
+SampleRing<TestStream, 4> sample_source_output_ring_to_core2{"sample_source_output_ring_to_core2"};
 
 void core1() {
     // Processors
@@ -29,15 +28,11 @@ void core1() {
     RepeatedWarner<{.warnings_per_second = 250}> second_warner{"second_warner"};
     SampleSource<TestStream> sample_source{"sample_source"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         lifetime_reporter.process({});
         first_warner.process({});
         second_warner.process({});
-        sample_source.process({.output = sample_source_to_slow_sample_counter_sample_ring});
+        sample_source.process({.output = sample_source_output_ring_to_core2});
     }
 }
 
@@ -46,19 +41,16 @@ void core2() {
     ArgumentLogger argument_logger{"argument_logger"};
     SlowSampleCounter<TestStream> slow_sample_counter{"slow_sample_counter"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         argument_logger.process({});
-        slow_sample_counter.process({.input = sample_source_to_slow_sample_counter_sample_ring});
+        slow_sample_counter.process({.input = sample_source_output_ring_to_core2});
     }
 }
 
-int main() {
-    return run_on_cores("logging_tour_test", {
-                                                 {.core_number = 1, .entry_point = core1},
-                                                 {.core_number = 2, .entry_point = core2},
-                                             });
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments,
+                        {
+                            {.core_number = 1, .entry_point = core1},
+                            {.core_number = 2, .entry_point = core2},
+                        });
 }

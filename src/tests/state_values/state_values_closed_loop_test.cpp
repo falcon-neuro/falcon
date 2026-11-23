@@ -29,12 +29,10 @@
 using RippleTestStream = StreamInfo<4, 30000.0, float>;
 
 // Connections between cores
-SampleRing<RippleTestStream, 64> signal_generator_to_gated_detector_and_free_detector_sample_ring{
-    "signal_generator_to_gated_detector_and_free_detector_sample_ring"};
-CrossCoreStateValue<bool, false>
-    gated_detector_is_in_lockout_to_detection_pauser_is_in_lockout_cross_core_state;
-CrossCoreStateValue<bool, true>
-    detection_pauser_is_detection_enabled_to_gated_detector_is_detection_enabled_cross_core_state;
+SampleRing<RippleTestStream, 64> signal_generator_output_ring_to_core5{
+    "signal_generator_output_ring_to_core5"};
+CrossCoreStateValue<bool, false> gated_detector_is_in_lockout_cross_core_state;
+CrossCoreStateValue<bool, true> detection_pauser_is_detection_enabled_cross_core_state;
 
 void core4() {
     // Processors
@@ -42,46 +40,37 @@ void core4() {
                     {.waveform = Waveform::RippleBursts, .frequency = 2, .amplitude = 100}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
-        signal_generator.process(
-            {.output = signal_generator_to_gated_detector_and_free_detector_sample_ring});
+        signal_generator.process({.output = signal_generator_output_ring_to_core5});
     }
 }
 
 void core5() {
     // Processors
     RippleDetector<RippleTestStream, RippleDetectorOptions{}> gated_detector{"gated_detector"};
-    EventLogger<Ripple, 1> gated_logger{"gated_logger"};
+    EventLogger<Slots<Slot<"gated_detector_output", EventBuffer<Ripple, 1>>>> gated_logger{
+        "gated_logger"};
     RippleDetector<RippleTestStream, RippleDetectorOptions{}> free_detector{"free_detector"};
-    EventLogger<Ripple, 1> free_logger{"free_logger"};
+    EventLogger<Slots<Slot<"free_detector_output", EventBuffer<Ripple, 1>>>> free_logger{
+        "free_logger"};
 
     // Connections
-    EventBuffer<Ripple, 1> gated_detector_to_gated_logger_event_buffer;
-    EventBuffer<Ripple, 1> free_detector_to_free_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
+    EventBuffer<Ripple, 1> gated_detector_output_buffer;
+    EventBuffer<Ripple, 1> free_detector_output_buffer;
 
     while (next_pass()) {
         gated_detector.process({
-            .input = signal_generator_to_gated_detector_and_free_detector_sample_ring,
-            .is_detection_enabled =
-                detection_pauser_is_detection_enabled_to_gated_detector_is_detection_enabled_cross_core_state,
-            .output = gated_detector_to_gated_logger_event_buffer,
-            .is_in_lockout =
-                gated_detector_is_in_lockout_to_detection_pauser_is_in_lockout_cross_core_state,
+            .input = signal_generator_output_ring_to_core5,
+            .is_detection_enabled = detection_pauser_is_detection_enabled_cross_core_state,
+            .output = gated_detector_output_buffer,
+            .is_in_lockout = gated_detector_is_in_lockout_cross_core_state,
         });
-        gated_logger.process({.input = gated_detector_to_gated_logger_event_buffer});
+        gated_logger.process({.inputs = {gated_detector_output_buffer}});
         free_detector.process({
-            .input = signal_generator_to_gated_detector_and_free_detector_sample_ring,
-            .output = free_detector_to_free_logger_event_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = free_detector_output_buffer,
         });
-        free_logger.process({.input = free_detector_to_free_logger_event_buffer});
+        free_logger.process({.inputs = {free_detector_output_buffer}});
     }
 }
 
@@ -89,22 +78,16 @@ void core6() {
     // Processors
     DetectionPauser<> detection_pauser{"detection_pauser"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
         detection_pauser.process({
-            .is_in_lockout =
-                gated_detector_is_in_lockout_to_detection_pauser_is_in_lockout_cross_core_state,
-            .is_detection_enabled =
-                detection_pauser_is_detection_enabled_to_gated_detector_is_detection_enabled_cross_core_state,
+            .is_in_lockout = gated_detector_is_in_lockout_cross_core_state,
+            .is_detection_enabled = detection_pauser_is_detection_enabled_cross_core_state,
         });
     }
 }
 
-int main() {
-    return run_on_cores("state_values_closed_loop_test",
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments,
                         {
                             {.core_number = 4, .entry_point = core4},
                             {.core_number = 5, .entry_point = core5},

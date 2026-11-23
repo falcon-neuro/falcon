@@ -60,8 +60,7 @@ def test_channel_count_stays_one_at_least_and_rate_above_zero():
         assert stream_of(designer, generator) == {"channel_count": 32, "rate": 30000}
         replace_stream_value(designer, "channel_count", "1")
         assert stream_of(designer, generator)["channel_count"] == 1
-        # The left one of the two step buttons at the box's right end.
-        designer.click("options_panel/stream/channel_count", across=0.915)
+        designer.click("options_panel/stream/channel_count/minus")
         assert stream_of(designer, generator)["channel_count"] == 1
 
 

@@ -12,7 +12,10 @@
 #include <optional>
 #include <print>
 #include <string>
+#include <utility>
 #include <vector>
+#include "common/colours.cpp"
+#include "common/crosshair_cursor.cpp"
 #include "main_window/main_window.cpp"
 #include "ui_driver/ui_driver.cpp"
 
@@ -26,6 +29,10 @@
 class FalconUI {
 private:
     GLFWwindow* window_ = nullptr;
+    // The desktop's crosshair, which the UI's parts ask for (see crosshair_cursor_request()).
+    // Null where the desktop has none: the arrow shows then.
+    GLFWcursor* crosshair_cursor_ = nullptr;
+    bool is_crosshair_shown_ = false;
     MainWindow main_window_;
     MainWindowController main_window_controller_;
     // The file a picture of the window is written to, from the environment variable
@@ -33,6 +40,9 @@ private:
     // isn't shown, writes the picture and quits, so the UI can be looked at without a screen.
     std::string screenshot_path_;
     int drawn_frame_count_ = 0;
+    // The title the window was given last, so that the desktop is told of a new one only. Empty
+    // before the first frame.
+    std::string window_title_;
     // On when the environment variable FALCON_UI_DRIVER is set: a test then plays the mouse and
     // the keys, in a window that isn't shown either.
     UiDriver ui_driver_;
@@ -62,6 +72,16 @@ private:
         }
     }
 
+    void update_window_title() {
+        std::string title = main_window_.window_title();
+        if (title == window_title_) {
+            return;
+        }
+        glfwSetWindowTitle(window_, title.c_str());
+        ui_driver_targets().set_window_title(title);
+        window_title_ = std::move(title);
+    }
+
     bool init_window_context() {
         glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 
@@ -83,8 +103,8 @@ private:
             glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         }
         window_ = glfwCreateWindow(is_window_hidden ? screenshot_width : 1280,
-                                   is_window_hidden ? screenshot_height : 720, "Falcon", nullptr,
-                                   nullptr);
+                                   is_window_hidden ? screenshot_height : 720, MainWindow::app_name,
+                                   nullptr, nullptr);
         if (!window_) {
             std::cerr << "Failed to create GLFW window\n";
             glfwTerminate();
@@ -124,6 +144,15 @@ private:
         return true;
     }
 
+    static constexpr float scrollbar_width = 10.0f;
+    static constexpr float scrollbar_grab_alpha = 0.18f;
+    static constexpr float hovered_scrollbar_grab_alpha = 0.30f;
+    static constexpr float pushed_scrollbar_grab_alpha = 0.42f;
+
+    [[nodiscard]] static ImVec4 scrollbar_grab_colour(float alpha) {
+        return {TEXT_COLOUR.x, TEXT_COLOUR.y, TEXT_COLOUR.z, alpha};
+    }
+
     bool init_imgui() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -138,11 +167,30 @@ private:
         style.WindowRounding = 0.0f;
         style.WindowBorderSize = 0.0f;
         style.ChildBorderSize = 0.0f;
-        style.PopupBorderSize = 0.0f;
+        // A tooltip takes the rounding of a window and the border of a popup.
+        style.WindowRounding = CARD_ROUNDING;
+        style.PopupBorderSize = 1.0f;
         style.FrameBorderSize = 0.0f;
+        style.FrameRounding = FRAME_ROUNDING;
+        style.GrabRounding = FRAME_ROUNDING;
+        style.ScrollbarRounding = FRAME_ROUNDING;
+        style.PopupRounding = CARD_ROUNDING;
+        style.FramePadding = ImVec2(10.0f, 5.0f);
         style.WindowPadding = ImVec2(0.0f, 0.0f);
-        style.Colors[ImGuiCol_Text] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+        style.Colors[ImGuiCol_Text] = TEXT_COLOUR;
+        style.Colors[ImGuiCol_Border] = CARD_BORDER_COLOUR;
+        style.Colors[ImGuiCol_InputTextCursor] = TEXT_COLOUR;
+        // A scrollbar is a thin grab without a track, in the text's colour made clear, so that it
+        // shows on any ground.
+        style.ScrollbarSize = scrollbar_width;
+        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        style.Colors[ImGuiCol_ScrollbarGrab] = scrollbar_grab_colour(scrollbar_grab_alpha);
+        style.Colors[ImGuiCol_ScrollbarGrabHovered] =
+            scrollbar_grab_colour(hovered_scrollbar_grab_alpha);
+        style.Colors[ImGuiCol_ScrollbarGrabActive] =
+            scrollbar_grab_colour(pushed_scrollbar_grab_alpha);
 
+        crosshair_cursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
         if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
             return false;
         }
@@ -158,10 +206,34 @@ private:
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
+        if (crosshair_cursor_ != nullptr) {
+            glfwDestroyCursor(crosshair_cursor_);
+        }
         if (window_) {
             glfwDestroyWindow(window_);
         }
         glfwTerminate();
+    }
+
+    // Called before ImGui's backend sets the cursor for a frame. While the crosshair is asked
+    // for, the backend is told to leave the cursor alone; once it may set the cursor again, it
+    // puts its own back.
+    void show_crosshair_cursor_while_asked_for() {
+        const bool is_asked_for = crosshair_cursor_request().take();
+        if (is_asked_for == is_crosshair_shown_) {
+            return;
+        }
+        is_crosshair_shown_ = is_asked_for;
+        ImGuiIO& imgui_io = ImGui::GetIO();
+        // ImGui's flags are signed ints by its API
+        // NOLINTBEGIN(bugprone-signed-bitwise)
+        if (is_asked_for) {
+            imgui_io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            glfwSetCursor(window_, crosshair_cursor_);
+        } else {
+            imgui_io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        }
+        // NOLINTEND(bugprone-signed-bitwise)
     }
 
 public:
@@ -194,6 +266,7 @@ public:
             glViewport(0, 0, display_w, display_h);
 
             ImGui_ImplOpenGL3_NewFrame();
+            show_crosshair_cursor_while_asked_for();
             ImGui_ImplGlfw_NewFrame();
             if (UiDriver::is_on()) {
                 ImGui::GetIO().DeltaTime = UiDriver::frame_seconds;
@@ -212,17 +285,18 @@ public:
                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
             // NOLINTEND(bugprone-signed-bitwise)
 
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImColor(0xffffffff).Value);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, WINDOW_COLOUR);
             ImGui::Begin("Falcon", nullptr, window_flags);
 
             main_window_.render();
+            update_window_title();
 
             ImGui::End();
             ImGui::PopStyleColor();
 
             ImGui::Render();
 
-            glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+            glClearColor(WINDOW_COLOUR.x, WINDOW_COLOUR.y, WINDOW_COLOUR.z, WINDOW_COLOUR.w);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

@@ -17,7 +17,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-# A member of Connections is recognised by how its type starts.
+# A member of Connections is recognised by how its type starts. What an input with slots takes
+# isn't in how it is written, so its kind is left open here and clang is asked (see
+# find_what_inputs_take): a kind that is guessed lets the UI make a connection that can't compile.
+KIND_ASKED_OF_CLANG = None
 PORT_TYPES = {
     "SampleInputBuffer<": ("Input", "Samples", False),
     "SampleOutputBuffer<": ("Output", "Samples", False),
@@ -25,7 +28,7 @@ PORT_TYPES = {
     "EventOutputBuffer<": ("Output", "Events", False),
     "StateInput<": ("Input", "State", False),
     "StateOutput<": ("Output", "State", False),
-    "InputSlots<": ("Input", "Any", True),
+    "InputSlots<": ("Input", KIND_ASKED_OF_CLANG, True),
     "OutputSlots<": ("Output", "Any", True),
 }
 
@@ -236,12 +239,13 @@ def read_port(source, field, where, problems):
         problems.append("%s: the connection `%s` has no doc comment (///) saying what it expects or gives" % (where, field["name"]))
     direction, port_kind, has_slots = kind
     # What the connection carries, as written: an event type, a template parameter that stands for
-    # one, or the parameter that stands for the kinds of a port with slots.
-    carried = template_arguments(inner_type)[0].removesuffix("...").strip() if port_kind in ("Events", "Any") else ""
+    # one, or the parameter that stands for the list of slots of a port with slots.
+    carried = template_arguments(inner_type)[0].strip() if port_kind == "Events" or has_slots else ""
     return {"name": field["name"], "direction": direction, "kind": port_kind, "is_optional": is_optional,
             "has_slots": has_slots, "type": written_type, "description": description,
             "stream": stream_of_port(field["name"], direction, port_kind, inner_type, where, problems),
-            "carried": carried, "where": where, "event_kind": "", "takes_event_kinds": []}
+            "carried": carried, "where": where, "event_kind": "", "takes_event_kinds": [],
+            "takes_samples": port_kind == "Samples"}
 
 
 def read_file(clang, clang_flags, source_root, path):
@@ -331,11 +335,34 @@ def read_file(clang, clang_flags, source_root, path):
     return path, processors, events, problems
 
 
-def find_event_kinds_of_ports(clang, clang_flags, output, processors, events, problems):
-    """Gives every event output its kind, and every input that takes events the kinds it takes.
-    What an input takes is the constraint on the template parameter its type names, so clang is
-    asked that constraint about each kind, all in one file: a static_assert per input and kind,
-    of which those that fail are the kinds the input doesn't take."""
+# Stands for samples among the kinds of event that an input is asked about.
+SAMPLES = object()
+
+
+def name_kinds_of_inputs_with_slots(processors, problems):
+    """Names the kind of every input with slots from what clang said its slots take."""
+    for processor in processors:
+        for port in processor["ports"]:
+            if port["kind"] is not KIND_ASKED_OF_CLANG:
+                continue
+            takes_events = bool(port["takes_event_kinds"])
+            if port["takes_samples"] and takes_events:
+                port["kind"] = "Any"
+            elif takes_events:
+                port["kind"] = "Events"
+            elif port["takes_samples"]:
+                port["kind"] = "Samples"
+            else:
+                problems.append("%s: the connection `%s` takes neither samples nor any kind of event" % (
+                    port["where"], port["name"]))
+
+
+def find_what_inputs_take(clang, clang_flags, output, processors, events, problems):
+    """Gives every event output its kind, every input that takes events the kinds it takes, and
+    every input with slots its kind: samples, events or both. What an input takes is the
+    constraint on the template parameter its type names, so clang is asked that constraint about
+    samples and about each kind of event, all in one file: a static_assert per input and question,
+    of which those that fail are what the input doesn't take."""
     event_names = [event["name"] for event in events]
     for name in sorted(set(event_names)):
         if event_names.count(name) > 1:
@@ -346,7 +373,7 @@ def find_event_kinds_of_ports(clang, clang_flags, output, processors, events, pr
     questions, files = [], {event["path"] for event in events}
     for processor in processors:
         for port in processor["ports"]:
-            if port["kind"] not in ("Events", "Any"):
+            if port["kind"] != "Events" and not port["has_slots"]:
                 continue
             carried = port["carried"]
             if port["direction"] == "Output":
@@ -357,24 +384,31 @@ def find_event_kinds_of_ports(clang, clang_flags, output, processors, events, pr
                     problems.append("%s: the connection `%s` gives `%s`, which is no event type of a processor's file" % (
                         port["where"], port["name"], carried))
                 continue
-            # A port with slots is asked about the buffer of events one of its slots would take.
-            asked_type = "EventBuffer<%s, 1>" if port["kind"] == "Any" else "%s"
+            # An input with slots is asked about a list of one slot that takes such a buffer.
+            asked_type = 'Slots<Slot<"asked", %s>>' if port["has_slots"] else "%s"
+            asked_events = "EventBuffer<%s, 1>" if port["has_slots"] else "%s"
             if carried in processor["constraints"]:
                 constraint = processor["constraints"][carried]
                 if constraint is None:
                     port["takes_event_kinds"] = sorted(type_of_kind)
+                    port["takes_samples"] = port["takes_samples"] or port["has_slots"]
                     continue
                 question = with_first_argument(constraint, asked_type)
             else:
                 question = "std::same_as<%s, %s>" % (asked_type, carried)
             files.add(processor["path"])
             for kind in sorted(type_of_kind):
-                questions.append((port, kind, question % type_of_kind[kind]))
-    if problems or not questions:
+                questions.append((port, kind, question % (asked_events % type_of_kind[kind])))
+            if port["has_slots"]:
+                questions.append((port, SAMPLES, question % "SampleBuffer<MadeUpStream>"))
+    if problems:
+        return
+    if not questions:
+        name_kinds_of_inputs_with_slots(processors, problems)
         return
 
     lines = ["// Written by src/ui/pipeline_designer/list_processors.py when Falcon is built: each static_assert",
-             "// asks whether one input takes one kind of event, and clang's answers go into all_processors.cpp.",
+             "// asks whether one input takes samples or one kind of event, and clang's answers go into all_processors.cpp.",
              "#include <concepts>"]
     lines += ['#include "%s"' % path.resolve().as_posix() for path in sorted(files)]
     lines += ["", "namespace event_kind_questions {", "",
@@ -401,10 +435,15 @@ def find_event_kinds_of_ports(clang, clang_flags, output, processors, events, pr
     if other_errors:
         # An input whose constraint this script can't ask, e.g. one that names another template
         # parameter than the stream's, shows here.
-        fail("clang couldn't say which kinds of event each input takes (%s):\n  %s" % (questions_file, "\n  ".join(other_errors[:20])))
-    for index, (port, kind, _) in enumerate(questions):
-        if index not in refused:
-            port["takes_event_kinds"].append(kind)
+        fail("clang couldn't say what each input takes (%s):\n  %s" % (questions_file, "\n  ".join(other_errors[:20])))
+    for index, (port, asked, _) in enumerate(questions):
+        if index in refused:
+            continue
+        if asked is SAMPLES:
+            port["takes_samples"] = True
+        else:
+            port["takes_event_kinds"].append(asked)
+    name_kinds_of_inputs_with_slots(processors, problems)
 
 
 def literal(text):
@@ -490,7 +529,7 @@ def main():
         problems += file_problems
     processors.sort(key=lambda processor: processor["name"].lower())
     events.sort(key=lambda event: event["name"].lower())
-    find_event_kinds_of_ports(clang, clang_flags, output, processors, events, problems)
+    find_what_inputs_take(clang, clang_flags, output, processors, events, problems)
     if problems:
         fail("these must be put right before Falcon builds:\n  " + "\n  ".join(problems))
     write_output(output, processors, events)

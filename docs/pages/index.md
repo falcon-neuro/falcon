@@ -6,6 +6,6 @@ description: "Falcon is open-source software for closed-loop neuroscience: it pr
 
 Open-source software for closed-loop neuroscience experiments.
 
-![A graph in Falcon's editor: an acquisition input, a filter, a ripple detector and a digital output](assets/graph_editor_closed_loop.png)
+![A ripple detection pipeline in Falcon's pipeline designer: an acquisition input, a filter, a ripple detector, a digital output and a recorder on three cores](assets/falcon_pipeline_designer.png)
 
 [Read the documentation](overview.md)

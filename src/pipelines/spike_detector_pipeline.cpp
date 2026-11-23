@@ -9,47 +9,41 @@
 using TestStream = StreamInfo<32, 30000.0, float>;
 
 // Connections between cores
-SampleRing<TestStream, 64> signal_generator_to_spike_detector_sample_ring{
-    "signal_generator_to_spike_detector_sample_ring"};
+SampleRing<TestStream, 64> signal_generator_output_ring_to_core5{
+    "signal_generator_output_ring_to_core5"};
 
 void core1() {
     // Processors
     SignalGenerator<TestStream, {.waveform = Waveform::Square, .frequency = 5, .amplitude = 100}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
-        signal_generator.process({.output = signal_generator_to_spike_detector_sample_ring});
+        signal_generator.process({.output = signal_generator_output_ring_to_core5});
     }
 }
 
 void core2() {
     // Processors
     SpikeDetector<TestStream, {.threshold = -70}> spike_detector{"spike_detector"};
-    EventLogger<Spikes<TestStream>, 1> example_logger{"example_logger"};
+    EventLogger<Slots<Slot<"spike_detector_output", EventBuffer<Spikes<TestStream>, 1>>>>
+        example_logger{"example_logger"};
 
     // Connections
-    EventBuffer<Spikes<TestStream>, 1> spike_detector_to_example_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
+    EventBuffer<Spikes<TestStream>, 1> spike_detector_output_buffer;
 
     while (next_pass()) {
         spike_detector.process({
-            .input = signal_generator_to_spike_detector_sample_ring,
-            .output = spike_detector_to_example_logger_event_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = spike_detector_output_buffer,
         });
-        example_logger.process({.input = spike_detector_to_example_logger_event_buffer});
+        example_logger.process({.inputs = {spike_detector_output_buffer}});
     }
 }
 
-int main() {
-    return run_on_cores("spike_detector", {
-                                              {.core_number = 4, .entry_point = core1},
-                                              {.core_number = 5, .entry_point = core2},
-                                          });
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments,
+                        {
+                            {.core_number = 4, .entry_point = core1},
+                            {.core_number = 5, .entry_point = core2},
+                        });
 }

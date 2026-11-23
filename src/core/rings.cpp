@@ -340,10 +340,19 @@ void wait_for_data() {
     std::this_thread::sleep_for(idle_sleep);
 }
 
+// Defined with the rest of a run's start, in run.cpp.
+bool wait_at_start_barrier();
+
 // Starts this core's next pass and returns whether the run goes on: a core's loop is
-// `while (next_pass())`. A core that isn't realtime first waits if the pass before brought it
+// `while (next_pass())`. A core's first pass begins at the start barrier, so its loop never runs
+// if startup failed. A core that isn't realtime first waits if the pass before brought it
 // nothing through a ring.
 [[nodiscard]] bool next_pass() {
+    if (pass_number_of_this_thread == 0) [[unlikely]] {
+        if (!wait_at_start_barrier()) {
+            return false;
+        }
+    }
     if (!is_realtime_core_of_this_thread && !has_received_on_this_pass) {
         wait_for_data();
     }

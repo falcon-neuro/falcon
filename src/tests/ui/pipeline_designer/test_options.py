@@ -1,4 +1,4 @@
-"""A processor's options: in short on its block, and edited in the panel at the right."""
+"""A processor's options: shown and edited in the panel at the right, and nowhere on its block."""
 from designer_driver import Designer, port
 
 
@@ -20,26 +20,18 @@ def replace_input(designer, option, text):
     designer.key("Enter")
 
 
-def test_block_has_a_line_for_each_of_its_options():
+def test_block_shows_none_of_its_options_which_the_panel_alone_shows():
     with Designer() as designer:
         detector = designer.add_processor("LevelCrossingDetector", core=0)
-        block = designer.target(f"block/{detector}")
-        lines = [designer.target(f"block/{detector}/option/{option}")
-                 for option in ("threshold", "direction", "post_detection_block")]
-        assert all(block.top < line.top and line.bottom < block.bottom for line in lines)
-        assert lines[0].bottom <= lines[1].top and lines[1].bottom <= lines[2].top
-
-
-def test_option_line_stays_inside_its_block():
-    with Designer() as designer:
         generator = designer.add_processor("SignalGenerator", core=0)
-        targets = designer.targets()
-        block = targets[f"block/{generator}"]
-        lines = [target for name, target in targets.items()
-                 if name.startswith(f"block/{generator}/option/")]
-        assert len(lines) == 10
-        too_wide = [line.name for line in lines if line.right > block.right]
-        assert too_wide == []
+        assert not any("/option/" in name for name in designer.targets())
+        # A block is as tall with ten options as with three: what it holds is its name and type.
+        assert (designer.target(f"block/{detector}/handle").height ==
+                designer.target(f"block/{generator}/handle").height)
+        designer.click(f"block/{detector}/handle")
+        for option in ("threshold", "direction", "post_detection_block"):
+            assert designer.has_target(f"options_panel/input/{option}")
+        assert not any("/option/" in name for name in designer.targets())
 
 
 def test_click_on_a_blocks_name_opens_its_options_and_escape_closes_them():
@@ -58,10 +50,10 @@ def test_click_on_a_blocks_name_opens_its_options_and_escape_closes_them():
         assert not designer.has_target("options_panel")
 
 
-def test_click_on_an_option_line_opens_the_options_and_the_cross_closes_them():
+def test_cross_of_the_panel_closes_the_options():
     with Designer() as designer:
         detector = designer.add_processor("SpikeDetector", core=0)
-        designer.click(f"block/{detector}/option/threshold")
+        designer.click(f"block/{detector}/handle")
         assert designer.state()["selected"] == detector
         designer.click("options_panel/close")
         assert designer.state()["selected"] is None

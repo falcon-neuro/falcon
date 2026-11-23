@@ -12,20 +12,16 @@
 using TemplateStream = StreamInfo<4, 30000.0, float>;
 
 // Connections between cores
-SampleRing<TemplateStream, 1024> signal_generator_to_gain_sample_ring{
-    "signal_generator_to_gain_sample_ring"};
+SampleRing<TemplateStream, 1024> signal_generator_output_ring_to_core5{
+    "signal_generator_output_ring_to_core5"};
 
 void core4() {
     // Processors
     SignalGenerator<TemplateStream, {.waveform = Waveform::Sine, .frequency = 3, .amplitude = 50}>
         signal_generator{"signal_generator"};
 
-    if (!wait_at_start_barrier()) {
-        return;
-    }
-
     while (next_pass()) {
-        signal_generator.process({.output = signal_generator_to_gain_sample_ring});
+        signal_generator.process({.output = signal_generator_output_ring_to_core5});
     }
 }
 
@@ -33,33 +29,31 @@ void core5() {
     // Processors
     template_processor::Gain<TemplateStream, {.factor = 3.000001}> gain{"gain"};
     SpikeDetector<TemplateStream, {.threshold = -150}> spike_detector{"spike_detector"};
-    EventLogger<Spikes<TemplateStream>, 1, {.style = LoggingStyle::CountPerSecond}> event_logger{
-        "event_logger"};
+    EventLogger<Slots<Slot<"spike_detector_output", EventBuffer<Spikes<TemplateStream>, 1>>>,
+                {.style = LoggingStyle::CountPerSecond}>
+        event_logger{"event_logger"};
 
     // Connections
-    SampleBuffer<TemplateStream> gain_to_spike_detector_sample_buffer;
-    EventBuffer<Spikes<TemplateStream>, 1> spike_detector_to_event_logger_event_buffer;
-
-    if (!wait_at_start_barrier()) {
-        return;
-    }
+    SampleBuffer<TemplateStream> gain_output_buffer;
+    EventBuffer<Spikes<TemplateStream>, 1> spike_detector_output_buffer;
 
     while (next_pass()) {
         gain.process({
-            .input = signal_generator_to_gain_sample_ring,
-            .output = gain_to_spike_detector_sample_buffer,
+            .input = signal_generator_output_ring_to_core5,
+            .output = gain_output_buffer,
         });
         spike_detector.process({
-            .input = gain_to_spike_detector_sample_buffer,
-            .output = spike_detector_to_event_logger_event_buffer,
+            .input = gain_output_buffer,
+            .output = spike_detector_output_buffer,
         });
-        event_logger.process({.input = spike_detector_to_event_logger_event_buffer});
+        event_logger.process({.inputs = {spike_detector_output_buffer}});
     }
 }
 
-int main() {
-    return run_on_cores("gain", {
-                                    {.core_number = 4, .entry_point = core4},
-                                    {.core_number = 5, .entry_point = core5},
-                                });
+int main(int argument_count, char** arguments) {
+    return run_on_cores(argument_count, arguments,
+                        {
+                            {.core_number = 4, .entry_point = core4},
+                            {.core_number = 5, .entry_point = core5},
+                        });
 }
