@@ -13,9 +13,10 @@
 #include "../common/files.cpp"
 #include "found_pipelines.cpp"
 
-// What is done to a pipeline's whole folder: made for a copy, moved into the trash, brought back
-// from it, and deleted for good. Each returns why it couldn't be done, or an empty text. Done
-// beside the UI's thread (see PipelineFolderWork): deleting a pipeline's recordings may take long.
+// What is done to a pipeline's whole folder: made for a copy, renamed, moved into the trash,
+// brought back from it, and deleted for good. Each returns why it couldn't be done, or an empty
+// text. Done beside the UI's thread (see PipelineFolderWork): deleting a pipeline's recordings may
+// take long.
 
 // Whether a text is the name of one folder and nothing more: no path into another folder, and
 // neither "." nor "..". What is moved or deleted is named by such a name alone, so that nothing
@@ -60,6 +61,65 @@
         std::filesystem::remove(file, error);
         std::filesystem::remove(folder, error);
         return std::format("{} couldn't be written.", file.string());
+    }
+    return {};
+}
+
+struct PipelineRename {
+    std::string folder_name;
+    // The same as `folder_name` for a pipeline that keeps its folder.
+    std::string new_folder_name;
+    // The pipeline.cpp that holds the new name; none for a pipeline that keeps its name.
+    std::optional<std::string> new_pipeline_text;
+};
+
+// Renames a pipeline: writes the pipeline.cpp that holds its new name, then moves its folder with
+// all it holds, its runs too. Refused, before anything is written, where a folder of the new name
+// is there already.
+[[nodiscard]] inline std::string rename_pipeline(const std::filesystem::path& pipelines_directory,
+                                                 const PipelineRename& rename) {
+    const auto can_be_a_pipelines_folder = [](const std::string& name) {
+        return is_one_folder_name(name) && !name.starts_with('.');
+    };
+    if (!can_be_a_pipelines_folder(rename.folder_name) ||
+        !can_be_a_pipelines_folder(rename.new_folder_name)) {
+        return std::format("{} can't be renamed to {}.", rename.folder_name,
+                           rename.new_folder_name);
+    }
+    const std::filesystem::path folder = pipelines_directory / rename.folder_name;
+    const std::filesystem::path new_folder = pipelines_directory / rename.new_folder_name;
+    const bool is_folder_moved = rename.new_folder_name != rename.folder_name;
+    std::error_code error;
+    if (!std::filesystem::is_directory(folder, error)) {
+        return std::format("The folder {} isn't there any more.", rename.folder_name);
+    }
+    // A link that leads nowhere counts as there too: a move would replace it.
+    if (is_folder_moved && std::filesystem::symlink_status(new_folder, error).type() !=
+                               std::filesystem::file_type::not_found) {
+        return std::format("The folder {} is there already.", rename.new_folder_name);
+    }
+    if (rename.new_pipeline_text.has_value()) {
+        // Written beside the file and put in its place in one step, so that a disk that fills
+        // up leaves the pipeline as it was.
+        const std::filesystem::path file = folder / "pipeline.cpp";
+        const std::filesystem::path new_file = folder / "pipeline.cpp.renamed";
+        if (!write_file(new_file, *rename.new_pipeline_text)) {
+            std::filesystem::remove(new_file, error);
+            return std::format("{} couldn't be written.", file.string());
+        }
+        std::filesystem::rename(new_file, file, error);
+        if (error) {
+            const std::string reason = error.message();
+            std::filesystem::remove(new_file, error);
+            return std::format("{} couldn't be written: {}", file.string(), reason);
+        }
+    }
+    if (is_folder_moved) {
+        std::filesystem::rename(folder, new_folder, error);
+        if (error) {
+            return std::format("The folder {} couldn't be moved to {}: {}", rename.folder_name,
+                               rename.new_folder_name, error.message());
+        }
     }
     return {};
 }

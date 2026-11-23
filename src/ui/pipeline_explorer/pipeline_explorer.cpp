@@ -23,6 +23,7 @@
 #include "../pipeline_designer/tooltip.cpp"
 #include "../ui_driver/ui_driver_targets.cpp"
 #include "found_pipelines.cpp"
+#include "name_and_folder_fields.cpp"
 #include "pipeline_folders.cpp"
 
 // The welcome screen: the pipelines that Falcon keeps, each opened in the designer by a click,
@@ -81,7 +82,6 @@ private:
     static constexpr ImVec4 no_colour{0.0f, 0.0f, 0.0f, 0.0f};
     static constexpr int title_size = 32;
     static constexpr int text_size = 16;
-    static constexpr std::size_t longest_name = 120;
 
     PipelineSearch search_;
     PipelineFolderWork folder_work_;
@@ -90,11 +90,19 @@ private:
     bool is_search_running_ = false;
     bool is_refresh_wanted_ = false;
     bool is_trash_shown_ = false;
-    // The name that is being typed for a new pipeline, as ImGui's input holds it.
-    std::array<char, longest_name + 1> new_name_{};
+    // What is being typed for a new pipeline.
+    TypedNameAndFolder new_pipeline_;
     std::string new_pipeline_problem_;
-    // Why the last move into the trash or out of it, delete or copy couldn't be done; empty if it
-    // could.
+    // The pipeline whose card shows the two fields that rename it, by its folder's name; empty
+    // for none.
+    std::string asked_to_rename_;
+    TypedNameAndFolder renamed_;
+    std::string rename_problem_;
+    // Set when a card starts to rename, for the one frame in which its name's field takes the
+    // keys.
+    bool is_renamed_name_to_focus_ = false;
+    // Why the last move into the trash or out of it, delete, copy or rename couldn't be done;
+    // empty if it could.
     std::string folder_problem_;
     // The pipeline of the trash that the user asked to delete for good and hasn't confirmed yet,
     // by its name in the trash; empty for none.
@@ -144,72 +152,83 @@ private:
         }
         folder_problem_.clear();
         asked_to_delete_.clear();
+        close_rename();
         folder_work_.start([directory = *directory, work = std::move(work_in_directory)] {
             return work(directory);
         });
     }
 
-    // A folder's name for a pipeline's name: its letters and digits in lower case, with one
-    // underscore for whatever lies between them. Empty for a name that has neither.
-    [[nodiscard]] static std::string folder_name_for(std::string_view pipeline_name) {
-        std::string folder_name;
-        for (const char character : pipeline_name) {
-            const bool is_lower_case = character >= 'a' && character <= 'z';
-            const bool is_upper_case = character >= 'A' && character <= 'Z';
-            const bool is_digit = character >= '0' && character <= '9';
-            if (is_lower_case || is_digit) {
-                folder_name += character;
-            } else if (is_upper_case) {
-                folder_name += static_cast<char>(character - 'A' + 'a');
-            } else if (!folder_name.empty() && folder_name.back() != '_') {
-                folder_name += '_';
-            }
-        }
-        while (!folder_name.empty() && folder_name.back() == '_') {
-            folder_name.pop_back();
-        }
-        return folder_name;
+    void close_rename() {
+        asked_to_rename_.clear();
+        rename_problem_.clear();
+        is_renamed_name_to_focus_ = false;
     }
 
-    // The name of the folder of a new pipeline that is called `name`, or why no pipeline can be
-    // made under that name.
-    [[nodiscard]] std::expected<std::string, std::string> folder_name_of_new_pipeline(
-        std::string_view name) const {
-        if (name.empty()) {
-            return std::unexpected(std::string("A pipeline needs a name."));
-        }
-        std::string folder_name = folder_name_for(name);
-        if (folder_name.empty()) {
-            return std::unexpected(std::string("A pipeline's name needs a letter or a digit."));
-        }
-        if (std::ranges::contains(found_.folder_names, folder_name)) {
-            return std::unexpected(std::format("The folder {} is there already.", folder_name));
-        }
-        return folder_name;
+    // Hands a pipeline over to be opened in the designer, which this screen then gives way to.
+    void open_in_designer(OpenedPipeline pipeline) {
+        opened_ = std::move(pipeline);
+        close_rename();
     }
 
-    // Makes the pipeline that the typed name asks for and opens it, or says why it can't be made.
+    // Why a pipeline can't be given this name and this folder, or nothing if it can.
+    // `own_folder_name` is the folder it lies in, which it may keep whatever that is called;
+    // empty for a pipeline that isn't there yet.
+    [[nodiscard]] std::string problem_of(const NameAndFolder& wanted,
+                                         std::string_view own_folder_name) const {
+        if (wanted.name.empty()) {
+            return "A pipeline needs a name.";
+        }
+        if (wanted.folder_name.empty()) {
+            return "A pipeline needs a folder.";
+        }
+        if (wanted.folder_name == own_folder_name) {
+            return {};
+        }
+        if (!is_typeable_folder_name(wanted.folder_name)) {
+            return "A folder's name takes letters, digits and _ only.";
+        }
+        if (std::ranges::contains(found_.folder_names, wanted.folder_name)) {
+            return std::format("The folder {} is there already.", wanted.folder_name);
+        }
+        return {};
+    }
+
+    // Makes the pipeline that the two fields ask for and opens it, or says why it can't be made.
     // Its folder and its pipeline.cpp are written by the designer, with its first frame.
     void create_pipeline() {
-        const std::string name(without_spaces_around(std::string_view(new_name_.data())));
+        const NameAndFolder wanted = new_pipeline_.typed();
         const std::optional<std::filesystem::path> directory = pipelines_directory();
         if (!directory.has_value()) {
             new_pipeline_problem_ = "No home directory is known.";
             return;
         }
-        const std::expected<std::string, std::string> folder_name =
-            folder_name_of_new_pipeline(name);
-        if (!folder_name.has_value()) {
-            new_pipeline_problem_ = folder_name.error();
+        new_pipeline_problem_ = problem_of(wanted, {});
+        if (!new_pipeline_problem_.empty()) {
             return;
         }
         OpenedPipeline pipeline;
-        pipeline.directory = *directory / *folder_name;
-        pipeline.graph.name = name;
+        pipeline.directory = *directory / wanted.folder_name;
+        pipeline.graph.name = wanted.name;
         pipeline.is_new = true;
-        opened_ = std::move(pipeline);
-        new_name_.fill('\0');
-        new_pipeline_problem_.clear();
+        open_in_designer(std::move(pipeline));
+        new_pipeline_.clear();
+    }
+
+    // The pipeline.cpp of a pipeline under another name, or why there is none. It is read back,
+    // so that no text is handed out that couldn't be opened.
+    [[nodiscard]] static std::expected<std::string, std::string> text_under_name(
+        const FoundPipeline& found, const std::string& name) {
+        PipelineGraph graph = found.pipeline.graph;
+        graph.name = name;
+        WrittenText written = write_pipeline_to_keep(graph);
+        if (!written.has_value()) {
+            return std::unexpected(sentence_of(written.error()));
+        }
+        const ReadPipeline read_back = read_pipeline(*written, ALL_PROCESSORS);
+        if (!read_back.has_value()) {
+            return std::unexpected(read_back.error());
+        }
+        return std::move(*written);
     }
 
     // A name for a copy of the pipeline called `name`: that name and "copy", and where the folder
@@ -230,30 +249,66 @@ private:
     // own, without the first one's runs or its executable. Its file is written beside this
     // thread, and the list shows it once it is there; it is opened by a click, as any other.
     void duplicate_pipeline(const FoundPipeline& found) {
-        PipelineGraph graph = found.pipeline.graph;
-        graph.name = name_for_copy_of(found.name.empty() ? found.folder_name : found.name);
-        const std::expected<std::string, std::string> folder_name =
-            folder_name_of_new_pipeline(graph.name);
-        if (!folder_name.has_value()) {
-            folder_problem_ = folder_name.error();
+        const std::string name = name_for_copy_of(shown_name_of(found));
+        const NameAndFolder copy{.name = name, .folder_name = folder_name_for(name)};
+        folder_problem_ = problem_of(copy, {});
+        if (!folder_problem_.empty()) {
             return;
         }
-        WrittenText written = write_pipeline_to_keep(graph);
-        if (!written.has_value()) {
-            folder_problem_ = std::format("{} can't be copied: {}", found.folder_name,
-                                          sentence_of(written.error()));
-            return;
-        }
-        // A copy that couldn't be opened is never written.
-        const ReadPipeline read_back = read_pipeline(*written, ALL_PROCESSORS);
-        if (!read_back.has_value()) {
+        std::expected<std::string, std::string> text = text_under_name(found, copy.name);
+        if (!text.has_value()) {
             folder_problem_ =
-                std::format("{} can't be copied: {}", found.folder_name, read_back.error());
+                std::format("{} can't be copied: {}", found.folder_name, text.error());
             return;
         }
-        start_folder_work([folder_name = *folder_name,
-                           text = std::move(*written)](const std::filesystem::path& directory) {
-            return write_new_pipeline(directory, folder_name, text);
+        start_folder_work([folder_name = copy.folder_name, pipeline_text = std::move(*text)](
+                              const std::filesystem::path& directory) {
+            return write_new_pipeline(directory, folder_name, pipeline_text);
+        });
+    }
+
+    // What a pipeline is called on its card: its name, or its folder's where it has none.
+    [[nodiscard]] static const std::string& shown_name_of(const FoundPipeline& found) {
+        return found.name.empty() ? found.folder_name : found.name;
+    }
+
+    // Has the pipeline's card show the two fields that rename it, with its name and its folder
+    // as they are.
+    void start_rename(const FoundPipeline& found) {
+        renamed_.start_with({.name = shown_name_of(found), .folder_name = found.folder_name});
+        asked_to_rename_ = found.folder_name;
+        rename_problem_.clear();
+        is_renamed_name_to_focus_ = true;
+    }
+
+    // Renames the pipeline as the two fields ask, beside this thread, or says why it can't be: its
+    // name goes into its pipeline.cpp, and another folder's name moves its folder with all it
+    // holds.
+    void apply_rename(const FoundPipeline& found) {
+        const NameAndFolder wanted = renamed_.typed();
+        rename_problem_ = problem_of(wanted, found.folder_name);
+        if (!rename_problem_.empty()) {
+            return;
+        }
+        PipelineRename rename{
+            .folder_name = found.folder_name,
+            .new_folder_name = wanted.folder_name,
+            .new_pipeline_text = std::nullopt,
+        };
+        if (wanted.name != shown_name_of(found)) {
+            std::expected<std::string, std::string> text = text_under_name(found, wanted.name);
+            if (!text.has_value()) {
+                rename_problem_ = std::format("It can't be renamed: {}", text.error());
+                return;
+            }
+            rename.new_pipeline_text = std::move(*text);
+        }
+        if (!rename.new_pipeline_text.has_value() && rename.new_folder_name == rename.folder_name) {
+            close_rename();
+            return;
+        }
+        start_folder_work([rename = std::move(rename)](const std::filesystem::path& directory) {
+            return rename_pipeline(directory, rename);
         });
     }
 
@@ -323,6 +378,7 @@ private:
         if (ImGui::Button(label.c_str())) {
             is_trash_shown_ = true;
             folder_problem_.clear();
+            close_rename();
         }
         name_last_item_for_ui_driver({"explorer", "open_trash"});
         render_item_tooltip("Pipelines that were deleted.");
@@ -350,19 +406,36 @@ private:
         hovered_folder_ = std::move(hovered_folder);
     }
 
+    // A new pipeline's name in a field, the button that makes it, and under them, once a name
+    // is typed, the line that says where it will lie.
     void render_new_pipeline() {
         const char* const create_label = "Create";
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - button_width_of(create_label) -
-                                ImGui::GetStyle().ItemSpacing.x);
         // Until the folders are known, a new pipeline's folder can't be told from one of them.
         ImGui::BeginDisabled(!is_list_current());
-        const bool is_entered =
-            ImGui::InputTextWithHint("##new_name", "Name of a new pipeline", new_name_.data(),
-                                     new_name_.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-        name_last_item_for_ui_driver({"explorer", "new_name"});
+        ImGui::PushID("new_pipeline");
+        bool is_entered =
+            render_name_field(new_pipeline_, {
+                                                 .width = ImGui::GetContentRegionAvail().x -
+                                                          button_width_of(create_label) -
+                                                          ImGui::GetStyle().ItemSpacing.x,
+                                                 .hint = "Name of a new pipeline",
+                                                 .target = "new_name",
+                                                 .is_to_focus = false,
+                                             });
         ImGui::SameLine();
         const bool is_clicked = ImGui::Button(create_label);
         name_last_item_for_ui_driver({"explorer", "create"});
+        if (new_pipeline_.is_touched()) {
+            const FolderLineOutcome folder_line = render_folder_line(
+                new_pipeline_,
+                {.label = "new_folder_label", .pencil = "new_folder_edit", .field = "new_folder"});
+            is_entered = is_entered || folder_line.is_entered;
+        } else {
+            // The line's room is kept while it doesn't show, so that the list under it stays
+            // where it is when the first letter of a name is typed.
+            ImGui::Dummy(ImVec2(0.0f, ImGui::GetFrameHeight()));
+        }
+        ImGui::PopID();
         ImGui::EndDisabled();
         if (is_entered || is_clicked) {
             create_pipeline();
@@ -400,31 +473,105 @@ private:
         return card_icon;
     }
 
-    // One pipeline, in a card of its own: its name, its folder and its description, and for one
-    // that can't be read why. A click on a card that can be read opens its pipeline. The icons at
-    // its right end duplicate the pipeline and move it into the trash; one that can't be read
-    // has no copy. Returns whether the mouse is over the card.
-    [[nodiscard]] bool render_pipeline(const FoundPipeline& found) {
-        const bool is_readable = found.problem.empty();
-        begin_card(found.folder_name, is_readable && hovered_folder_ == found.folder_name);
-        render_bold(found.name.empty() ? found.folder_name.c_str() : found.name.c_str());
+    // What a card shows in place of its name, folder and icons while its pipeline is renamed: the
+    // name in a field with Rename and Cancel, and under it the line that says where the pipeline
+    // lies. Enter in a field renames too. Escape cancels, unless the folder's field took it to
+    // close itself. Returns whether the pipeline is to be renamed.
+    [[nodiscard]] bool render_rename_fields() {
+        const char* const rename_label = "Rename";
+        const char* const cancel_label = "Cancel";
+        const bool is_name_entered = render_name_field(
+            renamed_,
+            {
+                .width = ImGui::GetContentRegionAvail().x - button_width_of(rename_label) -
+                         button_width_of(cancel_label) - (2.0f * ImGui::GetStyle().ItemSpacing.x),
+                .hint = "Name",
+                .target = "rename_name",
+                .is_to_focus = is_renamed_name_to_focus_,
+            });
+        is_renamed_name_to_focus_ = false;
         ImGui::SameLine();
-        ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", found.folder_name.c_str());
+        ImGui::BeginDisabled(!is_list_current());
+        const bool is_rename_clicked = ImGui::Button(rename_label);
+        name_last_item_for_ui_driver({"explorer", "rename_apply"});
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        const bool is_cancel_clicked = ImGui::Button(cancel_label);
+        name_last_item_for_ui_driver({"explorer", "rename_cancel"});
+        const FolderLineOutcome folder_line =
+            render_folder_line(renamed_, {
+                                             .label = "rename_folder_label",
+                                             .pencil = "rename_folder_edit",
+                                             .field = "rename_folder",
+                                         });
+        const bool is_escape_for_the_rename =
+            ImGui::IsKeyPressed(ImGuiKey_Escape) && !folder_line.has_taken_escape;
+        if (is_cancel_clicked || is_escape_for_the_rename) {
+            close_rename();
+            return false;
+        }
+        return (is_name_entered || folder_line.is_entered || is_rename_clicked) &&
+               is_list_current();
+    }
+
+    // What the user asked of a card's pipeline by its icons in this frame.
+    struct CardIcons {
+        CardIcon rename;
+        CardIcon duplicate;
+        CardIcon trash;
+
+        [[nodiscard]] bool is_one_under_mouse() const {
+            return rename.is_under_mouse || duplicate.is_under_mouse || trash.is_under_mouse;
+        }
+    };
+
+    // The icons at a card's right end: they rename the pipeline, duplicate it and move it into
+    // the trash. A pipeline that can't be read has the last one alone.
+    [[nodiscard]] CardIcons render_card_icons(const FoundPipeline& found) const {
+        const char* const rename_icon = icon("pencil-line");
         const char* const duplicate_icon = icon("file-copy-line");
         const char* const trash_icon = icon("delete-bin-line");
-        CardIcon duplicate;
-        if (is_readable) {
-            move_to_right_end(button_width_of(duplicate_icon) + ImGui::GetStyle().ItemSpacing.x +
-                              button_width_of(trash_icon));
-            duplicate = render_card_icon({.icon_text = duplicate_icon, .tooltip = "Duplicate"},
-                                         {"explorer", "duplicate", found.folder_name});
+        CardIcons icons;
+        if (found.problem.empty()) {
+            move_to_right_end(button_width_of(rename_icon) + button_width_of(duplicate_icon) +
+                              button_width_of(trash_icon) +
+                              (2.0f * ImGui::GetStyle().ItemSpacing.x));
+            icons.rename = render_card_icon({.icon_text = rename_icon, .tooltip = "Rename"},
+                                            {"explorer", "rename", found.folder_name});
+            ImGui::SameLine();
+            icons.duplicate =
+                render_card_icon({.icon_text = duplicate_icon, .tooltip = "Duplicate"},
+                                 {"explorer", "duplicate", found.folder_name});
             ImGui::SameLine();
         } else {
             move_to_right_end(button_width_of(trash_icon));
         }
-        const CardIcon trash =
-            render_card_icon({.icon_text = trash_icon, .tooltip = "Move to trash"},
-                             {"explorer", "move_to_trash", found.folder_name});
+        icons.trash = render_card_icon({.icon_text = trash_icon, .tooltip = "Move to trash"},
+                                       {"explorer", "move_to_trash", found.folder_name});
+        return icons;
+    }
+
+    // One pipeline, in a card of its own: its name, its folder and its description, and for one
+    // that can't be read why. A click on a card that can be read opens its pipeline, unless the
+    // card shows the fields that rename it. Returns whether the mouse is over the card.
+    [[nodiscard]] bool render_pipeline(const FoundPipeline& found) {
+        const bool is_readable = found.problem.empty();
+        const bool is_renamed = asked_to_rename_ == found.folder_name;
+        begin_card(found.folder_name,
+                   is_readable && !is_renamed && hovered_folder_ == found.folder_name);
+        CardIcons icons;
+        bool is_rename_wanted = false;
+        if (is_renamed) {
+            is_rename_wanted = render_rename_fields();
+            if (!rename_problem_.empty()) {
+                ImGui::TextColored(FAILURE_COLOUR, "%s", rename_problem_.c_str());
+            }
+        } else {
+            render_bold(shown_name_of(found).c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", found.folder_name.c_str());
+            icons = render_card_icons(found);
+        }
         ImGui::PushTextWrapPos(0.0f);
         if (!found.description.empty()) {
             ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", found.description.c_str());
@@ -437,22 +584,28 @@ private:
         name_last_item_for_ui_driver({"explorer", "pipeline", found.folder_name}, found.problem);
         const bool is_hovered =
             ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-        const bool is_over_an_icon = duplicate.is_under_mouse || trash.is_under_mouse;
-        if (trash.is_clicked) {
+        // A card that is renamed takes its clicks for its fields, never to open its pipeline.
+        const bool is_opened_by_a_click = is_readable && !is_renamed && is_hovered &&
+                                          !icons.is_one_under_mouse() && is_list_current();
+        if (icons.trash.is_clicked) {
             start_folder_work(
                 [folder_name = found.folder_name](const std::filesystem::path& directory) {
                     return move_pipeline_to_trash(directory, folder_name);
                 });
-        } else if (duplicate.is_clicked) {
+        } else if (icons.duplicate.is_clicked) {
             duplicate_pipeline(found);
-        } else if (is_readable && is_hovered && !is_over_an_icon && is_list_current()) {
+        } else if (icons.rename.is_clicked) {
+            start_rename(found);
+        } else if (is_rename_wanted) {
+            apply_rename(found);
+        } else if (is_opened_by_a_click) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                opened_ = found.pipeline;
+                open_in_designer(found.pipeline);
             }
         }
         ImGui::Dummy(ImVec2(0.0f, gap_between_cards));
-        return is_hovered && !is_over_an_icon;
+        return is_hovered && !is_renamed && !icons.is_one_under_mouse();
     }
 
     void render_trash() {
@@ -571,10 +724,14 @@ private:
         }
         ui_driver_targets().set_state(std::format(
             R"({{"screen":"explorer","has_searched":{},"is_list_current":{},"pipelines":{},)"
-            R"("new_pipeline_problem":{},"is_trash_shown":{},"trash":{},"folder_problem":{}}})",
+            R"("new_pipeline_problem":{},"new_folder":{},"is_trash_shown":{},"trash":{},)"
+            R"("folder_problem":{},"asked_to_rename":{},"rename_name":{},"rename_folder":{},)"
+            R"("rename_problem":{}}})",
             has_searched_ ? "true" : "false", is_list_current() ? "true" : "false",
             json_array(pipelines), json_text(new_pipeline_problem_),
-            is_trash_shown_ ? "true" : "false", json_array(trashed_pipelines),
-            json_text(folder_problem_)));
+            json_text(new_pipeline_.typed().folder_name), is_trash_shown_ ? "true" : "false",
+            json_array(trashed_pipelines), json_text(folder_problem_), json_text(asked_to_rename_),
+            json_text(renamed_.typed().name), json_text(renamed_.typed().folder_name),
+            json_text(rename_problem_)));
     }
 };
