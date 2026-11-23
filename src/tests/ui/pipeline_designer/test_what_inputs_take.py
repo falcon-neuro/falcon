@@ -12,6 +12,7 @@ TAKEN_BY_INPUT = {
     ("IirFilter", "input"): {SAMPLES},
     ("LatencyBenchmark", "input"): {EVENTS},
     ("LevelCrossingDetector", "input"): {SAMPLES},
+    ("NeuralynxStreamer", "input"): {SAMPLES},
     ("PCIeParallelOutput", "input"): {EVENTS},
     ("Recorder", "inputs"): {SAMPLES, EVENTS},
     ("RippleDetector", "input"): {SAMPLES},
