@@ -148,7 +148,7 @@ def test_new_pipeline_is_refused_without_a_name_or_where_its_folder_is_taken():
             assert designer.state()["new_pipeline_problem"] == "A pipeline needs a name."
             for name, problem in (("memory", "The folder memory is there already."),
                                   ("Notes!", "The folder notes is there already."),
-                                  ("?!", "A pipeline's name needs a letter or a digit.")):
+                                  ("?!", "A pipeline needs a folder.")):
                 designer.click("explorer/new_name")
                 designer.key("Ctrl+A")
                 designer.type_text(name)
