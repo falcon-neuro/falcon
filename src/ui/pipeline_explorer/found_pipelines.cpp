@@ -1,8 +1,10 @@
 #pragma once
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <format>
 #include <functional>
@@ -39,7 +41,35 @@ struct FoundPipeline {
     std::string description;
     std::string problem;      // why its pipeline.cpp can't be read; empty for one that can
     OpenedPipeline pipeline;  // what the designer is opened with, for one that can be read
+    // When its pipeline.cpp was last written, in nanoseconds since 1970, which orders the list;
+    // 0 if that can't be told.
+    std::int64_t modified_nanoseconds = 0;
+    // The same in local time, as the list shows it, e.g. "2026-11-22 19:30"; empty if it can't
+    // be told.
+    std::string modified_at;
 };
+
+// Sets when a found pipeline's file was last written.
+inline void note_when_modified(FoundPipeline& found, const std::filesystem::path& file) {
+    std::error_code error;
+    const std::filesystem::file_time_type written = std::filesystem::last_write_time(file, error);
+    if (error) {
+        return;
+    }
+    const auto system_time = std::chrono::time_point_cast<std::chrono::nanoseconds>(
+        std::chrono::file_clock::to_sys(written));
+    found.modified_nanoseconds = system_time.time_since_epoch().count();
+    const std::time_t seconds = std::chrono::system_clock::to_time_t(
+        std::chrono::time_point_cast<std::chrono::system_clock::duration>(system_time));
+    std::tm local_time{};
+    if (localtime_r(&seconds, &local_time) == nullptr) {
+        return;
+    }
+    constexpr int tm_first_year = 1900;
+    found.modified_at = std::format("{:04}-{:02}-{:02} {:02}:{:02}",
+                                    local_time.tm_year + tm_first_year, local_time.tm_mon + 1,
+                                    local_time.tm_mday, local_time.tm_hour, local_time.tm_min);
+}
 
 // A folder's name, also for a path that ends in a slash.
 [[nodiscard]] inline std::string folder_name_of(const std::filesystem::path& directory) {
@@ -63,6 +93,7 @@ enum class HeaderBlock : std::uint8_t { Needed, Optional };
     FoundPipeline found;
     found.folder_name = folder_name_of(directory);
     found.pipeline.directory = directory;
+    note_when_modified(found, directory / "pipeline.cpp");
     ReadPipeline read = read_pipeline(*text, ALL_PROCESSORS);
     if (read.has_value()) {
         found.name = read->name;
@@ -165,7 +196,9 @@ inline constexpr std::string_view TRASH_TIME_FORM = "0000-00-00_00-00-00";
 }
 
 struct FoundPipelines {
-    std::vector<FoundPipeline> pipelines;  // in the order of their folders' names
+    // The one whose pipeline.cpp was written last comes first; those written at one time are
+    // in the order of their folders' names.
+    std::vector<FoundPipeline> pipelines;
     // Every folder there, a pipeline's or not: a new pipeline's folder can't have one of these
     // names.
     std::vector<std::string> folder_names;
@@ -192,7 +225,12 @@ struct FoundPipelines {
         }
         entry.increment(error);
     }
-    std::ranges::sort(found.pipelines, {}, &FoundPipeline::folder_name);
+    std::ranges::sort(found.pipelines, [](const FoundPipeline& one, const FoundPipeline& other) {
+        if (one.modified_nanoseconds != other.modified_nanoseconds) {
+            return one.modified_nanoseconds > other.modified_nanoseconds;
+        }
+        return one.folder_name < other.folder_name;
+    });
     std::error_code trash_error;
     std::filesystem::directory_iterator trash_entry(trash_directory_in(directory), trash_error);
     while (!trash_error && trash_entry != end) {

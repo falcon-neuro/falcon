@@ -1,5 +1,6 @@
 """The welcome screen, which Falcon starts on: the pipelines under ~/falcon listed, one opened in
 the designer by a click, a new one made from a name, and the way back from the designer."""
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -30,8 +31,29 @@ def write_pipeline(home, folder, name, description="", body=EMPTY_PIPELINE):
     return directory
 
 
+def set_modified(directory, local_time):
+    """Has the pipeline of this directory count as last written at this time, given as the list
+    shows it, e.g. "2026-11-22 09:30"."""
+    seconds = time.mktime(time.strptime(local_time, "%Y-%m-%d %H:%M"))
+    os.utime(Path(directory) / "pipeline.cpp", (seconds, seconds))
+
+
+def listed(state):
+    """The listed pipelines without when each was modified, in the order of their folders'
+    names: for a test that isn't about the list's order."""
+    return sorted(({key: value for key, value in pipeline.items() if key != "modified"}
+                   for pipeline in state["pipelines"]), key=lambda pipeline: pipeline["folder"])
+
+
+# A card that shows for the first time has its height only from its second frame on, and what
+# stands under it its place from the frame after: until then a click by a target's place misses.
+FRAMES_UNTIL_THE_LIST_STANDS = 3
+
+
 def welcome_screen(home):
-    return Designer(home=home, starts_on_welcome_screen=True)
+    """Falcon as a user starts it: on the welcome screen, unless a pipeline was open when it was
+    last closed with this home, which it then opens again (see test_remembered.py)."""
+    return Designer(home=home, is_started_as_by_a_user=True)
 
 
 def state_once_searched(designer):
@@ -42,7 +64,8 @@ def state_once_searched(designer):
         designer.frames(1)
         state = designer.state()
         if state["screen"] == "explorer" and state["has_searched"]:
-            return state
+            designer.frames(FRAMES_UNTIL_THE_LIST_STANDS)
+            return designer.state()
         time.sleep(0.02)
     raise AssertionError("the welcome screen never listed the pipelines")
 
@@ -56,7 +79,8 @@ def current_list(designer):
         designer.frames(1)
         state = designer.state()
         if state["screen"] == "explorer" and state["is_list_current"]:
-            return state
+            designer.frames(FRAMES_UNTIL_THE_LIST_STANDS)
+            return designer.state()
         time.sleep(0.02)
     raise AssertionError("the welcome screen's list never became current")
 
@@ -80,7 +104,7 @@ def test_falcon_starts_on_the_welcome_screen_which_lists_no_pipeline_at_first():
             assert not designer.has_target("top_bar/compile")
 
 
-def test_pipelines_are_listed_by_their_folders_with_name_and_description():
+def test_pipelines_are_listed_with_name_description_and_where_they_lie():
     with tempfile.TemporaryDirectory() as home:
         write_pipeline(home, "spike_sorting", "Spike sorting", "Sorts spikes on 64 channels.")
         write_pipeline(home, "memory", "Memory impairment")
@@ -92,14 +116,82 @@ def test_pipelines_are_listed_by_their_folders_with_name_and_description():
         write_pipeline(home, ".config", "Hidden")
         with welcome_screen(home) as designer:
             state = state_once_searched(designer)
-            assert state["pipelines"] == [
+            assert listed(state) == [
                 {"folder": "memory", "name": "Memory impairment", "description": "",
                  "problem": ""},
                 {"folder": "spike_sorting", "name": "Spike sorting",
                  "description": "Sorts spikes on 64 channels.", "problem": ""},
             ]
-            assert (designer.target("explorer/pipeline/memory").bottom <=
-                    designer.target("explorer/pipeline/spike_sorting").top)
+            # A card says where its pipeline lies, the directory of all pipelines before its
+            # folder, on a line of its own under the name.
+            assert designer.target("explorer/pipeline_path/memory").note == "~/falcon/memory"
+            assert (designer.target("explorer/pipeline_path/spike_sorting").note ==
+                    "~/falcon/spike_sorting")
+            card = designer.target("explorer/pipeline/memory")
+            path = designer.target("explorer/pipeline_path/memory")
+            icon = designer.target("explorer/rename/memory")
+            assert card.top <= icon.top and icon.bottom <= path.top and path.bottom <= card.bottom
+
+
+def test_pipelines_are_listed_last_modified_first_and_say_when_that_was():
+    with tempfile.TemporaryDirectory() as home:
+        set_modified(write_pipeline(home, "a_oldest", "Oldest"), "2026-11-20 10:00")
+        set_modified(write_pipeline(home, "b_newest", "Newest"), "2026-11-22 09:30")
+        set_modified(write_pipeline(home, "c_middle", "Middle"), "2026-11-21 23:59")
+        # One that can't be read has its place by its time too.
+        set_modified(write_pipeline(home, "d_broken", "Broken", body="this is no pipeline\n"),
+                     "2026-11-22 09:00")
+        with welcome_screen(home) as designer:
+            state = state_once_searched(designer)
+            assert [(pipeline["folder"], pipeline["modified"])
+                    for pipeline in state["pipelines"]] == [
+                        ("b_newest", "2026-11-22 09:30"), ("d_broken", "2026-11-22 09:00"),
+                        ("c_middle", "2026-11-21 23:59"), ("a_oldest", "2026-11-20 10:00")]
+            # The cards stand in that order, and each says when its pipeline was modified.
+            cards = [designer.target(f"explorer/pipeline/{folder}")
+                     for folder in ("b_newest", "d_broken", "c_middle", "a_oldest")]
+            for upper, lower in zip(cards, cards[1:]):
+                assert upper.bottom <= lower.top
+            assert (designer.target("explorer/pipeline_modified/c_middle").note ==
+                    "Modified 2026-11-21 23:59")
+            path = designer.target("explorer/pipeline_path/c_middle")
+            modified = designer.target("explorer/pipeline_modified/c_middle")
+            assert path.right <= modified.left and path.top == modified.top
+
+
+def test_pipelines_modified_at_one_time_are_listed_by_their_folders():
+    with tempfile.TemporaryDirectory() as home:
+        for folder in ("delta", "alpha", "charlie", "bravo"):
+            set_modified(write_pipeline(home, folder, folder.title()), "2026-11-20 10:00")
+        with welcome_screen(home) as designer:
+            state = state_once_searched(designer)
+            assert [pipeline["folder"] for pipeline in state["pipelines"]] == [
+                "alpha", "bravo", "charlie", "delta"]
+
+
+def test_pipeline_that_is_changed_in_the_designer_comes_first_in_the_list():
+    with tempfile.TemporaryDirectory() as home:
+        set_modified(write_pipeline(home, "older", "Older"), "2026-11-20 10:00")
+        set_modified(write_pipeline(home, "newer", "Newer"), "2026-11-22 09:30")
+        with welcome_screen(home) as designer:
+            state = state_once_searched(designer)
+            assert [pipeline["folder"] for pipeline in state["pipelines"]] == ["newer", "older"]
+            # Opening a pipeline changes nothing, so it keeps its place.
+            designer.click("explorer/pipeline/older")
+            designer.frames(3)
+            designer.click("top_bar/pipelines")
+            state = current_list(designer)
+            assert [pipeline["folder"] for pipeline in state["pipelines"]] == ["newer", "older"]
+            assert state["pipelines"][1]["modified"] == "2026-11-20 10:00"
+
+            designer.click("explorer/pipeline/older")
+            designer.frames(3)
+            designer.add_processor("Trigger", core=0)
+            file_with(Path(home) / "falcon" / "older" / "pipeline.cpp", "Trigger<")
+            designer.click("top_bar/pipelines")
+            state = current_list(designer)
+            assert [pipeline["folder"] for pipeline in state["pipelines"]] == ["older", "newer"]
+            assert state["pipelines"][0]["modified"] != "2026-11-20 10:00"
 
 
 def test_click_on_a_pipeline_opens_it_in_the_designer():
@@ -131,8 +223,9 @@ def test_new_pipeline_is_made_from_its_name_and_opened():
             # Its folder is named after it, and its file is there before anything is done.
             file = Path(home) / "falcon" / "memory_impairment_day_2" / "pipeline.cpp"
             assert "// Name: Memory Impairment, Day 2\n" in file_with(file, "// Name:")
-        with welcome_screen(home) as designer:
-            state = state_once_searched(designer)
+            # The way back shows it in the list.
+            designer.click("top_bar/pipelines")
+            state = current_list(designer)
             assert [pipeline["folder"] for pipeline in state["pipelines"]] == [
                 "memory_impairment_day_2"]
             assert state["pipelines"][0]["name"] == "Memory Impairment, Day 2"

@@ -20,6 +20,8 @@
 // folder of their own.
 
 inline constexpr std::size_t LONGEST_PIPELINE_NAME = 120;
+// The directory that holds every pipeline's folder, as it is shown before a folder's name.
+inline constexpr const char* PIPELINES_DIRECTORY_TEXT = "~/falcon/";
 
 // A folder's name for a pipeline's name: its letters and digits in lower case, with one
 // underscore for whatever lies between them. Empty for a name that has neither.
@@ -181,7 +183,6 @@ struct FolderLineOutcome {
 // folder's name into a field, which becomes a line of text again once it is left.
 [[nodiscard]] inline FolderLineOutcome render_folder_line(TypedNameAndFolder& typed,
                                                           const FolderLineTargets& targets) {
-    constexpr const char* directory_text = "~/falcon/";
     constexpr float gap_after_directory = 2.0f;
     constexpr float field_width = 280.0f;
     constexpr ImVec4 no_colour{0.0f, 0.0f, 0.0f, 0.0f};
@@ -191,7 +192,8 @@ struct FolderLineOutcome {
     // is clicked.
     ImGui::AlignTextToFramePadding();
     if (!typed.is_folder_name_edited) {
-        const std::string path = std::format("{}{}", directory_text, typed.typed().folder_name);
+        const std::string path =
+            std::format("{}{}", PIPELINES_DIRECTORY_TEXT, typed.typed().folder_name);
         ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", path.c_str());
         name_last_item_for_ui_driver({"explorer", targets.label}, path);
         ImGui::SameLine();
@@ -207,7 +209,7 @@ struct FolderLineOutcome {
         return outcome;
     }
 
-    ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", directory_text);
+    ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", PIPELINES_DIRECTORY_TEXT);
     ImGui::SameLine(0.0f, gap_after_directory);
     if (typed.is_folder_name_to_focus) {
         ImGui::SetKeyboardFocusHere();

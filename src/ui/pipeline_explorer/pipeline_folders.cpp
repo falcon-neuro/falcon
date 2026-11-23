@@ -71,6 +71,10 @@ struct PipelineRename {
     std::string new_folder_name;
     // The pipeline.cpp that holds the new name; none for a pipeline that keeps its name.
     std::optional<std::string> new_pipeline_text;
+    // The text that marks the pipeline's executable as built from the renamed pipeline, for one
+    // whose executable was built from it as it stood: a name isn't compiled, so that executable
+    // is the renamed pipeline's too. None for any other.
+    std::optional<std::string> new_compiled_text;
 };
 
 // Renames a pipeline: writes the pipeline.cpp that holds its new name, then moves its folder with
@@ -112,6 +116,11 @@ struct PipelineRename {
             const std::string reason = error.message();
             std::filesystem::remove(new_file, error);
             return std::format("{} couldn't be written: {}", file.string(), reason);
+        }
+        // A mark that can't be written leaves the pipeline to be compiled again, and no more.
+        if (rename.new_compiled_text.has_value() &&
+            !write_file(folder / ".last_compiled_pipeline.cpp", *rename.new_compiled_text)) {
+            std::filesystem::remove(folder / ".last_compiled_pipeline.cpp", error);
         }
     }
     if (is_folder_moved) {

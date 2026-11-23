@@ -201,3 +201,4 @@ In the order they block the work: the first three are the generator itself and a
 - **Doc comments**, what the rule under **Decided** leaves open:
   - How much of the standard the script can enforce beyond a doc comment being there.
   - Each processor's file still starts with an ordinary comment that says what it does, for whoever reads the code, now beside the doc comment for the user: whether both stay.
+- **Whether this file becomes a spec without a Done section** (raised on 23 November 2026; the user: decide once the first design and release are mostly done). Each bullet under **Done** would then move into **Decided** if it is a rule, shrink to one line of status, or go if it only retells the code. Until then **Done** stays as it is. The same question holds for the **Done** of the other areas' files.

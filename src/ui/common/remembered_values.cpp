@@ -11,14 +11,14 @@
 #include <utility>
 #include "files.cpp"
 
-// What the app remembers between two sessions: numbers by name, e.g. a panel's width, kept in one
-// file as lines "name: value". The file is read once, when this object is made, and written
-// beside the thread that changes a number.
-class RememberedNumbers {
+// What the app remembers between two sessions: values by name, e.g. a panel's width or the
+// pipeline that is open, kept in one file as lines "name: value". The file is read once, when
+// this object is made, and written beside the thread that changes a value.
+class RememberedValues {
 public:
-    // Without a file nothing is read and nothing is kept: the numbers then last as long as this
+    // Without a file nothing is read and nothing is kept: the values then last as long as this
     // object.
-    explicit RememberedNumbers(std::optional<std::filesystem::path> file) : file_(std::move(file)) {
+    explicit RememberedValues(std::optional<std::filesystem::path> file) : file_(std::move(file)) {
         if (!file_.has_value()) {
             return;
         }
@@ -34,32 +34,63 @@ public:
         }
     }
 
-    // The number of this name, or the fallback where none is remembered.
-    [[nodiscard]] float value_or(std::string_view name, float fallback) const {
-        const auto found = numbers_.find(name);
-        return found == numbers_.end() ? fallback : found->second;
+    // The number of this name, or the fallback where none is remembered or what is remembered
+    // under the name is no number.
+    [[nodiscard]] float number_or(std::string_view name, float fallback) const {
+        const auto found = values_.find(name);
+        if (found == values_.end()) {
+            return fallback;
+        }
+        const std::string& value_text = found->second;
+        float value = 0.0f;
+        const char* const value_begin = value_text.data();
+        const char* const value_end = value_begin + value_text.size();
+        const std::from_chars_result parsed = std::from_chars(value_begin, value_end, value);
+        return parsed.ec == std::errc() && parsed.ptr == value_end ? value : fallback;
+    }
+
+    // The text of this name, or none where none is remembered.
+    [[nodiscard]] std::optional<std::string> text_of(std::string_view name) const {
+        const auto found = values_.find(name);
+        if (found == values_.end()) {
+            return std::nullopt;
+        }
+        return found->second;
     }
 
     // Notes the number of this name, and has the file written if that changed it.
-    void remember(std::string_view name, float value) {
-        const auto found = numbers_.find(name);
-        if (found != numbers_.end() && found->second == value) {
+    void remember_number(std::string_view name, float value) {
+        remember_text(name, std::format("{}", value));
+    }
+
+    // Notes the text of this name, and has the file written if that changed it. A text that a
+    // line of the file can't hold isn't noted: an empty one, one of several lines, or one that
+    // starts with a space, which reading the line back would drop.
+    void remember_text(std::string_view name, std::string_view text) {
+        if (text.empty() || text.contains('\n') || text.starts_with(' ')) {
             return;
         }
-        numbers_.insert_or_assign(std::string(name), value);
-        if (!file_.has_value()) {
+        const auto found = values_.find(name);
+        if (found != values_.end() && found->second == text) {
             return;
         }
-        std::string text;
-        for (const auto& [number_name, number] : numbers_) {
-            text += std::format("{}: {}\n", number_name, number);
+        values_.insert_or_assign(std::string(name), std::string(text));
+        write();
+    }
+
+    // Forgets the value of this name, and has the file written if there was one.
+    void forget(std::string_view name) {
+        const auto found = values_.find(name);
+        if (found == values_.end()) {
+            return;
         }
-        writer_.write(*file_, std::move(text));
+        values_.erase(found);
+        write();
     }
 
 private:
-    // A line that isn't "name: value" with a number is skipped: a file that a person changed, or
-    // one of a later Falcon, must not stop this one.
+    // A line that isn't "name: value" is skipped: a file that a person changed, or one of a
+    // later Falcon, must not stop this one.
     void read_line(std::string_view line) {
         const std::size_t colon_position = line.find(':');
         if (colon_position == std::string_view::npos) {
@@ -71,16 +102,22 @@ private:
             return;
         }
         value_text.remove_prefix(value_start);
-        float value = 0.0f;
-        const char* const value_begin = value_text.data();
-        const char* const value_end = value_begin + value_text.size();
-        const std::from_chars_result parsed = std::from_chars(value_begin, value_end, value);
-        if (parsed.ec == std::errc() && parsed.ptr == value_end) {
-            numbers_.insert_or_assign(std::string(line.substr(0, colon_position)), value);
+        values_.insert_or_assign(std::string(line.substr(0, colon_position)),
+                                 std::string(value_text));
+    }
+
+    void write() {
+        if (!file_.has_value()) {
+            return;
         }
+        std::string text;
+        for (const auto& [name, value] : values_) {
+            text += std::format("{}: {}\n", name, value);
+        }
+        writer_.write(*file_, std::move(text));
     }
 
     std::optional<std::filesystem::path> file_;
-    std::map<std::string, float, std::less<>> numbers_;
+    std::map<std::string, std::string, std::less<>> values_;
     BackgroundFileWriter writer_;
 };
