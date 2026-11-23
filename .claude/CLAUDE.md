@@ -20,6 +20,7 @@ Develop new version of Falcon (_Ciliberti & Kloosterman, 2017 J. Neural Eng. 14 
 - Engine: [docs/ongoing_work/engine.md](../docs/ongoing_work/engine.md).
 - Generator: [docs/ongoing_work/generator.md](../docs/ongoing_work/generator.md).
 - Pipeline designer: [docs/ongoing_work/pipeline_designer.md](../docs/ongoing_work/pipeline_designer.md).
+- UI design (how the whole app looks): [docs/ongoing_work/ui_design.md](../docs/ongoing_work/ui_design.md).
 - After the prototype: [docs/ongoing_work/beyond_prototype.md](../docs/ongoing_work/beyond_prototype.md).
 - Graph shapes atlas: [docs/ongoing_work/graph_shapes.md](../docs/ongoing_work/graph_shapes.md).
 - Differences from Falcon 1: [docs/ongoing_work/falcon1_differences.md](../docs/ongoing_work/falcon1_differences.md).
