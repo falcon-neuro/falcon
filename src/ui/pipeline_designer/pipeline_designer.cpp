@@ -1142,7 +1142,7 @@ private:
         ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
-        if (ImGui::SmallButton(are_all_ports_shown_ ? "Hide ports" : "Show ports")) {
+        if (instrument_small_key(are_all_ports_shown_ ? "Hide ports" : "Show ports")) {
             are_all_ports_shown_ = !are_all_ports_shown_;
         }
         ImGui::PopStyleColor(3);
