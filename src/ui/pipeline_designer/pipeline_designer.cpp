@@ -80,6 +80,15 @@ public:
     // Whether the user asked to go back to the list of pipelines.
     [[nodiscard]] bool is_leaving_asked() const { return is_leaving_asked_; }
 
+    // What the pipeline is called in the top bar and in the window's title: its name, or its
+    // folder's where it has none. Empty for a pipeline that has neither.
+    [[nodiscard]] std::string shown_pipeline_name() const {
+        if (!graph_.name.empty() || !directory_.has_value()) {
+            return graph_.name;
+        }
+        return directory_->filename().string();
+    }
+
     void render() {
         const ImVec2 whole_space = ImGui::GetContentRegionAvail();
         const BuildOutcome build_outcome = build_.outcome();
@@ -399,14 +408,6 @@ private:
                                                .bar_text = bar_state_of(pipeline_state).text,
                                                .run_lines = &run_lines_,
                                            }));
-    }
-
-    // What the pipeline is called in the top bar: its name, or its folder's where it has none.
-    [[nodiscard]] std::string shown_pipeline_name() const {
-        if (!graph_.name.empty() || !directory_.has_value()) {
-            return graph_.name;
-        }
-        return directory_->filename().string();
     }
 
     // Whether the executable was built from the graph as it stands.

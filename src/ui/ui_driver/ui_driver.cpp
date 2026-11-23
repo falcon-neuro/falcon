@@ -29,6 +29,7 @@
 //   picture <file>          writes the frame as a PPM picture
 //   targets                 answers with what the last frame named (see ui_driver_targets.cpp)
 //   state                   answers with the state the UI handed over
+//   window_title            answers with the title the window has on the desktop
 //   quit
 // Each command is answered with one line on the standard output, once its frames are drawn: the
 // marker below, then JSON with "ok" and, if that is false, "error". The end of the input quits.
@@ -175,6 +176,9 @@ private:
         } else if (command.word == "state") {
             const std::string& state = ui_driver_targets().state();
             answer(std::format(R"({{"ok":true,"state":{}}})", state.empty() ? "null" : state));
+        } else if (command.word == "window_title") {
+            answer(std::format(R"({{"ok":true,"window_title":{}}})",
+                               json_text(ui_driver_targets().window_title())));
         } else if (const std::optional<std::string> error = queue_steps(command)) {
             answer_error(*error);
         }

@@ -10,11 +10,12 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+#include "../common/files.cpp"
 #include "found_pipelines.cpp"
 
-// What is done to a pipeline's whole folder: moved into the trash, brought back from it, and
-// deleted for good. Each returns why it couldn't be done, or an empty text. Done beside the UI's
-// thread (see PipelineFolderWork): deleting a pipeline's recordings may take long.
+// What is done to a pipeline's whole folder: made for a copy, moved into the trash, brought back
+// from it, and deleted for good. Each returns why it couldn't be done, or an empty text. Done
+// beside the UI's thread (see PipelineFolderWork): deleting a pipeline's recordings may take long.
 
 // Whether a text is the name of one folder and nothing more: no path into another folder, and
 // neither "." nor "..". What is moved or deleted is named by such a name alone, so that nothing
@@ -34,6 +35,33 @@
     return std::format("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", local_time.tm_year + tm_first_year,
                        local_time.tm_mon + 1, local_time.tm_mday, local_time.tm_hour,
                        local_time.tm_min, local_time.tm_sec);
+}
+
+// Makes the folder of a new pipeline and writes its pipeline.cpp. Refused where a folder of that
+// name is there already.
+[[nodiscard]] inline std::string write_new_pipeline(
+    const std::filesystem::path& pipelines_directory, const std::string& folder_name,
+    std::string_view pipeline_text) {
+    if (!is_one_folder_name(folder_name) || folder_name.starts_with('.')) {
+        return std::format("{} can't be a pipeline's folder.", folder_name);
+    }
+    const std::filesystem::path folder = pipelines_directory / folder_name;
+    std::error_code error;
+    // False for a folder that is there already too, which is no error.
+    if (!std::filesystem::create_directory(folder, error)) {
+        return error
+                   ? std::format("The folder {} couldn't be made: {}", folder_name, error.message())
+                   : std::format("The folder {} is there already.", folder_name);
+    }
+    const std::filesystem::path file = folder / "pipeline.cpp";
+    if (!write_file(file, pipeline_text)) {
+        // Only what was just made is taken away again: the file, and the folder if that leaves
+        // it empty.
+        std::filesystem::remove(file, error);
+        std::filesystem::remove(folder, error);
+        return std::format("{} couldn't be written.", file.string());
+    }
+    return {};
 }
 
 // Moves a pipeline's folder into the trash, under a name that says when and what it was called.
@@ -120,9 +148,11 @@ public:
         });
     }
 
-    [[nodiscard]] bool is_running() const {
+    // Whether work runs, or has ended with an outcome that wasn't taken yet: until it is taken,
+    // whoever asked for the work doesn't know that the folders changed.
+    [[nodiscard]] bool is_busy() const {
         const std::scoped_lock lock(mutex_);
-        return is_running_;
+        return is_running_ || outcome_.has_value();
     }
 
     // How the last work ended, once: why it failed, or an empty text. None while nothing has

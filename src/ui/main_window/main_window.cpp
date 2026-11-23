@@ -2,8 +2,10 @@
 #include <imgui.h>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -59,6 +61,20 @@ private:
     }
 
 public:
+    static constexpr const char* app_name = "Falcon";
+
+    // What the window is called on the desktop: the open pipeline before the app, or the app
+    // alone while the welcome screen shows or the pipeline has neither a name nor a folder.
+    [[nodiscard]] std::string window_title() const {
+        if (pipeline_designer_.has_value()) {
+            const std::string pipeline_name = pipeline_designer_->shown_pipeline_name();
+            if (!pipeline_name.empty()) {
+                return std::format("{} - {}", pipeline_name, app_name);
+            }
+        }
+        return app_name;
+    }
+
     // Falcon starts on the welcome screen. Two environment variables start it on the designer
     // instead: FALCON_EXAMPLE_PIPELINE with a small pipeline that lies in no folder, for a
     // picture of the window (its value "selected" also opens one processor's options), and

@@ -47,6 +47,20 @@ def state_once_searched(designer):
     raise AssertionError("the welcome screen never listed the pipelines")
 
 
+def current_list(designer):
+    """The welcome screen's state once its list shows the folders as they are: what is moved or
+    deleted, and every search for the pipelines, the first one and each one after it, run beside
+    the UI's thread."""
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        designer.frames(1)
+        state = designer.state()
+        if state["screen"] == "explorer" and state["is_list_current"]:
+            return state
+        time.sleep(0.02)
+    raise AssertionError("the welcome screen's list never became current")
+
+
 def file_with(path, part):
     """The file's text once it holds this part: files are written beside the UI's thread."""
     end = time.monotonic() + 5
@@ -158,6 +172,29 @@ def test_pipeline_that_cannot_be_read_says_why_and_is_not_opened():
             assert designer.state()["screen"] == "explorer"
 
 
+def test_window_title_names_the_open_pipeline_and_the_app_alone_on_the_welcome_screen():
+    with tempfile.TemporaryDirectory() as home:
+        write_pipeline(home, "memory", "Memory impairment")
+        write_pipeline(home, "no_name", "")
+        with welcome_screen(home) as designer:
+            state_once_searched(designer)
+            assert designer.window_title() == "Falcon"
+            designer.click("explorer/pipeline/memory")
+            designer.frames(3)
+            assert designer.state()["screen"] == "designer"
+            assert designer.window_title() == "Memory impairment - Falcon"
+
+            designer.click("top_bar/pipelines")
+            current_list(designer)
+            assert designer.window_title() == "Falcon"
+
+            # A pipeline without a name is called by its folder, as in the list and the top bar.
+            designer.click("explorer/pipeline/no_name")
+            designer.frames(3)
+            assert designer.state()["screen"] == "designer"
+            assert designer.window_title() == "no_name - Falcon"
+
+
 def test_designer_leads_back_to_the_welcome_screen_which_lists_what_was_made():
     with tempfile.TemporaryDirectory() as home:
         with welcome_screen(home) as designer:
@@ -168,7 +205,8 @@ def test_designer_leads_back_to_the_welcome_screen_which_lists_what_was_made():
             designer.frames(3)
             trigger = designer.add_processor("Trigger", core=0)
             designer.click("top_bar/pipelines")
-            state = state_once_searched(designer)
+            # The screen looks for the pipelines again, having searched once already.
+            state = current_list(designer)
             assert [pipeline["name"] for pipeline in state["pipelines"]] == ["First"]
 
             # What was done in the designer is there when the pipeline is opened again.

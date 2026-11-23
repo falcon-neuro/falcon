@@ -12,6 +12,7 @@
 #include <optional>
 #include <print>
 #include <string>
+#include <utility>
 #include <vector>
 #include "main_window/main_window.cpp"
 #include "ui_driver/ui_driver.cpp"
@@ -33,6 +34,9 @@ private:
     // isn't shown, writes the picture and quits, so the UI can be looked at without a screen.
     std::string screenshot_path_;
     int drawn_frame_count_ = 0;
+    // The title the window was given last, so that the desktop is told of a new one only. Empty
+    // before the first frame.
+    std::string window_title_;
     // On when the environment variable FALCON_UI_DRIVER is set: a test then plays the mouse and
     // the keys, in a window that isn't shown either.
     UiDriver ui_driver_;
@@ -62,6 +66,16 @@ private:
         }
     }
 
+    void update_window_title() {
+        std::string title = main_window_.window_title();
+        if (title == window_title_) {
+            return;
+        }
+        glfwSetWindowTitle(window_, title.c_str());
+        ui_driver_targets().set_window_title(title);
+        window_title_ = std::move(title);
+    }
+
     bool init_window_context() {
         glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 
@@ -83,8 +97,8 @@ private:
             glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         }
         window_ = glfwCreateWindow(is_window_hidden ? screenshot_width : 1280,
-                                   is_window_hidden ? screenshot_height : 720, "Falcon", nullptr,
-                                   nullptr);
+                                   is_window_hidden ? screenshot_height : 720, MainWindow::app_name,
+                                   nullptr, nullptr);
         if (!window_) {
             std::cerr << "Failed to create GLFW window\n";
             glfwTerminate();
@@ -216,6 +230,7 @@ public:
             ImGui::Begin("Falcon", nullptr, window_flags);
 
             main_window_.render();
+            update_window_title();
 
             ImGui::End();
             ImGui::PopStyleColor();

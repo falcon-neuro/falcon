@@ -5,20 +5,8 @@ import time
 from pathlib import Path
 
 from designer_driver import Designer
-from test_welcome_screen import state_once_searched, welcome_screen, write_pipeline
-
-
-def current_list(designer):
-    """The welcome screen's state once its list shows the folders as they are: what is moved or
-    deleted, and the search after it, run beside the UI's thread."""
-    end = time.monotonic() + 5
-    while time.monotonic() < end:
-        designer.frames(1)
-        state = designer.state()
-        if state["screen"] == "explorer" and state["is_list_current"]:
-            return state
-        time.sleep(0.02)
-    raise AssertionError("the welcome screen's list never became current")
+from test_welcome_screen import (current_list, state_once_searched, welcome_screen,
+                                 write_pipeline)
 
 
 def folders_of(state):

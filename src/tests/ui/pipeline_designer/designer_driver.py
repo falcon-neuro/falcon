@@ -212,6 +212,10 @@ class Designer:
         """What the designer holds: its graph, the picked port, the selected processor, ..."""
         return self.command("state")["state"]
 
+    def window_title(self):
+        """The title the window has on the desktop, which no picture shows."""
+        return self.command("window_title")["window_title"]
+
     def picture(self, png_path):
         """Writes a picture of the window as it is now."""
         with tempfile.TemporaryDirectory() as directory:
