@@ -28,8 +28,7 @@ def note_of(designer, name):
 
 
 def inputs_of(designer, processor):
-    start = f"port/{processor}/input/"
-    return sorted(name[len(start):] for name in designer.targets() if name.startswith(start))
+    return designer.port_names(processor, "input")
 
 
 def kinds_taken_by_inputs_of(type_name):

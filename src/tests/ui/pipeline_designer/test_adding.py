@@ -19,13 +19,12 @@ def test_panel_lists_inputs_then_operators_then_outputs():
         assert lowest_operator < highest_output
 
 
-def test_empty_pipeline_has_boxes_up_to_the_first_core_offered():
+def test_empty_pipeline_has_the_box_of_the_first_core_offered():
     with Designer() as designer:
         state = designer.state()
-        expected = list(range(state["offered_cores"][0] + 1))
-        assert state["shown_cores"] == expected
-        for core in expected:
-            assert designer.has_target(f"core/{core}")
+        first_offered = state["offered_cores"][0]
+        assert state["shown_cores"] == [first_offered]
+        assert designer.has_target(f"core/{first_offered}")
         assert state["processors"] == []
 
 
@@ -74,13 +73,15 @@ def test_drag_released_outside_every_core_adds_nothing():
         assert designer.state()["processors"] == []
 
 
-def test_next_core_appears_during_a_drag_and_stays_only_if_used():
+def test_every_core_offered_shows_during_a_drag_and_stays_only_if_used():
     with Designer() as designer:
         designer.add_processor("Trigger", core=0)
         assert designer.state()["shown_cores"] == [0]
         assert not designer.has_target("core/1")
 
         designer.start_drag("panel/Trigger")
+        state = designer.state()
+        assert state["shown_cores"] == sorted(state["offered_cores"])
         assert designer.has_target("core/1")
         designer.drag_to(designer.target("panel/Recorder").point())
         designer.drop()
@@ -93,20 +94,18 @@ def test_next_core_appears_during_a_drag_and_stays_only_if_used():
         assert designer.has_target("core/1")
 
 
-def test_every_core_up_to_the_highest_in_use_has_a_box():
+def test_only_the_cores_that_hold_a_processor_have_a_box():
     with Designer() as designer:
         designer.add_processor("Trigger", core=0)
         on_core_1 = designer.add_processor("Trigger", core=1)
         on_core_2 = designer.add_processor("Trigger", core=2)
         assert designer.state()["shown_cores"] == [0, 1, 2]
 
-        # A core among them that holds no processor is an empty box, never hidden.
+        # A core between two in use that holds no processor any more has no box.
         designer.click(f"block/{on_core_1}/remove")
-        assert designer.state()["shown_cores"] == [0, 1, 2]
-        core_1 = designer.target("core/1")
-        blocks = [target for name, target in designer.targets().items()
-                  if name.startswith("block/") and name.count("/") == 1]
-        assert not any(core_1.left <= block.left < core_1.right for block in blocks)
+        assert designer.state()["shown_cores"] == [0, 2]
+        assert not designer.has_target("core/1")
+        assert designer.target("core/0").right < designer.target("core/2").left
 
         designer.click(f"block/{on_core_2}/remove")
         assert designer.state()["shown_cores"] == [0]
@@ -205,9 +204,10 @@ def test_nothing_moves_while_a_processor_is_dragged():
             return {name: target for name, target in designer.targets().items()
                     if name in ("core/0", "core/1") or name.startswith("block/")}
 
-        before = places_of_boxes_and_blocks()
+        # When a drag begins, the block under the mouse hides its ports and every core offered
+        # gets a box. From then on nothing moves, wherever the mouse goes.
         designer.start_drag("panel/EventLogger")
-        assert places_of_boxes_and_blocks() == before
+        before = places_of_boxes_and_blocks()
         designer.drag_to(designer.target("core/0").point())
         assert places_of_boxes_and_blocks() == before
         designer.drag_to(designer.target("core/1").point())

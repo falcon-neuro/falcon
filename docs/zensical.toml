@@ -21,6 +21,7 @@ nav = [
       "processors/iir_filter.md",
       "processors/latency_benchmark.md",
       "processors/level_crossing_detector.md",
+      "processors/neuralynx_input.md",
       "processors/pcie_parallel_output.md",
       "processors/recorder.md",
       "processors/ripple_detector.md",
