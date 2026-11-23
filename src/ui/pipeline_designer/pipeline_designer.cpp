@@ -24,7 +24,9 @@
 #include "../common/colours.cpp"
 #include "../common/fonts.cpp"
 #include "../common/icons.cpp"
+#include "../common/instrument.cpp"
 #include "../common/remembered_numbers.cpp"
+#include "../common/shadow.cpp"
 #include "../ui_driver/ui_driver_targets.cpp"
 #include "all_processors.cpp"
 #include "build_problems.cpp"
@@ -231,28 +233,28 @@ private:
     static constexpr float gap_between_rows = 40.0f;
     static constexpr float core_rounding = 12.0f;
     static constexpr float block_rounding = CARD_ROUNDING;
-    static constexpr ImVec4 core_colour{0.949f, 0.949f, 0.953f, 1.0f};
-    static constexpr ImVec4 not_isolated_core_colour{1.0f, 0.90f, 0.72f, 1.0f};
-    static constexpr ImVec4 warning_colour{0.78f, 0.30f, 0.0f, 1.0f};
-    static constexpr ImVec4 idle_state_colour{0.55f, 0.55f, 0.57f, 1.0f};
-    static constexpr ImVec4 busy_state_colour{0.85f, 0.55f, 0.05f, 1.0f};
-    static constexpr ImVec4 ready_state_colour{0.18f, 0.45f, 0.80f, 1.0f};
-    static constexpr ImVec4 running_state_colour{0.13f, 0.55f, 0.27f, 1.0f};
+    static constexpr ImVec4 core_colour{0.773f, 0.902f, 0.875f, 1.0f};
+    static constexpr ImVec4 not_isolated_core_colour{0.965f, 0.847f, 0.541f, 1.0f};
+    static constexpr ImVec4 warning_colour{0.769f, 0.314f, 0.106f, 1.0f};
+    static constexpr ImVec4 idle_state_colour{0.549f, 0.510f, 0.451f, 1.0f};
+    static constexpr ImVec4 busy_state_colour{0.816f, 0.541f, 0.071f, 1.0f};
+    static constexpr ImVec4 ready_state_colour{0.165f, 0.439f, 0.690f, 1.0f};
+    static constexpr ImVec4 running_state_colour{0.184f, 0.561f, 0.275f, 1.0f};
     static constexpr ImVec4 failed_state_colour = FAILURE_COLOUR;
-    static constexpr ImVec4 text_on_state_colour{1.0f, 1.0f, 1.0f, 1.0f};
+    static constexpr ImVec4 text_on_state_colour{1.0f, 0.984f, 0.941f, 1.0f};
     static constexpr ImVec4 hovered_on_state_colour{1.0f, 1.0f, 1.0f, 0.35f};
     static constexpr ImVec4 block_colour = CARD_COLOUR;
     static constexpr ImVec4 block_border_colour = CARD_BORDER_COLOUR;
-    static constexpr ImVec4 block_separator_colour{0.90f, 0.90f, 0.92f, 1.0f};
+    static constexpr ImVec4 block_separator_colour{0.910f, 0.875f, 0.776f, 1.0f};
     static constexpr ImVec4 hovered_row_colour = HOVERED_CARD_COLOUR;
-    static constexpr ImVec4 pressed_row_colour{0.88f, 0.90f, 0.94f, 1.0f};
+    static constexpr ImVec4 pressed_row_colour{0.839f, 0.918f, 0.886f, 1.0f};
     static constexpr ImVec4 faint_colour = FAINT_TEXT_COLOUR;
-    static constexpr ImVec4 samples_colour{0.18f, 0.49f, 0.88f, 1.0f};
-    static constexpr ImVec4 events_colour{0.85f, 0.33f, 0.17f, 1.0f};
-    static constexpr ImVec4 state_colour{0.10f, 0.58f, 0.28f, 1.0f};
-    static constexpr ImVec4 any_kind_colour{0.40f, 0.40f, 0.40f, 1.0f};
-    static constexpr ImVec4 marked_port_colour{0.78f, 0.93f, 0.78f, 1.0f};
-    static constexpr ImVec4 drop_place_colour{0.10f, 0.58f, 0.28f, 1.0f};
+    static constexpr ImVec4 samples_colour{0.122f, 0.373f, 0.659f, 1.0f};
+    static constexpr ImVec4 events_colour{0.886f, 0.345f, 0.165f, 1.0f};
+    static constexpr ImVec4 state_colour{0.302f, 0.604f, 0.231f, 1.0f};
+    static constexpr ImVec4 any_kind_colour{0.420f, 0.392f, 0.353f, 1.0f};
+    static constexpr ImVec4 marked_port_colour{0.804f, 0.922f, 0.753f, 1.0f};
+    static constexpr ImVec4 drop_place_colour{0.180f, 0.545f, 0.239f, 1.0f};
     static constexpr ImVec4 selected_block_colour = SELECTED_COLOUR;
     static constexpr ImVec4 input_colour = INPUT_COLOUR;
     static constexpr ImVec4 input_hovered_colour = HOVERED_INPUT_COLOUR;
@@ -528,6 +530,7 @@ private:
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
         ImGui::BeginChild("TopBar", size,
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        paint_window_as_panel(PANEL_COLOUR);
         ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
@@ -535,7 +538,7 @@ private:
         const bool is_compiling = state.build == BuildState::Running;
         // Leaving ends this designer, which would wait for a compilation or a run to end.
         ImGui::BeginDisabled(is_compiling || is_running);
-        if (ImGui::Button("Pipelines")) {
+        if (instrument_key("Pipelines")) {
             is_leaving_asked_ = true;
         }
         ImGui::EndDisabled();
@@ -561,13 +564,13 @@ private:
         const bool is_run_button_usable = is_running ? state.run != RunState::Stopping
                                                      : (state.is_compiled_current && !is_compiling);
         ImGui::BeginDisabled(!is_run_button_usable);
-        const bool is_run_button_clicked = ImGui::Button(run_label);
+        const bool is_run_button_clicked = instrument_key(run_label);
         ImGui::EndDisabled();
         name_last_item_for_ui_driver({"top_bar", "run"});
         ImGui::SameLine();
         // A compilation would replace the executable under the run that uses it.
         ImGui::BeginDisabled(is_compiling || is_running);
-        const bool is_compile_asked_for = ImGui::Button(compile_label);
+        const bool is_compile_asked_for = instrument_key(compile_label);
         ImGui::EndDisabled();
         name_last_item_for_ui_driver({"top_bar", "compile"});
         ImGui::PopStyleColor(3);
@@ -598,6 +601,7 @@ private:
     struct BarState {
         const char* text = "";
         ImVec4 colour;
+        bool is_lamp_lit = true;
     };
 
     // A run that is on comes first, then a compilation that is on, then the failure of the last
@@ -630,15 +634,31 @@ private:
         }
         return state.is_compiled_current
                    ? BarState{.text = "Compiled", .colour = ready_state_colour}
-                   : BarState{.text = "Not compiled yet", .colour = idle_state_colour};
+                   : BarState{
+                         .text = "Not compiled yet",
+                         .colour = idle_state_colour,
+                         .is_lamp_lit = false,
+                     };
+    }
+
+    // A status lamp in the colour of the pipeline's state, lit for any state but the one before a
+    // compilation.
+    static void render_state_lamp(const BarState& bar_state) {
+        constexpr float lamp_radius_share = 0.22f;
+        const float frame_height = ImGui::GetFrameHeight();
+        ImGui::Dummy(ImVec2(frame_height, frame_height));
+        const ImVec2 top_left = ImGui::GetItemRectMin();
+        const ImVec2 centre(top_left.x + (frame_height * 0.5f), top_left.y + (frame_height * 0.5f));
+        draw_status_lamp(ImGui::GetWindowDrawList(), centre, frame_height * lamp_radius_share,
+                         bar_state.colour, bar_state.is_lamp_lit);
     }
 
     // The bar at the bottom of the window: a warning with the number of problems, which opens
     // and closes the Problems panel, and how the last compilation went, in that state's colour.
     void render_bottom_bar(const PipelineState& state, ImVec2 size) {
         const BarState bar_state = bar_state_of(state);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bar_state.colour);
-        ImGui::PushStyleColor(ImGuiCol_Text, text_on_state_colour);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, PANEL_COLOUR);
+        ImGui::PushStyleColor(ImGuiCol_Text, TEXT_COLOUR);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hovered_on_state_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, hovered_on_state_colour);
@@ -647,6 +667,7 @@ private:
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
         ImGui::BeginChild("BottomBar", size,
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        paint_window_as_panel(PANEL_COLOUR);
         render_problems_toggle();
         ImGui::SameLine();
         if (ImGui::Button("Log")) {
@@ -654,6 +675,8 @@ private:
         }
         name_last_item_for_ui_driver({"bottom_bar", "log"});
         render_item_tooltip("Show or hide what the running pipeline writes.");
+        ImGui::SameLine();
+        render_state_lamp(bar_state);
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(bar_state.text);
@@ -842,7 +865,7 @@ private:
         ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
-        if (ImGui::SmallButton(is_raw_output_shown_ ? "Show the list" : "Show the raw output")) {
+        if (instrument_small_key(is_raw_output_shown_ ? "Show the list" : "Show the raw output")) {
             is_raw_output_shown_ = !is_raw_output_shown_;
         }
         ImGui::PopStyleColor(3);
@@ -873,6 +896,7 @@ private:
                                           ImGuiChildFlags_AlwaysUseWindowPadding |
                                           ImGuiChildFlags_AutoResizeY;
         // NOLINTEND(bugprone-signed-bitwise)
+        begin_shadow_under_next_child();
         ImGui::BeginChild("Problem", ImVec2(0.0f, 0.0f), box_flags);
         ImGui::TextColored(failed_state_colour, "%s", icon("alert-fill"));
         ImGui::SameLine();
@@ -895,6 +919,7 @@ private:
             render_faint_wrapped(problem.place.c_str());
         }
         ImGui::EndChild();
+        end_shadow_under_last_child(block_rounding);
         name_last_item_for_ui_driver({"problems_panel", "problem", std::to_string(problem_index)});
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(2);
@@ -1315,6 +1340,7 @@ private:
                                             ImGuiChildFlags_AlwaysUseWindowPadding |
                                             ImGuiChildFlags_AutoResizeY;
         // NOLINTEND(bugprone-signed-bitwise)
+        begin_shadow_under_next_child();
         ImGui::BeginChild("Processor", ImVec2(block_width, 0.0f), block_flags);
         if (has_port(*processor.type, PortDirection::Input)) {
             render_ports(processor, PortDirection::Input);
@@ -1328,6 +1354,7 @@ private:
             render_ports(processor, PortDirection::Output);
         }
         ImGui::EndChild();
+        end_shadow_under_last_child(block_rounding);
         block_rectangles_.push_back({
             .processor = processor.id,
             .top_left = ImGui::GetItemRectMin(),
@@ -1618,7 +1645,7 @@ private:
                 name_last_item_for_ui_driver({"options_panel", "output_name_shared", port.name});
             }
             if (graph_.name_of_output(output) != graph_.own_name_of_output(output)) {
-                const bool is_own_name_asked_for = ImGui::SmallButton("Put its own name back");
+                const bool is_own_name_asked_for = instrument_small_key("Put its own name back");
                 name_last_item_for_ui_driver({"options_panel", "own_output_name", port.name});
                 if (is_own_name_asked_for) {
                     graph_.rename_output(output, graph_.own_name_of_output(output));
@@ -1644,6 +1671,7 @@ private:
         };
         ImGui::InputText(label, text.data(), text.capacity() + 1,
                          ImGuiInputTextFlags_CallbackResize, grow_buffer, &text);
+        draw_last_item_as_sunken();
     }
 
     // The number that a text is, or none when the text is anything but one plain number.
@@ -1690,7 +1718,9 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_active_colour);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
-        if (ImGui::BeginCombo("##value", shown_choice(value).c_str())) {
+        const bool is_list_open = ImGui::BeginCombo("##value", shown_choice(value).c_str());
+        draw_last_item_as_sunken();
+        if (is_list_open) {
             for (const char* choice : option.choices) {
                 const std::string choice_shown = shown_choice(choice);
                 if (ImGui::Selectable(choice_shown.c_str(), value == choice)) {
@@ -1759,10 +1789,12 @@ private:
         };
         // ImGui's flags are signed ints by its API
         // NOLINTNEXTLINE(bugprone-signed-bitwise)
-        return ImGui::InputText(
+        const bool is_changed = ImGui::InputText(
             label, text.data(), text.capacity() + 1,
             ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackCharFilter, callback,
             &field);
+        draw_last_item_as_sunken();
+        return is_changed;
     }
 
     // A box for one plain number, with two buttons at its right that step it by one. It takes
@@ -1785,20 +1817,16 @@ private:
                 value = std::format("{}", *typed_number);
             }
         }
-        ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
         ImGui::SameLine(0.0f, gap);
-        if (ImGui::Button("-", ImVec2(button_size, button_size)) &&
+        if (instrument_key("-", ImVec2(button_size, button_size)) &&
             number > std::numeric_limits<Number>::lowest()) {
             value = std::format("{}", number - Number{1});
         }
         ImGui::SameLine(0.0f, gap);
-        if (ImGui::Button("+", ImVec2(button_size, button_size)) &&
+        if (instrument_key("+", ImVec2(button_size, button_size)) &&
             number < std::numeric_limits<Number>::max()) {
             value = std::format("{}", number + Number{1});
         }
-        ImGui::PopStyleColor(3);
         ImGui::EndGroup();
     }
 
@@ -1898,7 +1926,7 @@ private:
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
         if (!is_default_value(option, value)) {
-            const bool is_default_asked_for = ImGui::SmallButton("Put the default back");
+            const bool is_default_asked_for = instrument_small_key("Put the default back");
             name_last_item_for_ui_driver({"options_panel", "default", option.name});
             if (is_default_asked_for) {
                 value = option.default_value;

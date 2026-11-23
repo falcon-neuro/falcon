@@ -16,6 +16,7 @@
 #include "../common/colours.cpp"
 #include "../common/fonts.cpp"
 #include "../common/icons.cpp"
+#include "../common/instrument.cpp"
 #include "../pipeline_designer/designer_state_json.cpp"
 #include "../pipeline_designer/opened_pipeline.cpp"
 #include "../pipeline_designer/pipeline_reader.cpp"
@@ -375,7 +376,7 @@ private:
         ImGui::SetCursorPos(
             ImVec2(screen_top_left.x + screen_size.x - side_margin - button_width_of(label.c_str()),
                    screen_top_left.y + screen_size.y - side_margin - ImGui::GetFrameHeight()));
-        if (ImGui::Button(label.c_str())) {
+        if (instrument_key(label.c_str())) {
             is_trash_shown_ = true;
             folder_problem_.clear();
             close_rename();
@@ -423,7 +424,7 @@ private:
                                                  .is_to_focus = false,
                                              });
         ImGui::SameLine();
-        const bool is_clicked = ImGui::Button(create_label);
+        const bool is_clicked = instrument_key(create_label);
         name_last_item_for_ui_driver({"explorer", "create"});
         if (new_pipeline_.is_touched()) {
             const FolderLineOutcome folder_line = render_folder_line(
@@ -492,11 +493,11 @@ private:
         is_renamed_name_to_focus_ = false;
         ImGui::SameLine();
         ImGui::BeginDisabled(!is_list_current());
-        const bool is_rename_clicked = ImGui::Button(rename_label);
+        const bool is_rename_clicked = instrument_key(rename_label);
         name_last_item_for_ui_driver({"explorer", "rename_apply"});
         ImGui::EndDisabled();
         ImGui::SameLine();
-        const bool is_cancel_clicked = ImGui::Button(cancel_label);
+        const bool is_cancel_clicked = instrument_key(cancel_label);
         name_last_item_for_ui_driver({"explorer", "rename_cancel"});
         const FolderLineOutcome folder_line =
             render_folder_line(renamed_, {
@@ -613,7 +614,7 @@ private:
         ImGui::TextColored(FAINT_TEXT_COLOUR,
                            "Deleted pipelines stay here until they are deleted for good.");
         ImGui::Dummy(ImVec2(0.0f, gap_between_parts));
-        if (ImGui::Button("Pipelines")) {
+        if (instrument_key("Pipelines")) {
             is_trash_shown_ = false;
             asked_to_delete_.clear();
             folder_problem_.clear();
@@ -643,10 +644,10 @@ private:
         move_to_right_end(button_width_of(restore_label) + ImGui::GetStyle().ItemSpacing.x +
                           button_width_of(delete_label));
         ImGui::BeginDisabled(!is_list_current());
-        const bool is_restore_clicked = ImGui::SmallButton(restore_label);
+        const bool is_restore_clicked = instrument_small_key(restore_label);
         name_last_item_for_ui_driver({"trash", "restore", trashed.trash_name});
         ImGui::SameLine();
-        if (ImGui::SmallButton(delete_label)) {
+        if (instrument_small_key(delete_label)) {
             asked_to_delete_ = trashed.trash_name;
         }
         name_last_item_for_ui_driver({"trash", "delete", trashed.trash_name});
@@ -676,11 +677,11 @@ private:
             move_to_right_end(button_width_of(confirm_label) + ImGui::GetStyle().ItemSpacing.x +
                               button_width_of(keep_label));
             ImGui::BeginDisabled(!is_list_current());
-            is_delete_confirmed = ImGui::SmallButton(confirm_label);
+            is_delete_confirmed = instrument_small_key(confirm_label);
             name_last_item_for_ui_driver({"trash", "confirm", trashed.trash_name});
             ImGui::EndDisabled();
             ImGui::SameLine();
-            if (ImGui::SmallButton(keep_label)) {
+            if (instrument_small_key(keep_label)) {
                 asked_to_delete_.clear();
             }
             name_last_item_for_ui_driver({"trash", "keep", trashed.trash_name});

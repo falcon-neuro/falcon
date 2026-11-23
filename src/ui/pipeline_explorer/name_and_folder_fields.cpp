@@ -9,6 +9,7 @@
 #include <utility>
 #include "../common/colours.cpp"
 #include "../common/icons.cpp"
+#include "../common/instrument.cpp"
 #include "../pipeline_designer/pipeline_writer.cpp"
 #include "../pipeline_designer/tooltip.cpp"
 #include "../ui_driver/ui_driver_targets.cpp"
@@ -157,6 +158,7 @@ struct NameFieldLook {
     const bool is_entered =
         ImGui::InputTextWithHint("##name", look.hint, typed.name.data(), typed.name.size(),
                                  ImGuiInputTextFlags_EnterReturnsTrue);
+    draw_last_item_as_sunken();
     name_last_item_for_ui_driver({"explorer", look.target});
     typed.follow_name();
     return is_entered;
@@ -222,6 +224,7 @@ struct FolderLineOutcome {
         "##folder", "folder", typed.folder_name.data(), typed.folder_name.size(),
         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCharFilter,
         take_folder_characters_only);
+    draw_last_item_as_sunken();
     // An emptied field follows the name again.
     if (ImGui::IsItemEdited()) {
         typed.is_folder_name_own = typed.folder_name.front() != '\0';

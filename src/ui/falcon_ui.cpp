@@ -14,6 +14,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "common/colours.cpp"
 #include "main_window/main_window.cpp"
 #include "ui_driver/ui_driver.cpp"
 
@@ -152,10 +153,19 @@ private:
         style.WindowRounding = 0.0f;
         style.WindowBorderSize = 0.0f;
         style.ChildBorderSize = 0.0f;
-        style.PopupBorderSize = 0.0f;
+        // A tooltip takes the rounding of a window and the border of a popup.
+        style.WindowRounding = CARD_ROUNDING;
+        style.PopupBorderSize = 1.0f;
         style.FrameBorderSize = 0.0f;
+        style.FrameRounding = FRAME_ROUNDING;
+        style.GrabRounding = FRAME_ROUNDING;
+        style.ScrollbarRounding = FRAME_ROUNDING;
+        style.PopupRounding = CARD_ROUNDING;
+        style.FramePadding = ImVec2(10.0f, 5.0f);
         style.WindowPadding = ImVec2(0.0f, 0.0f);
-        style.Colors[ImGuiCol_Text] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+        style.Colors[ImGuiCol_Text] = TEXT_COLOUR;
+        style.Colors[ImGuiCol_Border] = CARD_BORDER_COLOUR;
+        style.Colors[ImGuiCol_InputTextCursor] = TEXT_COLOUR;
 
         if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
             return false;
@@ -226,7 +236,7 @@ public:
                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
             // NOLINTEND(bugprone-signed-bitwise)
 
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImColor(0xffffffff).Value);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, WINDOW_COLOUR);
             ImGui::Begin("Falcon", nullptr, window_flags);
 
             main_window_.render();
@@ -237,7 +247,7 @@ public:
 
             ImGui::Render();
 
-            glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+            glClearColor(WINDOW_COLOUR.x, WINDOW_COLOUR.y, WINDOW_COLOUR.z, WINDOW_COLOUR.w);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

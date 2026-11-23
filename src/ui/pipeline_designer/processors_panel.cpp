@@ -73,9 +73,9 @@ public:
     }
 
 private:
-    static constexpr ImVec4 faint_colour{0.45f, 0.45f, 0.45f, 1.0f};
-    static constexpr ImVec4 hovered_row_colour{0.93f, 0.94f, 0.96f, 1.0f};
-    static constexpr ImVec4 pressed_row_colour{0.88f, 0.90f, 0.94f, 1.0f};
+    static constexpr ImVec4 faint_colour{0.431f, 0.396f, 0.341f, 1.0f};
+    static constexpr ImVec4 hovered_row_colour{0.902f, 0.957f, 0.937f, 1.0f};
+    static constexpr ImVec4 pressed_row_colour{0.839f, 0.918f, 0.886f, 1.0f};
     static constexpr float row_rounding = 6.0f;
 
     // The processors of one kind under its title, or nothing when Falcon has none of that kind.
