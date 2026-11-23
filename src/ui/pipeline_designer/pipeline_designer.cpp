@@ -1,6 +1,8 @@
 #pragma once
 #include <imgui.h>
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cfloat>
 #include <charconv>
 #include <cmath>
@@ -10,9 +12,11 @@
 #include <deque>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -22,6 +26,7 @@
 #include <variant>
 #include <vector>
 #include "../common/colours.cpp"
+#include "../common/crosshair_cursor.cpp"
 #include "../common/fonts.cpp"
 #include "../common/icons.cpp"
 #include "../common/remembered_values.cpp"
@@ -164,18 +169,29 @@ public:
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_HorizontalScrollbar);
         render_isolation_note();
+        ImGui::SameLine();
+        render_ports_toggle();
+        ImGui::Spacing();
         core_under_drag_ = core_under_dragged_processor();
+        processor_showing_ports_ = processor_to_show_ports();
+        is_connection_being_drawn_ = is_port_picked();
         core_rectangles_.clear();
         block_rectangles_.clear();
         is_mouse_over_picked_or_fitting_port_ = false;
+        processor_under_mouse_.reset();
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             leave_on_escape();
+        }
+        hops_ = hops_of_graph();
+        if (!hops_.empty() || is_connection_being_drawn_) {
+            ImGui::Dummy(ImVec2(0.0f, height_of_hop_strip()));
         }
         for (const int core_number : shown_core_numbers()) {
             render_core(core_number);
             ImGui::SameLine(0.0f, padding);
         }
         forget_picked_port_on_click_elsewhere();
+        render_ring_buttons();
         render_connections();
         scroll_while_dragging_at_an_edge();
         ImGui::EndChild();
@@ -228,7 +244,39 @@ private:
     static constexpr float padding = 10.0f;
     static constexpr float bar_vertical_padding = 3.0f;
     static constexpr float block_width = 220.0f;
+    static constexpr ImVec2 block_padding{12.0f, 10.0f};
+    // A port's line stands where its name ends, and two lines of one edge at least this far
+    // apart.
+    static constexpr float gap_after_port_name = 6.0f;
+    static constexpr float gap_between_port_lines = 14.0f;
+    // The circle at each end of a connection.
+    static constexpr float terminal_radius = 4.0f;
     static constexpr float gap_between_rows = 40.0f;
+    // A connection between two cores leaves its core by the top and reaches the other by the top.
+    // Inside a box its line runs along a wall, in a lane of its own and clear of the blocks; above
+    // the boxes it runs at a level of its own. Between the boxes it is a tube, the wider the more
+    // slots its ring has: from the thinnest for a ring of one slot to three times that for the
+    // largest ring the slider offers, so that a large ring is told from a small one at a glance.
+    // A lane and a level are as wide as their tube and the room beside it.
+    static constexpr float thinnest_tube = 6.0f;
+    static constexpr float thickest_tube_in_thinnest = 3.0f;
+    static constexpr float room_beside_tube = 6.0f;
+    static constexpr float gap_from_wall_to_hop_lanes = 4.0f;
+    static constexpr float gap_from_hop_lanes_to_blocks = 6.0f;
+    // How far under its output, and over its input, a hop's line turns towards its lane: the
+    // line of the first lane, and each further lane's by a step more, so that no two lines of
+    // one core turn at one height and lie on each other.
+    static constexpr float hop_turn_from_port = 4.0f;
+    static constexpr float step_between_hop_turns = 3.0f;
+    // A ring is a pill above its reading core's box, on its line: a ring icon and its number of
+    // slots. The rings into one core stand one above the other, each in a row of its own, since
+    // their lanes are closer than a pill is wide.
+    static constexpr float ring_pill_height = 18.0f;
+    static constexpr float gap_between_ring_pills = 4.0f;
+    static constexpr float gap_from_ring_pills_to_box = 6.0f;
+    // The engine takes a ring whose number of slots is a power of two, and no other. The slider
+    // offers those from 1 to 16384.
+    static constexpr int highest_power_of_two_of_ring_slots = 14;
     static constexpr float core_rounding = 12.0f;
     static constexpr float block_rounding = CARD_ROUNDING;
     static constexpr ImVec4 core_colour{0.949f, 0.949f, 0.953f, 1.0f};
@@ -277,6 +325,26 @@ private:
         int core_number = 0;
         ImVec2 top_left;
         ImVec2 bottom_right;
+    };
+
+    // Which of the ways kept for hops one hop takes, each counted from 0.
+    struct HopLanes {
+        int leaving = 0;   // up the right wall of the writing core's box, from the wall inward
+        int arriving = 0;  // down the left wall of the reading core's box, from the wall inward
+        int level = 0;     // above the boxes, from the boxes upward
+    };
+
+    // What crosses from one core to another: an output, and a core that reads it. Every
+    // connection from that output into that core goes this way, through one ring; a state value
+    // crosses without a ring. Each hop has a line of its own all the way, two hops of one output
+    // too, so that two rings are never reached by one line.
+    struct Hop {
+        OutputReference output;
+        int writer_core = 0;
+        int reader_core = 0;
+        PortKind kind = PortKind::Any;
+        std::vector<InputReference> inputs;
+        HopLanes lanes;
     };
 
     PipelineGraph graph_;
@@ -329,6 +397,8 @@ private:
     // port of the other direction.
     std::variant<std::monostate, OutputReference, InputReference> picked_port_;
     std::vector<BlockRectangle> block_rectangles_;
+    // What crosses between cores in this frame.
+    std::vector<Hop> hops_;
     // The processor whose remove icon was clicked in this frame, if any.
     std::optional<ProcessorId> processor_to_remove_;
     // The processor whose block was clicked last, whose options the panel at the right edits.
@@ -336,6 +406,15 @@ private:
     // Whether, in this frame, the mouse is over the picked port or over one that fits it: the
     // ports whose row handles a click itself while a port is picked.
     bool is_mouse_over_picked_or_fitting_port_ = false;
+    // The processor over whose block the mouse is in this frame, if any.
+    std::optional<ProcessorId> processor_under_mouse_;
+    // The processor whose block shows its ports in this frame, unless every block does.
+    std::optional<ProcessorId> processor_showing_ports_;
+    // Whether a port was picked when this frame began. Every block shows its ports until the
+    // connection is made or let go, so that its start stays in sight and its end can be chosen.
+    bool is_connection_being_drawn_ = false;
+    // Whether every block shows its ports, which the user switches above the cores.
+    bool are_all_ports_shown_ = false;
 
     [[nodiscard]] bool is_port_picked() const {
         return !std::holds_alternative<std::monostate>(picked_port_);
@@ -999,31 +1078,62 @@ private:
         }
     }
 
-    // One line above the cores saying which are isolated, with the others named in its tooltip.
+    // One line above the cores saying which are isolated, with the others named behind its info
+    // icon.
     void render_isolation_note() const {
         const std::vector<int> isolated = cpu_cores_.isolated();
         const std::vector<int> not_isolated = cpu_cores_.not_isolated();
         if (isolated.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, warning_colour);
-            ImGui::TextUnformatted("No core of this machine is isolated (i)");
+            ImGui::TextUnformatted("No core of this machine is isolated");
             ImGui::PopStyleColor();
-            render_item_tooltip(
-                "The OS and its interrupts can run on every core, so a processor can be held up "
-                "at any moment and its latency isn't dependable. Falcon needs cores isolated from "
-                "the OS, which is set where the machine is started (isolcpus).");
+            render_info_icon(
+                "The operating system runs on every core of this machine. It can pause a "
+                "processor at any moment, so Falcon's timing can't be trusted.\n\n"
+                "Cores are kept free for Falcon with the isolcpus boot option, set when the "
+                "machine starts.");
         } else {
-            const std::string note =
-                std::format("Isolated cores: {} (i)", core_list_text(isolated));
+            const std::string note = std::format("Isolated cores: {}", core_list_text(isolated));
             ImGui::TextUnformatted(note.c_str());
+            const std::string about_other_cores =
+                not_isolated.empty()
+                    ? "Every core of this machine is isolated."
+                    : std::format(
+                          "The operating system runs on the other cores ({}). It can "
+                          "pause a processor there at any moment.\n\n"
+                          "Everything that must be fast belongs on an isolated core. "
+                          "Slow work, like a recorder, can go on the others.",
+                          core_list_text(not_isolated));
             const std::string explanation = std::format(
-                "These cores are kept free of the OS, so a processor on them isn't held up. "
-                "Not isolated: {}. The OS and its interrupts run there, so don't put a realtime "
-                "processor on them. A processor that isn't realtime, such as a recorder, is fine "
-                "there.",
-                not_isolated.empty() ? "none" : core_list_text(not_isolated));
-            render_item_tooltip(explanation.c_str());
+                "The operating system stays off these cores, so a processor on them "
+                "runs without being paused.\n\n{}",
+                about_other_cores);
+            render_info_icon(explanation.c_str());
         }
-        ImGui::Spacing();
+    }
+
+    // The button beside that line which switches between the two ways a block shows its ports.
+    void render_ports_toggle() {
+        ImGui::PushStyleColor(ImGuiCol_Button, input_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, input_hovered_colour);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, input_active_colour);
+        if (ImGui::SmallButton(are_all_ports_shown_ ? "Hide ports" : "Show ports")) {
+            are_all_ports_shown_ = !are_all_ports_shown_;
+        }
+        ImGui::PopStyleColor(3);
+        name_last_item_for_ui_driver({"ports_toggle"});
+        render_item_tooltip(are_all_ports_shown_
+                                ? "Show a block's ports only while the mouse is over it."
+                                : "Show the ports of every block.");
+    }
+
+    [[nodiscard]] static ScreenRectangle rectangle_of_this_window() {
+        const ImVec2 top_left = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        return {
+            .top_left = top_left,
+            .bottom_right = ImVec2(top_left.x + size.x, top_left.y + size.y),
+        };
     }
 
     // Called inside the cores' area. While a processor is dragged, the area scrolls sideways when
@@ -1048,25 +1158,38 @@ private:
         }
     }
 
-    // A core's box is as wide as its rows of processors need, at least one block wide, and as
-    // tall as what it holds.
+    // A core's box is as wide as its rows of processors and the lanes of its hops need, at least
+    // one block wide, and as tall as what it holds.
     void render_core(int core_number) {
         const bool is_isolated = cpu_cores_.is_isolated(core_number);
         const CoreLayout layout = layout_of_core(graph_, core_number);
-        const float box_width =
-            (std::max(1.0f, layout.width_in_blocks) * (block_width + padding)) + padding;
+        const float arriving_lanes_width = width_of_hop_lanes(room_of_arriving_lanes(core_number));
+        const float box_width = (std::max(1.0f, layout.width_in_blocks) * (block_width + padding)) +
+                                padding + arriving_lanes_width +
+                                width_of_hop_lanes(room_of_leaving_lanes(core_number));
 
         ImGui::PushID(core_number);
         ImGui::PushStyleColor(ImGuiCol_ChildBg,
                               is_isolated ? core_colour : not_isolated_core_colour);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, core_rounding);
+        // A box whose height isn't reckoned sizes itself, by what it held a frame before.
+        const std::optional<float> box_height = height_of_core_box(layout);
         // ImGui's flags are signed ints by its API
         // NOLINTBEGIN(bugprone-signed-bitwise)
-        const ImGuiChildFlags box_flags = ImGuiChildFlags_Borders |
-                                          ImGuiChildFlags_AlwaysUseWindowPadding |
-                                          ImGuiChildFlags_AutoResizeY;
+        ImGuiChildFlags box_flags =
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding;
+        if (!box_height.has_value()) {
+            box_flags |= ImGuiChildFlags_AutoResizeY;
+        }
+        const ImGuiWindowFlags box_window_flags =
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         // NOLINTEND(bugprone-signed-bitwise)
-        ImGui::BeginChild("Core", ImVec2(box_width, 0.0f), box_flags);
+        ImGui::BeginChild("Core", ImVec2(box_width, box_height.value_or(0.0f)), box_flags,
+                          box_window_flags);
+        // The lanes of the lines that arrive lie along the left wall, left of all the box holds.
+        if (arriving_lanes_width > 0.0f) {
+            ImGui::Indent(arriving_lanes_width);
+        }
         const std::string title = std::format("Core {}", core_number);
         push_bold_font();
         ImGui::TextUnformatted(title.c_str());
@@ -1074,12 +1197,13 @@ private:
         if (!is_isolated) {
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, warning_colour);
-            ImGui::TextUnformatted("not isolated (i)");
+            ImGui::TextUnformatted("not isolated");
             ImGui::PopStyleColor();
-            render_item_tooltip(
-                "The OS and its interrupts run on this core, so a processor here can be held up "
-                "at any moment. Keep realtime processors on isolated cores. A processor that "
-                "isn't realtime, such as a recorder, is fine here.");
+            render_info_icon(
+                "The operating system also runs on this core. It can pause a processor here at "
+                "any moment.\n\n"
+                "Everything that must be fast belongs on an isolated core. Slow work, like a "
+                "recorder, is fine here.");
         }
         ImGui::Spacing();
         ImGui::Spacing();
@@ -1097,6 +1221,38 @@ private:
         accept_dropped_processor(
             {.core_number = core_number, .next_processor = next_processor_at_drop});
         ImGui::PopID();
+    }
+
+    // The height of a core's box that holds processors, reckoned for the reason given at
+    // height_of_block: a block that shows or hides its ports moves the blocks under it, and a box
+    // sized a frame late would cut the lowest of them off meanwhile. It follows what render_core
+    // and render_rows draw: the title, two spacings, and the rows with a gap between two.
+    [[nodiscard]] std::optional<float> height_of_core_box(const CoreLayout& layout) const {
+        if (layout.rows.empty()) {
+            return std::nullopt;
+        }
+        constexpr float spacings_under_title = 3.0f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        float height =
+            (2.0f * padding) + ImGui::GetTextLineHeight() + (spacings_under_title * spacing);
+        bool is_top_row = true;
+        for (const std::vector<PlacedProcessor>& row : layout.rows) {
+            if (!is_top_row) {
+                height += gap_between_rows + (2.0f * spacing);
+            }
+            is_top_row = false;
+            float tallest_block = 0.0f;
+            for (const PlacedProcessor& placed : row) {
+                const GraphProcessor* processor = graph_.find_processor(placed.processor);
+                if (processor != nullptr) {
+                    tallest_block =
+                        std::max(tallest_block,
+                                 height_of_block(*processor, are_ports_shown_of(placed.processor)));
+                }
+            }
+            height += tallest_block;
+        }
+        return height;
     }
 
     // Called inside a core's box: its rows of blocks from top to bottom and, while a processor is
@@ -1290,41 +1446,61 @@ private:
         }
     }
 
-    // A block: its inputs on top, its name and type, its outputs at the bottom, as data flows.
+    // How a block's border is drawn, which says whether the block is selected or has a problem.
+    struct BlockBorder {
+        ImVec4 colour;
+        float thickness = 1.0f;
+    };
+
+    [[nodiscard]] BlockBorder border_of_block(const GraphProcessor& processor) const {
+        constexpr float plain_thickness = 1.0f;
+        constexpr float marked_thickness = 2.0f;
+        if (has_problem(processor)) {
+            return {.colour = problem_border_colour(), .thickness = marked_thickness};
+        }
+        if (selected_processor_ == processor.id) {
+            return {.colour = selected_block_colour, .thickness = marked_thickness};
+        }
+        return {.colour = block_border_colour, .thickness = plain_thickness};
+    }
+
+    // A block: its type and its name and, while it shows its ports, a row for each, the inputs
+    // on top and the outputs at the bottom, as data flows. It shows them while the mouse is over
+    // it, or while every block does. A block that grows by its rows moves the blocks under it,
+    // so the gap between two blocks stays what it is.
     void render_block(const GraphProcessor& processor) {
-        constexpr float border_thickness = 1.0f;
-        constexpr float selected_border_thickness = 2.0f;
-        const bool is_selected = selected_processor_ == processor.id;
+        const BlockBorder border = border_of_block(processor);
         ImGui::PushID(static_cast<int>(processor.id));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, block_colour);
-        const bool is_marked = has_problem(processor);
-        ImVec4 border_colour = is_selected ? selected_block_colour : block_border_colour;
-        if (is_marked) {
-            border_colour = problem_border_colour();
-        }
-        ImGui::PushStyleColor(ImGuiCol_Border, border_colour);
+        ImGui::PushStyleColor(ImGuiCol_Border, border.colour);
         ImGui::PushStyleColor(ImGuiCol_Separator, block_separator_colour);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, block_padding);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, block_rounding);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, is_selected || is_marked
-                                                               ? selected_border_thickness
-                                                               : border_thickness);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, border.thickness);
+        const bool has_rows = are_ports_shown_of(processor.id);
         // ImGui's flags are signed ints by its API
         // NOLINTBEGIN(bugprone-signed-bitwise)
-        const ImGuiChildFlags block_flags = ImGuiChildFlags_Borders |
-                                            ImGuiChildFlags_AlwaysUseWindowPadding |
-                                            ImGuiChildFlags_AutoResizeY;
+        const ImGuiChildFlags block_flags =
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding;
+        const ImGuiWindowFlags block_window_flags =
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         // NOLINTEND(bugprone-signed-bitwise)
-        ImGui::BeginChild("Processor", ImVec2(block_width, 0.0f), block_flags);
-        if (has_port(*processor.type, PortDirection::Input)) {
-            render_ports(processor, PortDirection::Input);
+        ImGui::BeginChild("Processor", ImVec2(block_width, height_of_block(processor, has_rows)),
+                          block_flags, block_window_flags);
+        // Also while something else is held by the mouse or typed in, e.g. an option's field.
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+            processor_under_mouse_ = processor.id;
+        }
+        const ScreenRectangle block = rectangle_of_this_window();
+        if (has_rows && has_port(*processor.type, PortDirection::Input)) {
+            render_ports(processor, PortDirection::Input, block);
             ImGui::Separator();
         }
         render_block_handle(processor);
         render_block_stream(processor);
-        if (has_port(*processor.type, PortDirection::Output)) {
+        if (has_rows && has_port(*processor.type, PortDirection::Output)) {
             ImGui::Separator();
-            render_ports(processor, PortDirection::Output);
+            render_ports(processor, PortDirection::Output, block);
         }
         ImGui::EndChild();
         block_rectangles_.push_back({
@@ -1336,6 +1512,30 @@ private:
         ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(3);
         ImGui::PopID();
+    }
+
+    // A block's height, reckoned here and not left to ImGui, which sizes a window by what it
+    // held a frame before: a block that showed or hid its rows would be cut off, or too tall, for
+    // one frame. It follows what render_block draws: the type and the name, the line of the
+    // stream, and for the inputs and for the outputs their rows and a separator.
+    [[nodiscard]] static float height_of_block(const GraphProcessor& processor, bool has_rows) {
+        const float line_height = ImGui::GetTextLineHeight();
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        float height = (2.0f * block_padding.y) + (2.0f * line_height) + spacing;
+        if (processor.stream.has_value()) {
+            height += spacing + line_height;
+        }
+        if (!has_rows) {
+            return height;
+        }
+        for (const PortDirection direction : {PortDirection::Input, PortDirection::Output}) {
+            const auto row_count =
+                std::ranges::count(processor.type->ports, direction, &PortDescription::direction);
+            if (row_count > 0) {
+                height += (static_cast<float>(row_count) * (port_row_height() + spacing)) + spacing;
+            }
+        }
+        return height;
     }
 
     // The bold face of the text around it, or that text's own face when Falcon has no bold one.
@@ -1415,10 +1615,6 @@ private:
         if (ImGui::IsItemClicked()) {
             selected_processor_ = processor.id;
         }
-        render_item_tooltip(
-            "The stream this processor starts: how many channels it gives, and how many samples "
-            "of each a second. Every processor that takes its samples, directly or through "
-            "others, works with the same.");
     }
 
     // The text itself when it is no wider than max_width, or else its longest start that fits
@@ -1872,22 +2068,152 @@ private:
         });
     }
 
-    void render_ports(const GraphProcessor& processor, PortDirection direction) {
-        for (const PortDescription& port : processor.type->ports) {
-            if (port.direction != direction) {
-                continue;
-            }
-            if (direction == PortDirection::Output) {
-                render_output(processor, port);
-            } else {
-                render_input(processor, port);
+    // One row of a block's ports: the port, its name as the row shows it, and where its line
+    // stands, counted from the block's left edge.
+    struct PortRowPlace {
+        const PortDescription* port = nullptr;
+        std::string shown_name;
+        float name_width = 0.0f;
+        float line_x = 0.0f;
+    };
+
+    // The rows of a processor's inputs, or of its outputs, from top to bottom. A port's line
+    // leaves its row where its name ends and runs straight to the block's edge, past the rows
+    // between the two, which therefore hold the shorter names: the inputs, whose lines run up,
+    // stand with the shortest name on top, and the outputs, whose lines run down, with the
+    // shortest name at the bottom. Two lines keep a gap, so where two names are about as long,
+    // the line of the longer one, and its circle with it, stands further right than its name
+    // ends. A connection meets the block's edge at its port's line, whether the block shows its
+    // ports or not.
+    [[nodiscard]] static std::vector<PortRowPlace> rows_of_ports(const ProcessorDescription& type,
+                                                                 PortDirection direction) {
+        std::vector<PortRowPlace> rows;
+        for (const PortDescription& port : type.ports) {
+            if (port.direction == direction) {
+                PortRowPlace row;
+                row.port = &port;
+                rows.push_back(row);
             }
         }
+        if (rows.empty()) {
+            return rows;
+        }
+        const float room_for_lines = gap_after_port_name + (2.0f * terminal_radius) +
+                                     (static_cast<float>(rows.size() - 1) * gap_between_port_lines);
+        const float room_for_a_name = block_width - (2.0f * block_padding.x) - room_for_lines;
+        for (PortRowPlace& row : rows) {
+            row.shown_name = text_cut_to_width(row.port->name, room_for_a_name);
+            row.name_width = ImGui::CalcTextSize(row.shown_name.c_str()).x;
+        }
+        std::ranges::stable_sort(rows, std::ranges::less{}, &PortRowPlace::name_width);
+        std::optional<float> line_of_shorter_name;
+        for (PortRowPlace& row : rows) {
+            row.line_x = block_padding.x + row.name_width + gap_after_port_name + terminal_radius;
+            if (line_of_shorter_name.has_value()) {
+                row.line_x = std::max(row.line_x, *line_of_shorter_name + gap_between_port_lines);
+            }
+            line_of_shorter_name = row.line_x;
+        }
+        if (direction == PortDirection::Output) {
+            std::ranges::reverse(rows);
+        }
+        return rows;
+    }
+
+    [[nodiscard]] bool has_connection(ProcessorId processor_id, const PortDescription& port) const {
+        return std::ranges::any_of(graph_.connections, [processor_id,
+                                                        &port](const GraphConnection& connection) {
+            if (port.direction == PortDirection::Output) {
+                return connection.output.processor == processor_id &&
+                       connection.output.port == port.name;
+            }
+            return connection.input.processor == processor_id && connection.input.port == port.name;
+        });
+    }
+
+    // Where a port's line starts, at the port's circle, and its colour.
+    struct PortLineStart {
+        ImVec2 at_circle;
+        ImU32 colour = 0;
+    };
+
+    // What drawing a port's row gives: whether the row was clicked, and the start of its line.
+    struct PortRow {
+        bool is_clicked = false;
+        PortLineStart line_start;
+    };
+
+    // A port's line inside its block: from the port's circle straight to the edge.
+    struct PortPath {
+        PortLineStart start;
+        ImVec2 at_edge;
+        bool is_connected = false;
+    };
+
+    // Called inside a block: the rows of its processor's inputs, or of its outputs, each with its
+    // line to the block's edge.
+    void render_ports(const GraphProcessor& processor, PortDirection direction,
+                      const ScreenRectangle& block) {
+        const bool is_input = direction == PortDirection::Input;
+        std::vector<PortPath> paths;
+        for (const PortRowPlace& row : rows_of_ports(*processor.type, direction)) {
+            const bool is_connected = has_connection(processor.id, *row.port);
+            paths.push_back({
+                .start = is_input ? render_input(processor, row, is_connected)
+                                  : render_output(processor, row, is_connected),
+                .at_edge = ImVec2(block.top_left.x + row.line_x,
+                                  is_input ? block.top_left.y : block.bottom_right.y),
+                .is_connected = is_connected,
+            });
+        }
+        // Drawn once every row is: a row's highlight would cover the lines that pass through it.
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        for (const PortPath& path : paths) {
+            draw_port_path(draw_list, path);
+        }
+    }
+
+    // The circle of a port without a connection: every port has a circle, which is filled once
+    // the port is connected.
+    static void add_empty_terminal(ImDrawList* draw_list, ImVec2 centre, ImU32 colour) {
+        constexpr float ring_thickness = 1.5f;
+        constexpr float half = 0.5f;
+        draw_list->AddCircleFilled(centre, terminal_radius, ImGui::GetColorU32(block_colour));
+        draw_list->AddCircle(centre, terminal_radius - (ring_thickness * half), colour, 0,
+                             ring_thickness);
+    }
+
+    // The colour of what a port carries, fainter while the port has no connection.
+    [[nodiscard]] static ImVec4 line_colour_of_port(const PortDescription& port,
+                                                    bool is_connected) {
+        constexpr float faintness_without_connection = 0.55f;
+        ImVec4 colour = kind_colour(port.kind);
+        if (!is_connected) {
+            colour.w *= faintness_without_connection;
+        }
+        return colour;
+    }
+
+    // A port's line runs straight from its circle to the edge. That of a connected port is solid,
+    // as its connections' lines are, with a filled circle; that of a port without a connection
+    // is dashed, with an empty one.
+    static void draw_port_path(ImDrawList* draw_list, const PortPath& path) {
+        constexpr float thickness = 2.0f;
+        const ImVec2 circle = path.start.at_circle;
+        if (path.is_connected) {
+            draw_list->AddLine(circle, path.at_edge, path.start.colour, thickness);
+            draw_list->AddCircleFilled(circle, terminal_radius, path.start.colour);
+            return;
+        }
+        add_dashed_line(draw_list, circle, path.at_edge, path.start.colour);
+        add_empty_terminal(draw_list, circle, path.start.colour);
     }
 
     // A click picks the output as one end of a connection, and a second click lets it go. While a
     // port is picked, the outputs that fit it are marked and every other port can't be clicked.
-    void render_output(const GraphProcessor& processor, const PortDescription& port) {
+    PortLineStart render_output(const GraphProcessor& processor, const PortRowPlace& place,
+                                bool is_connected) {
+        const PortDescription& port = *place.port;
         const OutputReference output{.processor = processor.id, .port = port.name};
         const OutputReference* const picked = picked_output();
         const bool is_picked = picked != nullptr && *picked == output;
@@ -1903,15 +2229,13 @@ private:
                             : "An output connects to an input, not to another output.";
         }
         ImGui::BeginDisabled(is_greyed);
-        const bool is_clicked =
-            render_port_row(port, is_picked_or_fitting,
-                            rejection.empty() ? port_explanation(processor, port) : rejection);
+        const PortRow row = render_port_row(place, is_picked_or_fitting, rejection, is_connected);
         name_last_item_for_ui_driver({"port", processor.name, "output", port.name}, rejection);
         if (is_picked_or_fitting && ImGui::IsItemHovered()) {
             is_mouse_over_picked_or_fitting_port_ = true;
         }
         ImGui::EndDisabled();
-        if (is_clicked) {
+        if (row.is_clicked) {
             if (is_fitting) {
                 graph_.connect(output, *waiting_input);
                 forget_picked_port();
@@ -1921,11 +2245,14 @@ private:
                 picked_port_ = output;
             }
         }
+        return row.line_start;
     }
 
     // A click picks the input as one end of a connection, and a second click lets it go. While a
     // port is picked, the inputs that fit it are marked and every other port can't be clicked.
-    void render_input(const GraphProcessor& processor, const PortDescription& port) {
+    PortLineStart render_input(const GraphProcessor& processor, const PortRowPlace& place,
+                               bool is_connected) {
+        const PortDescription& port = *place.port;
         const InputReference input{.processor = processor.id, .port = port.name};
         const InputReference* const picked = picked_input();
         const bool is_picked = picked != nullptr && *picked == input;
@@ -1941,9 +2268,7 @@ private:
                             : "An input connects to an output, not to another input.";
         }
         ImGui::BeginDisabled(is_greyed);
-        const bool is_clicked =
-            render_port_row(port, is_picked_or_fitting,
-                            rejection.empty() ? port_explanation(processor, port) : rejection);
+        const PortRow row = render_port_row(place, is_picked_or_fitting, rejection, is_connected);
         name_last_item_for_ui_driver({"port", processor.name, "input", port.name}, rejection);
         if (is_picked_or_fitting && ImGui::IsItemHovered()) {
             is_mouse_over_picked_or_fitting_port_ = true;
@@ -1952,7 +2277,7 @@ private:
         const bool is_right_clicked =
             !is_port_picked() && ImGui::IsItemClicked(ImGuiMouseButton_Right);
         ImGui::EndDisabled();
-        if (is_clicked) {
+        if (row.is_clicked) {
             if (is_fitting) {
                 graph_.connect(*waiting_output, input);
                 forget_picked_port();
@@ -1965,6 +2290,7 @@ private:
         if (is_right_clicked) {
             graph_.disconnect(input);
         }
+        return row.line_start;
     }
 
     // Why an output and an input can't be connected, said of the one of the two that the mouse is
@@ -2051,50 +2377,16 @@ private:
         return text + " events";
     }
 
-    // What a port's tooltip says while the port can be clicked: what it is, its description, for
-    // a port of events the kinds it gives or takes, and for a samples port the stream it carries.
-    [[nodiscard]] std::string port_explanation(const GraphProcessor& processor,
-                                               const PortDescription& port) const {
-        std::string explanation =
-            std::format("{}: {}\n\n{}", port.name, port_summary(port), port.description);
-        const std::string_view event_kind = port.event_kind;
-        if (!event_kind.empty()) {
-            const auto* const kind = std::ranges::find_if(
-                ALL_EVENT_KINDS, [event_kind](const EventKindDescription& described) {
-                    return event_kind == described.name;
-                });
-            explanation += std::format("\n\nIt gives {} events. {}", event_kind,
-                                       kind == ALL_EVENT_KINDS.end() ? "" : kind->description);
-        }
-        if (port.direction == PortDirection::Input && !port.takes_event_kinds.empty()) {
-            explanation +=
-                std::format("\n\nIt takes {}.", event_kinds_text(port.takes_event_kinds));
-        }
-        if (port.stream == PortStream::None) {
-            return explanation;
-        }
-        const std::optional<GraphStream> stream =
-            port.direction == PortDirection::Output
-                ? graph_.stream_of_output({.processor = processor.id, .port = port.name})
-                : graph_.stream_taken_by(processor.id);
-        explanation += stream.has_value()
-                           ? std::format("\n\nIt carries {} channels at {} Hz.",
-                                         stream->channel_count, stream->rate)
-                           : "\n\nIts stream isn't known yet: no processor that starts one is "
-                             "connected before it.";
-        return explanation;
-    }
-
-    // A dot in the colour of what the port carries, then its name, with a tooltip. The dot and the
-    // name are one place to click. Returns whether it was clicked.
-    static bool render_port_row(const PortDescription& port, bool is_marked,
-                                const std::string& tooltip) {
-        constexpr float dot_radius_in_line_heights = 0.7f;
+    // A port's name. The whole row is one place to click, over which the mouse's cursor is a
+    // crosshair. Its only tooltip says why the port can't be clicked, while it can't: what a
+    // port is, the panel of processors explains. The port's line, which starts beside the name,
+    // is drawn by render_ports once every row is.
+    static PortRow render_port_row(const PortRowPlace& place, bool is_marked,
+                                   const std::string& why_not_clickable, bool is_connected) {
         constexpr float half = 0.5f;
-        constexpr float gap_after_dot = 8.0f;
+        const PortDescription& port = *place.port;
         const float line_height = ImGui::GetTextLineHeight();
-        const float dot_radius = line_height * dot_radius_in_line_heights;
-        const float row_height = dot_radius * 2.0f;
+        const float row_height = port_row_height();
         const ImVec2 row_top_left = ImGui::GetCursorScreenPos();
 
         ImGui::PushStyleColor(ImGuiCol_Header, marked_port_colour);
@@ -2107,56 +2399,630 @@ private:
         ImGui::PopID();
         ImGui::PopID();
         ImGui::PopStyleColor(3);
-        render_item_tooltip(tooltip.c_str());
+        if (!why_not_clickable.empty()) {
+            render_item_tooltip(why_not_clickable.c_str());
+        }
+        if (ImGui::IsItemHovered()) {
+            crosshair_cursor_request().ask();
+        }
 
-        // Drawn after the row so that they lie over its highlight.
-        constexpr float ring_thickness = 2.5f;
-        const ImVec2 dot_centre(row_top_left.x + dot_radius, row_top_left.y + dot_radius);
-        const float ring_radius = dot_radius - (ring_thickness * half);
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        draw_list->AddCircleFilled(dot_centre, ring_radius, ImGui::GetColorU32(block_colour));
-        draw_list->AddCircle(dot_centre, ring_radius, ImGui::GetColorU32(kind_colour(port.kind)), 0,
-                             ring_thickness);
+        // Drawn after the row so that it lies over the row's highlight.
         const ImVec4 name_colour =
             port.is_optional ? faint_colour : ImGui::GetStyleColorVec4(ImGuiCol_Text);
-        draw_list->AddText(ImVec2(row_top_left.x + row_height + gap_after_dot,
-                                  row_top_left.y + ((row_height - line_height) * half)),
-                           ImGui::GetColorU32(name_colour), port.name);
-        return is_clicked;
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(row_top_left.x, row_top_left.y + ((row_height - line_height) * half)),
+            ImGui::GetColorU32(name_colour), place.shown_name.c_str());
+        // The colours are taken here, where a port that can't be clicked is still greyed.
+        const PortLineStart line_start{
+            .at_circle = ImVec2(row_top_left.x - block_padding.x + place.line_x,
+                                row_top_left.y + (row_height * half)),
+            .colour = ImGui::GetColorU32(line_colour_of_port(port, is_connected)),
+        };
+        return {.is_clicked = is_clicked, .line_start = line_start};
     }
 
-    // Where a port's line meets its block: the inputs spread along the block's top edge and the
-    // outputs along its bottom edge, each in its order in the block.
+    [[nodiscard]] static float port_row_height() {
+        constexpr float row_height_in_line_heights = 1.4f;
+        return ImGui::GetTextLineHeight() * row_height_in_line_heights;
+    }
+
+    // Called inside the cores' area, before its blocks are drawn. The processor whose block shows
+    // its ports in this frame: the one at the mouse. None while every block shows its ports, nor
+    // while a processor is dragged, when a block that grew would move the places to drop it.
+    [[nodiscard]] std::optional<ProcessorId> processor_to_show_ports() const {
+        if (are_all_ports_shown_ || is_any_processor_dragged()) {
+            return std::nullopt;
+        }
+        return processor_at_mouse();
+    }
+
+    // The processor whose block the mouse was over in the frame before. The block that shows its
+    // ports counts as long as the mouse is inside it, whatever lies over it there: a block that
+    // grows may bring the area a scrollbar under the mouse, and a block that closed for that
+    // would take the scrollbar away and open again, without end.
+    [[nodiscard]] std::optional<ProcessorId> processor_at_mouse() const {
+        if (processor_under_mouse_.has_value() || !processor_showing_ports_.has_value()) {
+            return processor_under_mouse_;
+        }
+        const auto block = std::ranges::find(block_rectangles_, *processor_showing_ports_,
+                                             &BlockRectangle::processor);
+        const ScreenRectangle area = rectangle_of_this_window();
+        const bool is_mouse_inside_block =
+            block != block_rectangles_.end() &&
+            ImGui::IsMouseHoveringRect(area.top_left, area.bottom_right, false) &&
+            ImGui::IsMouseHoveringRect(block->top_left, block->bottom_right, false);
+        return is_mouse_inside_block ? processor_showing_ports_ : std::nullopt;
+    }
+
+    // The hops of the graph, in the order of its connections.
+    [[nodiscard]] std::vector<Hop> hops_of_graph() const {
+        std::vector<Hop> hops;
+        for (const GraphConnection& connection : graph_.connections) {
+            const GraphProcessor* writer = graph_.find_processor(connection.output.processor);
+            const GraphProcessor* reader = graph_.find_processor(connection.input.processor);
+            const PortDescription* output_port = graph_.find_port(
+                connection.output.processor, connection.output.port, PortDirection::Output);
+            if (writer == nullptr || reader == nullptr || output_port == nullptr ||
+                writer->core_number == reader->core_number) {
+                continue;
+            }
+            auto hop = std::ranges::find_if(hops, [&connection, reader](const Hop& candidate) {
+                return candidate.output == connection.output &&
+                       candidate.reader_core == reader->core_number;
+            });
+            if (hop == hops.end()) {
+                const HopCores cores{
+                    .writer_core = writer->core_number,
+                    .reader_core = reader->core_number,
+                };
+                hops.push_back({
+                    .output = connection.output,
+                    .writer_core = cores.writer_core,
+                    .reader_core = cores.reader_core,
+                    .kind = output_port->kind,
+                    .inputs = {},
+                    .lanes = lanes_of_next_hop(hops, cores),
+                });
+                hop = std::prev(hops.end());
+            }
+            hop->inputs.push_back(connection.input);
+        }
+        return hops;
+    }
+
+    // The two cores of a hop.
+    struct HopCores {
+        int writer_core = 0;
+        int reader_core = 0;
+    };
+
+    // The ways that a hop takes which isn't among these hops yet: beside those taken.
+    [[nodiscard]] static HopLanes lanes_of_next_hop(const std::vector<Hop>& hops,
+                                                    const HopCores& cores) {
+        return {
+            .leaving = leaving_lane_count(hops, cores.writer_core),
+            .arriving = arriving_lane_count(hops, cores.reader_core),
+            .level = static_cast<int>(hops.size()),
+        };
+    }
+
+    // How many lanes the lines that leave a core take: one for each hop out of it.
+    [[nodiscard]] static int leaving_lane_count(const std::vector<Hop>& hops, int core_number) {
+        return static_cast<int>(std::ranges::count(hops, core_number, &Hop::writer_core));
+    }
+
+    // How many lanes the lines that arrive at a core take: one for each hop into it.
+    [[nodiscard]] static int arriving_lane_count(const std::vector<Hop>& hops, int core_number) {
+        return static_cast<int>(std::ranges::count(hops, core_number, &Hop::reader_core));
+    }
+
+    // The power of two that a ring's number of slots is, or the one under it, among those the
+    // slider offers.
+    [[nodiscard]] static int power_of_two_of_ring_slots(int slot_count) {
+        const int power_of_two = std::bit_width(static_cast<unsigned>(std::max(1, slot_count))) - 1;
+        return std::min(power_of_two, highest_power_of_two_of_ring_slots);
+    }
+
+    // How wide a hop's tube is between the boxes: by its ring's number of slots, evenly with
+    // each doubling. A hop without a ring has the thinnest.
+    [[nodiscard]] float tube_width_of(const Hop& hop) const {
+        if (!has_ring(hop)) {
+            return thinnest_tube;
+        }
+        const float part_of_largest =
+            static_cast<float>(power_of_two_of_ring_slots(slot_count_of_ring(hop))) /
+            static_cast<float>(highest_power_of_two_of_ring_slots);
+        return thinnest_tube * (1.0f + ((thickest_tube_in_thinnest - 1.0f) * part_of_largest));
+    }
+
+    // The room that a hop takes among the lanes along a wall and among the levels above the
+    // boxes.
+    [[nodiscard]] float room_of_hop(const Hop& hop) const {
+        return tube_width_of(hop) + room_beside_tube;
+    }
+
+    // The room of the hops that leave the same core as this one in lanes nearer the wall.
+    [[nodiscard]] float room_of_leaving_lanes_before(const Hop& hop) const {
+        float room = 0.0f;
+        for (const Hop& other : hops_) {
+            if (other.writer_core == hop.writer_core && other.lanes.leaving < hop.lanes.leaving) {
+                room += room_of_hop(other);
+            }
+        }
+        return room;
+    }
+
+    // The room of the hops that arrive at the same core as this one in lanes nearer the wall.
+    [[nodiscard]] float room_of_arriving_lanes_before(const Hop& hop) const {
+        float room = 0.0f;
+        for (const Hop& other : hops_) {
+            if (other.reader_core == hop.reader_core && other.lanes.arriving < hop.lanes.arriving) {
+                room += room_of_hop(other);
+            }
+        }
+        return room;
+    }
+
+    // The room of the hops that run at levels under this one's.
+    [[nodiscard]] float room_of_levels_under(const Hop& hop) const {
+        float room = 0.0f;
+        for (const Hop& other : hops_) {
+            if (other.lanes.level < hop.lanes.level) {
+                room += room_of_hop(other);
+            }
+        }
+        return room;
+    }
+
+    [[nodiscard]] float room_of_leaving_lanes(int core_number) const {
+        float room = 0.0f;
+        for (const Hop& hop : hops_) {
+            if (hop.writer_core == core_number) {
+                room += room_of_hop(hop);
+            }
+        }
+        return room;
+    }
+
+    [[nodiscard]] float room_of_arriving_lanes(int core_number) const {
+        float room = 0.0f;
+        for (const Hop& hop : hops_) {
+            if (hop.reader_core == core_number) {
+                room += room_of_hop(hop);
+            }
+        }
+        return room;
+    }
+
+    // What a box keeps free along one wall for lanes that take so much room.
+    [[nodiscard]] static float width_of_hop_lanes(float room_of_lanes) {
+        return room_of_lanes > 0.0f ? room_of_lanes + gap_from_hop_lanes_to_blocks : 0.0f;
+    }
+
+    // The room that a hop's ring takes in the pile of rings over its reading core's box; none
+    // for a hop without a ring.
+    [[nodiscard]] static float room_of_ring(const Hop& hop) {
+        return has_ring(hop) ? ring_pill_height + gap_between_ring_pills : 0.0f;
+    }
+
+    // How high the rings pile under a hop's own: those of the hops into the same core whose lanes
+    // lie nearer the wall.
+    [[nodiscard]] float height_of_rings_under(const Hop& hop) const {
+        float height = 0.0f;
+        for (const Hop& other : hops_) {
+            if (other.reader_core == hop.reader_core && other.lanes.arriving < hop.lanes.arriving) {
+                height += room_of_ring(other);
+            }
+        }
+        return height;
+    }
+
+    // How far above the boxes the lowest level lies: over the highest pile of rings, and over
+    // one ring more while a connection is drawn, for its ring.
+    [[nodiscard]] float lowest_hop_level() const {
+        float highest_pile = 0.0f;
+        for (const Hop& hop : hops_) {
+            highest_pile = std::max(highest_pile, height_of_rings_under(hop) + room_of_ring(hop));
+        }
+        if (is_connection_being_drawn_) {
+            highest_pile += ring_pill_height + gap_between_ring_pills;
+        }
+        return gap_from_ring_pills_to_box + highest_pile + gap_between_ring_pills;
+    }
+
+    // The strip above the boxes in which the hops run, with the widest level to spare for the
+    // hop of a connection that is being drawn.
+    [[nodiscard]] float height_of_hop_strip() const {
+        float room_of_levels = 0.0f;
+        for (const Hop& hop : hops_) {
+            room_of_levels += room_of_hop(hop);
+        }
+        if (is_connection_being_drawn_) {
+            room_of_levels += (thinnest_tube * thickest_tube_in_thinnest) + room_beside_tube;
+        }
+        return lowest_hop_level() + room_of_levels;
+    }
+
+    // Where a hop's line runs outside the blocks, on the screen.
+    struct HopPlace {
+        float leaving_x = 0.0f;      // its lane up the writing core's box
+        float arriving_x = 0.0f;     // its lane down the reading core's box
+        float level_y = 0.0f;        // its run above the boxes
+        float leaving_turn = 0.0f;   // how far under its output it turns towards its lane
+        float arriving_turn = 0.0f;  // how far over an input it turns towards the input
+        float writer_box_top = 0.0f;
+        float reader_box_top = 0.0f;
+        float tube_width = 0.0f;  // of its line between the two boxes
+        ImVec2 at_ring;           // where its ring is, on its lane above the reading core's box
+    };
+
+    // None while one of the hop's two cores has no box.
+    [[nodiscard]] std::optional<HopPlace> place_of_hop(const Hop& hop) const {
+        const auto writer_box =
+            std::ranges::find(core_rectangles_, hop.writer_core, &CoreRectangle::core_number);
+        const auto reader_box =
+            std::ranges::find(core_rectangles_, hop.reader_core, &CoreRectangle::core_number);
+        if (writer_box == core_rectangles_.end() || reader_box == core_rectangles_.end()) {
+            return std::nullopt;
+        }
+        constexpr float half = 0.5f;
+        const float half_room = room_of_hop(hop) * half;
+        const float arriving_x = reader_box->top_left.x + gap_from_wall_to_hop_lanes +
+                                 room_of_arriving_lanes_before(hop) + half_room;
+        return HopPlace{
+            .leaving_x = writer_box->bottom_right.x - gap_from_wall_to_hop_lanes -
+                         room_of_leaving_lanes_before(hop) - half_room,
+            .arriving_x = arriving_x,
+            .level_y =
+                reader_box->top_left.y - lowest_hop_level() - room_of_levels_under(hop) - half_room,
+            .leaving_turn = hop_turn_from_port +
+                            (static_cast<float>(hop.lanes.leaving) * step_between_hop_turns),
+            .arriving_turn = hop_turn_from_port +
+                             (static_cast<float>(hop.lanes.arriving) * step_between_hop_turns),
+            .writer_box_top = writer_box->top_left.y,
+            .reader_box_top = reader_box->top_left.y,
+            .tube_width = tube_width_of(hop),
+            .at_ring =
+                ImVec2(arriving_x, reader_box->top_left.y - gap_from_ring_pills_to_box -
+                                       height_of_rings_under(hop) - (ring_pill_height * half)),
+        };
+    }
+
+    [[nodiscard]] static bool has_ring(const Hop& hop) { return hop.kind != PortKind::State; }
+
+    // The number of slots of a hop's ring: what the user set, or what such a ring has otherwise.
+    [[nodiscard]] int slot_count_of_ring(const Hop& hop) const {
+        const GraphProcessor* writer = graph_.find_processor(hop.output.processor);
+        if (writer == nullptr) {
+            return usual_ring_slot_count(is_core_realtime(hop.reader_core));
+        }
+        const RingPlace ring{
+            .writer = *writer,
+            .output_name = hop.output.port,
+            .reader_core_number = hop.reader_core,
+        };
+        return ring_slot_count_of(graph_, ring);
+    }
+
+    [[nodiscard]] bool is_core_realtime(int core_number) const {
+        const auto core = std::ranges::find(graph_.cores, core_number, &GraphCore::number);
+        return core == graph_.cores.end() || core->is_realtime;
+    }
+
+    // Every connection of a ring carries the ring's number of slots, or none where that is the
+    // number such a ring has anyway, as a pipeline read from its file has it.
+    void set_slot_count_of_ring(const Hop& hop, int slot_count) {
+        const bool is_usual =
+            slot_count == usual_ring_slot_count(is_core_realtime(hop.reader_core));
+        for (GraphConnection& connection : graph_.connections) {
+            if (connection.output == hop.output &&
+                reader_core_of(graph_, connection) == hop.reader_core) {
+                connection.ring_slot_count =
+                    is_usual ? std::nullopt : std::optional<int>(slot_count);
+            }
+        }
+    }
+
+    // Called inside the cores' area, after its boxes: each ring is a place to click, which opens a
+    // box with a slider for the ring's number of slots, and with what a ring is behind an info
+    // icon. The rings themselves are drawn with the connections' lines, in front of the boxes.
+    void render_ring_buttons() {
+        constexpr float slider_width = 220.0f;
+        int hop_number = 0;
+        for (const Hop& hop : hops_) {
+            ++hop_number;
+            const std::optional<HopPlace> place = place_of_hop(hop);
+            const GraphProcessor* writer = graph_.find_processor(hop.output.processor);
+            if (!has_ring(hop) || !place.has_value() || writer == nullptr) {
+                continue;
+            }
+            const int slot_count = slot_count_of_ring(hop);
+            const std::string slot_count_text = std::to_string(slot_count);
+            ImGui::PushID(hop_number);
+            const ScreenRectangle pill = pill_of_ring(place->at_ring, slot_count);
+            ImGui::SetCursorScreenPos(pill.top_left);
+            const bool is_clicked =
+                ImGui::InvisibleButton("##ring", ImVec2(pill.bottom_right.x - pill.top_left.x,
+                                                        pill.bottom_right.y - pill.top_left.y));
+            name_last_item_for_ui_driver(
+                {"ring", writer->name, hop.output.port, std::to_string(hop.reader_core)},
+                slot_count_text);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            if (is_clicked) {
+                ImGui::OpenPopup("##ring_slots");
+            }
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, TOOLTIP_BACKGROUND);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, input_colour);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, TOOLTIP_PADDING);
+            if (ImGui::BeginPopup("##ring_slots")) {
+                ImGui::TextUnformatted("Slots of the ring");
+                render_info_icon(
+                    "Data going from one core to another waits in a ring until the other core "
+                    "reads it.\n\n"
+                    "This is how many samples or events the ring can hold.\n\n"
+                    "If the ring gets full, new data is dropped and a warning is shown in the "
+                    "log. A bigger ring prevents that.");
+                ImGui::SetNextItemWidth(slider_width);
+                // A number that is no power of two, as a file written by hand may hold, shows as
+                // the power of two under it until the slider is moved.
+                int power_of_two = power_of_two_of_ring_slots(slot_count);
+                const bool is_moved = ImGui::SliderInt(
+                    "##slots", &power_of_two, 0, highest_power_of_two_of_ring_slots,
+                    slot_count_text.c_str(), ImGuiSliderFlags_NoInput);
+                name_last_item_for_ui_driver({"ring_slots"});
+                if (is_moved) {
+                    set_slot_count_of_ring(
+                        hop, static_cast<int>(1U << static_cast<unsigned>(power_of_two)));
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(2);
+            ImGui::PopID();
+        }
+    }
+
+    // Lays a path through the given points whose corners are rounded, each by no more than half
+    // of the shorter of the two stretches that meet in it. The caller strokes it.
+    static void lay_path_with_round_corners(ImDrawList* draw_list, std::span<const ImVec2> points) {
+        constexpr float widest_bend = 6.0f;
+        constexpr float half = 0.5f;
+        draw_list->PathLineTo(points.front());
+        for (const auto [before, corner, after] : std::views::adjacent<3>(points)) {
+            const float length_before = std::hypot(corner.x - before.x, corner.y - before.y);
+            const float length_after = std::hypot(after.x - corner.x, after.y - corner.y);
+            const float bend = std::min({widest_bend, length_before * half, length_after * half});
+            if (bend <= 0.0f) {
+                draw_list->PathLineTo(corner);
+                continue;
+            }
+            const float part_before = bend / length_before;
+            const float part_after = bend / length_after;
+            draw_list->PathLineTo(ImVec2(corner.x + ((before.x - corner.x) * part_before),
+                                         corner.y + ((before.y - corner.y) * part_before)));
+            draw_list->PathBezierQuadraticCurveTo(
+                corner, ImVec2(corner.x + ((after.x - corner.x) * part_after),
+                               corner.y + ((after.y - corner.y) * part_after)));
+        }
+        draw_list->PathLineTo(points.back());
+    }
+
+    // A line as a connection inside a core has it.
+    static void add_line_with_round_corners(ImDrawList* draw_list, std::span<const ImVec2> points,
+                                            ImU32 colour) {
+        constexpr float thickness = 2.0f;
+        lay_path_with_round_corners(draw_list, points);
+        draw_list->PathStroke(colour, ImDrawFlags_None, thickness);
+    }
+
+    // A tube: a thick line with a light core. A hop is drawn so between two boxes, where it is
+    // what no connection inside a core is.
+    static void add_tube(ImDrawList* draw_list, std::span<const ImVec2> points, float width,
+                         ImU32 colour) {
+        constexpr float core_in_widths = 1.0f / 3.0f;
+        lay_path_with_round_corners(draw_list, points);
+        draw_list->PathStroke(colour, ImDrawFlags_None, width);
+        lay_path_with_round_corners(draw_list, points);
+        draw_list->PathStroke(ImGui::GetColorU32(block_colour), ImDrawFlags_None,
+                              width * core_in_widths);
+    }
+
+    // The part of a hop's line inside the writing core's box, which looks as a connection inside
+    // a core does: from under the output sideways to its lane, and up the lane to the box's top.
+    static void add_hop_inside_writer(ImDrawList* draw_list, ImVec2 at_output,
+                                      const HopPlace& place, ImU32 colour) {
+        const float turn_y = at_output.y + place.leaving_turn;
+        const std::array<ImVec2, 4> points{
+            at_output,
+            ImVec2(at_output.x, turn_y),
+            ImVec2(place.leaving_x, turn_y),
+            ImVec2(place.leaving_x, place.writer_box_top),
+        };
+        add_line_with_round_corners(draw_list, points, colour);
+    }
+
+    // The part of a hop's line between the two boxes: out of the writing core's box by the top,
+    // above the boxes to over the reading core, and down to that core's box, through the ring.
+    static void add_hop_between_boxes(ImDrawList* draw_list, const HopPlace& place, ImU32 colour) {
+        const std::array<ImVec2, 4> points{
+            ImVec2(place.leaving_x, place.writer_box_top),
+            ImVec2(place.leaving_x, place.level_y),
+            ImVec2(place.arriving_x, place.level_y),
+            ImVec2(place.arriving_x, place.reader_box_top),
+        };
+        add_tube(draw_list, points, place.tube_width, colour);
+    }
+
+    // The part of a hop's line inside the reading core's box: down its lane, and sideways over
+    // the input to the input.
+    static void add_hop_inside_reader(ImDrawList* draw_list, const HopPlace& place, ImVec2 at_input,
+                                      ImU32 colour) {
+        const float turn_y = at_input.y - place.arriving_turn;
+        const std::array<ImVec2, 4> points{
+            ImVec2(place.arriving_x, place.reader_box_top),
+            ImVec2(place.arriving_x, turn_y),
+            ImVec2(at_input.x, turn_y),
+            at_input,
+        };
+        add_line_with_round_corners(draw_list, points, colour);
+    }
+
+    // The pill of a ring of so many slots whose icon is at this place.
+    [[nodiscard]] static ScreenRectangle pill_of_ring(ImVec2 at_ring, int slot_count) {
+        constexpr float half = 0.5f;
+        constexpr float room_left_of_icon = 5.0f;
+        constexpr float gap_before_number = 4.0f;
+        constexpr float room_right_of_number = 8.0f;
+        const float half_icon = ImGui::CalcTextSize(icon("donut-chart-fill")).x * half;
+        const std::string number = std::to_string(slot_count);
+        return {
+            .top_left = ImVec2(at_ring.x - half_icon - room_left_of_icon,
+                               at_ring.y - (ring_pill_height * half)),
+            .bottom_right = ImVec2(at_ring.x + half_icon + gap_before_number +
+                                       ImGui::CalcTextSize(number.c_str()).x + room_right_of_number,
+                                   at_ring.y + (ring_pill_height * half)),
+        };
+    }
+
+    // A ring: a pill with a ring icon, which stands on the ring's line, and the ring's number of
+    // slots. The pill is white and its icon grey while nothing tells how full the ring is.
+    static void add_ring(ImDrawList* draw_list, ImVec2 at_ring, int slot_count) {
+        constexpr float half = 0.5f;
+        constexpr float gap_before_number = 4.0f;
+        const char* const ring_icon = icon("donut-chart-fill");
+        const float half_icon = ImGui::CalcTextSize(ring_icon).x * half;
+        const float text_top = at_ring.y - (ImGui::GetTextLineHeight() * half);
+        const std::string number = std::to_string(slot_count);
+        const ScreenRectangle pill = pill_of_ring(at_ring, slot_count);
+        draw_list->AddRectFilled(pill.top_left, pill.bottom_right, ImGui::GetColorU32(block_colour),
+                                 ring_pill_height * half);
+        draw_list->AddRect(pill.top_left, pill.bottom_right,
+                           ImGui::GetColorU32(block_border_colour), ring_pill_height * half);
+        draw_list->AddText(ImVec2(at_ring.x - half_icon, text_top),
+                           ImGui::GetColorU32(idle_state_colour), ring_icon);
+        draw_list->AddText(ImVec2(at_ring.x + half_icon + gap_before_number, text_top),
+                           ImGui::GetColorU32(ImGuiCol_Text), number.c_str());
+    }
+
+    void add_lines_of_hop(ImDrawList* draw_list, const Hop& hop) const {
+        const std::optional<HopPlace> place = place_of_hop(hop);
+        const auto at_output =
+            port_anchor(hop.output.processor, hop.output.port, PortDirection::Output);
+        if (!place.has_value() || !at_output.has_value()) {
+            return;
+        }
+        const ImU32 colour = ImGui::GetColorU32(kind_colour(hop.kind));
+        add_hop_inside_writer(draw_list, *at_output, *place, colour);
+        add_hop_between_boxes(draw_list, *place, colour);
+        add_terminal_on_edge(draw_list, hop.output.processor, *at_output, colour);
+        for (const InputReference& input : hop.inputs) {
+            const auto at_input = port_anchor(input.processor, input.port, PortDirection::Input);
+            if (at_input.has_value()) {
+                add_hop_inside_reader(draw_list, *place, *at_input, colour);
+                add_terminal_on_edge(draw_list, input.processor, *at_input, colour);
+            }
+        }
+    }
+
+    void add_ring_of_hop(ImDrawList* draw_list, const Hop& hop) const {
+        const std::optional<HopPlace> place = place_of_hop(hop);
+        if (place.has_value() && has_ring(hop)) {
+            add_ring(draw_list, place->at_ring, slot_count_of_ring(hop));
+        }
+    }
+
+    // The core whose box the mouse is over, if any.
+    [[nodiscard]] std::optional<int> core_at_mouse() const {
+        for (const CoreRectangle& box : core_rectangles_) {
+            if (ImGui::IsMouseHoveringRect(box.top_left, box.bottom_right, false)) {
+                return box.core_number;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // The port that was clicked first, while its connection is drawn.
+    struct PickedPort {
+        ProcessorId processor = 0;
+        PortDirection direction = PortDirection::Output;
+        PortKind kind = PortKind::Any;
+    };
+
+    // The hop that a connection being drawn would be, between its picked port and the core under
+    // the mouse; none while the mouse is over no other core than the port's own.
+    [[nodiscard]] std::optional<Hop> hop_being_drawn(const PickedPort& picked) const {
+        const GraphProcessor* processor = graph_.find_processor(picked.processor);
+        const std::optional<int> other_core = core_at_mouse();
+        if (processor == nullptr || !other_core.has_value() ||
+            *other_core == processor->core_number) {
+            return std::nullopt;
+        }
+        const bool is_output_picked = picked.direction == PortDirection::Output;
+        Hop hop;
+        hop.writer_core = is_output_picked ? processor->core_number : *other_core;
+        hop.reader_core = is_output_picked ? *other_core : processor->core_number;
+        hop.kind = picked.kind;
+        const HopCores cores{.writer_core = hop.writer_core, .reader_core = hop.reader_core};
+        hop.lanes = lanes_of_next_hop(hops_, cores);
+        return hop;
+    }
+
+    // Where a connection's line ends at a port: on the top edge for an input and on the bottom
+    // edge for an output, at the same place of the edge whether the block shows its ports or not.
     [[nodiscard]] std::optional<ImVec2> port_anchor(ProcessorId processor_id,
                                                     std::string_view port_name,
                                                     PortDirection direction) const {
         const GraphProcessor* processor = graph_.find_processor(processor_id);
-        const auto rectangle =
+        const auto block =
             std::ranges::find(block_rectangles_, processor_id, &BlockRectangle::processor);
-        if (processor == nullptr || rectangle == block_rectangles_.end()) {
+        if (processor == nullptr || block == block_rectangles_.end()) {
             return std::nullopt;
         }
-        int port_count = 0;
-        int port_place = -1;
-        for (const PortDescription& port : processor->type->ports) {
-            if (port.direction != direction) {
+        const std::vector<PortRowPlace> rows = rows_of_ports(*processor->type, direction);
+        const auto row = std::ranges::find_if(rows, [port_name](const PortRowPlace& candidate) {
+            return port_name == candidate.port->name;
+        });
+        if (row == rows.end()) {
+            return std::nullopt;
+        }
+        return ImVec2(block->top_left.x + row->line_x, direction == PortDirection::Input
+                                                           ? block->top_left.y
+                                                           : block->bottom_right.y);
+    }
+
+    [[nodiscard]] bool are_ports_shown_of(ProcessorId processor_id) const {
+        return are_all_ports_shown_ || is_connection_being_drawn_ ||
+               processor_showing_ports_ == processor_id;
+    }
+
+    // On the edge of each block that shows no ports, an empty circle for every port without a
+    // connection.
+    void add_terminals_of_unconnected_ports(ImDrawList* draw_list) const {
+        for (const BlockRectangle& block : block_rectangles_) {
+            const GraphProcessor* processor = graph_.find_processor(block.processor);
+            if (processor == nullptr || are_ports_shown_of(block.processor)) {
                 continue;
             }
-            if (port_name == port.name) {
-                port_place = port_count;
+            for (const PortDescription& port : processor->type->ports) {
+                const std::optional<ImVec2> at_edge =
+                    port_anchor(block.processor, port.name, port.direction);
+                if (at_edge.has_value() && !has_connection(block.processor, port)) {
+                    add_empty_terminal(draw_list, *at_edge,
+                                       ImGui::GetColorU32(line_colour_of_port(port, false)));
+                }
             }
-            ++port_count;
         }
-        if (port_place < 0) {
-            return std::nullopt;
+    }
+
+    // The circle at the end of a connection's line, on the edge of a block that shows no ports.
+    // Where the ports show, the line goes on to the port's name and has its circle there.
+    void add_terminal_on_edge(ImDrawList* draw_list, ProcessorId processor_id, ImVec2 at_edge,
+                              ImU32 colour) const {
+        if (!are_ports_shown_of(processor_id)) {
+            draw_list->AddCircleFilled(at_edge, terminal_radius, colour);
         }
-        constexpr float half = 0.5f;
-        const float width = rectangle->bottom_right.x - rectangle->top_left.x;
-        const float along =
-            (static_cast<float>(port_place) + half) / static_cast<float>(port_count);
-        return ImVec2(rectangle->top_left.x + (width * along), direction == PortDirection::Input
-                                                                   ? rectangle->top_left.y
-                                                                   : rectangle->bottom_right.y);
     }
 
     // Called inside the cores' area, after its blocks: a line for each connection, leaving its
@@ -2182,40 +3048,99 @@ private:
             area_top_left, ImVec2(area_top_left.x + area_size.x, area_top_left.y + area_size.y),
             false);
         for (const GraphConnection& connection : graph_.connections) {
-            const PortDescription* output_port = graph_.find_port(
-                connection.output.processor, connection.output.port, PortDirection::Output);
-            const auto at_output = port_anchor(connection.output.processor, connection.output.port,
-                                               PortDirection::Output);
-            const auto at_input = port_anchor(connection.input.processor, connection.input.port,
-                                              PortDirection::Input);
-            if (output_port != nullptr && at_output && at_input) {
-                add_connection_line(draw_list, {.at_output = *at_output, .at_input = *at_input},
-                                    ImGui::GetColorU32(kind_colour(output_port->kind)));
-            }
+            add_connection_inside_core(draw_list, connection);
         }
-        if (const OutputReference* const output = picked_output()) {
-            const PortDescription* output_port =
-                graph_.find_port(output->processor, output->port, PortDirection::Output);
-            const auto at_output =
-                port_anchor(output->processor, output->port, PortDirection::Output);
-            if (output_port != nullptr && at_output) {
-                add_connection_line(draw_list,
-                                    {.at_output = *at_output, .at_input = ImGui::GetMousePos()},
-                                    ImGui::GetColorU32(kind_colour(output_port->kind)));
-            }
+        for (const Hop& hop : hops_) {
+            add_lines_of_hop(draw_list, hop);
         }
-        if (const InputReference* const input = picked_input()) {
-            const PortDescription* input_port =
-                graph_.find_port(input->processor, input->port, PortDirection::Input);
-            const auto at_input = port_anchor(input->processor, input->port, PortDirection::Input);
-            if (input_port != nullptr && at_input) {
-                add_connection_line(draw_list,
-                                    {.at_output = ImGui::GetMousePos(), .at_input = *at_input},
-                                    ImGui::GetColorU32(kind_colour(input_port->kind)));
-            }
+        add_terminals_of_unconnected_ports(draw_list);
+        add_connection_being_drawn(draw_list);
+        // The rings last: a ring's pill lies over the lines of the lanes beside its own.
+        for (const Hop& hop : hops_) {
+            add_ring_of_hop(draw_list, hop);
         }
         draw_list->PopClipRect();
         ImGui::End();
+    }
+
+    // A connection between two processors of one core: a curve from the output to the input. One
+    // between two cores is a hop's.
+    void add_connection_inside_core(ImDrawList* draw_list,
+                                    const GraphConnection& connection) const {
+        const GraphProcessor* writer = graph_.find_processor(connection.output.processor);
+        const GraphProcessor* reader = graph_.find_processor(connection.input.processor);
+        const PortDescription* output_port = graph_.find_port(
+            connection.output.processor, connection.output.port, PortDirection::Output);
+        const auto at_output =
+            port_anchor(connection.output.processor, connection.output.port, PortDirection::Output);
+        const auto at_input =
+            port_anchor(connection.input.processor, connection.input.port, PortDirection::Input);
+        if (writer == nullptr || reader == nullptr || output_port == nullptr || !at_output ||
+            !at_input || writer->core_number != reader->core_number) {
+            return;
+        }
+        const ImU32 colour = ImGui::GetColorU32(kind_colour(output_port->kind));
+        add_connection_line(draw_list, {.at_output = *at_output, .at_input = *at_input}, colour);
+        add_terminal_on_edge(draw_list, connection.output.processor, *at_output, colour);
+        add_terminal_on_edge(draw_list, connection.input.processor, *at_input, colour);
+    }
+
+    // The line from the picked port to the mouse. Over another core than the port's own it is a
+    // hop already, with its ring, so that the user sees what the connection will be.
+    void add_connection_being_drawn(ImDrawList* draw_list) const {
+        const OutputReference* const output = picked_output();
+        const InputReference* const input = picked_input();
+        if (output == nullptr && input == nullptr) {
+            return;
+        }
+        const bool is_output_picked = output != nullptr;
+        const ProcessorId processor = is_output_picked ? output->processor : input->processor;
+        const std::string& port_name = is_output_picked ? output->port : input->port;
+        const PortDirection direction =
+            is_output_picked ? PortDirection::Output : PortDirection::Input;
+        const PortDescription* port = graph_.find_port(processor, port_name, direction);
+        const auto at_port = port_anchor(processor, port_name, direction);
+        if (port == nullptr || !at_port.has_value()) {
+            return;
+        }
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const ImU32 colour = ImGui::GetColorU32(kind_colour(port->kind));
+        const std::optional<Hop> hop = hop_being_drawn({
+            .processor = processor,
+            .direction = direction,
+            .kind = port->kind,
+        });
+        const std::optional<HopPlace> place = hop.has_value() ? place_of_hop(*hop) : std::nullopt;
+        if (!place.has_value()) {
+            const LineEnds ends{
+                .at_output = is_output_picked ? *at_port : mouse,
+                .at_input = is_output_picked ? mouse : *at_port,
+            };
+            add_connection_line(draw_list, ends, colour);
+        } else if (is_output_picked) {
+            add_hop_inside_writer(draw_list, *at_port, *place, colour);
+            add_hop_between_boxes(draw_list, *place, colour);
+            const std::array<ImVec2, 3> to_mouse{
+                ImVec2(place->arriving_x, place->reader_box_top),
+                ImVec2(place->arriving_x, mouse.y),
+                mouse,
+            };
+            add_line_with_round_corners(draw_list, to_mouse, colour);
+        } else {
+            const std::array<ImVec2, 3> from_mouse{
+                mouse,
+                ImVec2(place->leaving_x, mouse.y),
+                ImVec2(place->leaving_x, place->writer_box_top),
+            };
+            add_line_with_round_corners(draw_list, from_mouse, colour);
+            add_hop_between_boxes(draw_list, *place, colour);
+            add_hop_inside_reader(draw_list, *place, *at_port, colour);
+        }
+        if (place.has_value() && has_ring(*hop)) {
+            add_ring(draw_list, place->at_ring,
+                     usual_ring_slot_count(is_core_realtime(hop->reader_core)));
+        }
+        add_terminal_on_edge(draw_list, processor, *at_port, colour);
     }
 
     // The two ends of a connection's line on the screen: each at its port or, while that port
@@ -2228,8 +3153,13 @@ private:
     // A curve that leaves the output downward and reaches the input from above, so it bends into
     // an S when the input isn't below the output.
     static void add_connection_line(ImDrawList* draw_list, const LineEnds& ends, ImU32 colour) {
-        constexpr float bend = 60.0f;
+        constexpr float widest_bend = 60.0f;
+        constexpr float half = 0.5f;
         constexpr float thickness = 2.0f;
+        // An input a short way under its output leaves the curve little height: bent as far as
+        // for a long way, the curve would overshoot both ends and kink.
+        const float drop = ends.at_input.y - ends.at_output.y;
+        const float bend = drop > 0.0f ? std::min(widest_bend, drop * half) : widest_bend;
         draw_list->AddBezierCubic(ends.at_output, ImVec2(ends.at_output.x, ends.at_output.y + bend),
                                   ImVec2(ends.at_input.x, ends.at_input.y - bend), ends.at_input,
                                   colour, thickness);
@@ -2249,33 +3179,28 @@ private:
         return any_kind_colour;
     }
 
-    // Every core from 0 up to the highest one that holds a processor, those between that hold none
-    // included, each as a box; while the pipeline is empty, up to the first core offered. While a
-    // processor is dragged, from the panel or by its block, the next core after them is shown too,
-    // as a place to drop it.
+    // Every core that holds a processor, each as a box; while the pipeline is empty, the first
+    // core offered. While a processor is dragged, from the panel or by its block, every core that
+    // is offered is shown too, each a place to drop it.
     [[nodiscard]] std::vector<int> shown_core_numbers() const {
         const std::vector<int>& offered = cpu_cores_.offered();
-        int highest_core_number = -1;
+        std::vector<int> core_numbers;
         for (const GraphCore& core : graph_.cores) {
             if (!core.processors.empty()) {
-                highest_core_number = std::max(highest_core_number, core.number);
+                core_numbers.push_back(core.number);
             }
         }
-        if (highest_core_number < 0) {
-            highest_core_number = offered.empty() ? 0 : offered.front();
-        }
-        std::vector<int> core_numbers;
-        for (int core_number = 0; core_number <= highest_core_number; ++core_number) {
-            core_numbers.push_back(core_number);
+        if (core_numbers.empty()) {
+            core_numbers.push_back(offered.empty() ? 0 : offered.front());
         }
         if (is_any_processor_dragged()) {
-            const auto next_free = std::ranges::find_if(offered, [&core_numbers](int core_number) {
-                return !std::ranges::contains(core_numbers, core_number);
-            });
-            if (next_free != offered.end()) {
-                core_numbers.push_back(*next_free);
+            for (const int core_number : offered) {
+                if (!std::ranges::contains(core_numbers, core_number)) {
+                    core_numbers.push_back(core_number);
+                }
             }
         }
+        std::ranges::sort(core_numbers);
         return core_numbers;
     }
 

@@ -35,6 +35,9 @@ SECONDS_FOR_A_RUN = 180
 
 LEFT_BUTTON = 0
 RIGHT_BUTTON = 1
+# The window's top left corner, in the top bar.
+PLACE_OVER_NO_BLOCK = (1.0, 1.0)
+FRAMES_UNTIL_BLOCKS_STAND = 4
 
 # Where a picture of the window is written when a test fails inside a with Designer(), so that
 # what the test saw can be looked at; run.py sets it for each test. None writes no picture.
@@ -201,13 +204,40 @@ class Designer:
         return targets
 
     def target(self, name):
+        self._show_port(name)
         targets = self.targets()
         if name not in targets:
             raise DesignerError(f"nothing is named {name}; named are: {sorted(targets)}")
         return targets[name]
 
     def has_target(self, name):
+        self._show_port(name)
         return name in self.targets()
+
+    def show_ports_of(self, processor):
+        """Brings the mouse over a processor's block: a block shows its ports only while the
+        mouse is over it, so a port is named in a frame only then. The mouse goes by way of a
+        place over no block, where the block it was over hides its ports again and the blocks
+        under that one move back up. A block opens and closes a frame after the mouse came or
+        left, and the blocks have their places in that frame."""
+        self.move_to(PLACE_OVER_NO_BLOCK)
+        self.frames(FRAMES_UNTIL_BLOCKS_STAND)
+        targets = self.targets()
+        handle = f"block/{processor}/handle"
+        if handle in targets:
+            self.move_to(targets[handle].point())
+            self.frames(FRAMES_UNTIL_BLOCKS_STAND)
+
+    def port_names(self, processor, direction):
+        """The names of a processor's ports of one direction, "input" or "output"."""
+        self.show_ports_of(processor)
+        start = f"port/{processor}/{direction}/"
+        return sorted(name[len(start):] for name in self.targets() if name.startswith(start))
+
+    def _show_port(self, name):
+        """Asked for a port that no frame names yet, the driver shows its block's ports first."""
+        if name.startswith("port/") and name not in self.targets():
+            self.show_ports_of(name.split("/")[1])
 
     def state(self):
         """What the designer holds: its graph, the picked port, the selected processor, ..."""
@@ -246,7 +276,16 @@ class Designer:
         self.frames(3)
 
     def click(self, name, button=LEFT_BUTTON, across=0.5, down=0.5):
-        self.click_at(self.target(name).point(across, down), button)
+        self.click_at(self._place_under_the_mouse(name, across, down), button)
+
+    def _place_under_the_mouse(self, name, across, down):
+        """Where the named thing is once the mouse is over it. A block shows its ports as soon as
+        the mouse is over it, and its name, its remove icon and whatever lies under it move down
+        by the rows of its inputs. So the mouse goes to the thing, as a hand does, and the thing
+        is clicked or pressed where it then is."""
+        self.move_to(self.target(name).point(across, down))
+        self.frames(FRAMES_UNTIL_BLOCKS_STAND)
+        return self.target(name).point(across, down)
 
     def right_click(self, name):
         self.click(name, RIGHT_BUTTON)
@@ -262,7 +301,7 @@ class Designer:
 
     def start_drag(self, name, across=0.5, down=0.5):
         """Presses on the named thing and moves far enough for a drag to begin."""
-        point = self.target(name).point(across, down)
+        point = self._place_under_the_mouse(name, across, down)
         self.move_to(point)
         self.frames(1)
         self.command(f"mouse_down {LEFT_BUTTON}")

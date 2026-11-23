@@ -245,6 +245,15 @@ The prototype puts each sample's header in its ring slot, in front of the sample
 - A hardware wait doesn't make the option not chosen there, the reading core waiting for the producer's core, any cheaper: the reader still waits for the slower core, only without spinning.
 - For warnings (see **Logging** in engine.md): every core's `warn()` also bumps one shared "warning posted" counter, and the main thread sleeps on its cache line instead of polling every 100 ms, so a warning shows within microseconds and the writing core makes no system call. Catches: the OS sees the waiting thread as running, so it holds an OS core while it waits; it still needs a timeout, for stop signals and the data rings' drop counts, and wakes at every timer interrupt anyway; and the code differs between AMD and Intel and must check that the CPU and kernel allow it from user space.
 
+### An input that sleeps between samples
+- The user's idea (23 November 2026) for NeuralynxInput, which reads its socket on every pass (see **NeuralynxInput** under **Input processors** in engine.md): sleep for most of the time between two datagrams and spin for the rest, as SignalGenerator does, for a cooler input core. To add as an option once the plain read is measured.
+- Known, none of it measured on a hardware input: a sample lasts 31 µs at 32 kHz and SignalGenerator spins for at least 10 µs, so the core could sleep for about two thirds of the time at most, not 90%. The input doesn't set the schedule as SignalGenerator does, so it must predict each arrival from the one before, and a datagram that comes before the wake-up waits for it. And a core that slept between samples took about twice as long for the same work (see **Machine setup** under **Agreed** in engine.md).
+
+### A device's digital inputs
+- Parked by the user on 23 November 2026: NeuralynxInput's first version leaves out the record's Parallel Input Port field, the current value of the device's parallel input port in 32 bits (see neuralynx_raw_data_record.md; which bits are inputs isn't said there). So a graph can't start on a hardware trigger or see a TTL that the device receives.
+- Falcon 1 used the field twice. NlxReader and NlxParser had an option that held the stream back until a chosen bit was set: NlxParser let everything pass from then on, while NlxReader's code passes samples only while the bit is set. NlxParser also gave the field out as a second stream, one value per sample.
+- To design: the form of the output, an event when the value changes or a state value, which other processors would depend on, so it is expensive to change later (see **How to prioritise** in engine.md).
+
 ### Huge pages
 - Each core's memory (rings, processor state, buffers) in 2 MB pages instead of 4 KB pages, so the CPU needs far fewer address translations (TLB entries). At any channel count; the gain is to be measured.
 - Pages reserved at boot, not Linux's transparent huge pages: those are merged by a kernel thread (khugepaged) while the graph runs, which sends TLB-flush interrupts to the realtime cores.

@@ -27,10 +27,12 @@ def test_what_is_named_follows_what_is_drawn():
     with Designer() as designer:
         assert not designer.has_target("block/trigger")
         designer.add_processor("Trigger", core=0)
+        # A port is named only while its block shows its ports, so the part is asked for first,
+        # which brings the mouse over the block, and the block then, as it is with its ports.
         for name in ("block/trigger", "block/trigger/handle", "block/trigger/remove",
                      "port/trigger/input/input", "port/trigger/output/output"):
-            block = designer.target("block/trigger")
             part = designer.target(name)
+            block = designer.target("block/trigger")
             assert block.left <= part.left and part.right <= block.right, name
             assert block.top <= part.top and part.bottom <= block.bottom, name
         designer.click("block/trigger/remove")

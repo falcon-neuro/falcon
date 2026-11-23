@@ -14,6 +14,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "common/crosshair_cursor.cpp"
 #include "main_window/main_window.cpp"
 #include "ui_driver/ui_driver.cpp"
 
@@ -27,6 +28,10 @@
 class FalconUI {
 private:
     GLFWwindow* window_ = nullptr;
+    // The desktop's crosshair, which the UI's parts ask for (see crosshair_cursor_request()).
+    // Null where the desktop has none: the arrow shows then.
+    GLFWcursor* crosshair_cursor_ = nullptr;
+    bool is_crosshair_shown_ = false;
     MainWindow main_window_;
     MainWindowController main_window_controller_;
     // The file a picture of the window is written to, from the environment variable
@@ -157,6 +162,7 @@ private:
         style.WindowPadding = ImVec2(0.0f, 0.0f);
         style.Colors[ImGuiCol_Text] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 
+        crosshair_cursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
         if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {
             return false;
         }
@@ -172,10 +178,34 @@ private:
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
+        if (crosshair_cursor_ != nullptr) {
+            glfwDestroyCursor(crosshair_cursor_);
+        }
         if (window_) {
             glfwDestroyWindow(window_);
         }
         glfwTerminate();
+    }
+
+    // Called before ImGui's backend sets the cursor for a frame. While the crosshair is asked
+    // for, the backend is told to leave the cursor alone; once it may set the cursor again, it
+    // puts its own back.
+    void show_crosshair_cursor_while_asked_for() {
+        const bool is_asked_for = crosshair_cursor_request().take();
+        if (is_asked_for == is_crosshair_shown_) {
+            return;
+        }
+        is_crosshair_shown_ = is_asked_for;
+        ImGuiIO& imgui_io = ImGui::GetIO();
+        // ImGui's flags are signed ints by its API
+        // NOLINTBEGIN(bugprone-signed-bitwise)
+        if (is_asked_for) {
+            imgui_io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            glfwSetCursor(window_, crosshair_cursor_);
+        } else {
+            imgui_io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        }
+        // NOLINTEND(bugprone-signed-bitwise)
     }
 
 public:
@@ -208,6 +238,7 @@ public:
             glViewport(0, 0, display_w, display_h);
 
             ImGui_ImplOpenGL3_NewFrame();
+            show_crosshair_cursor_while_asked_for();
             ImGui_ImplGlfw_NewFrame();
             if (UiDriver::is_on()) {
                 ImGui::GetIO().DeltaTime = UiDriver::frame_seconds;

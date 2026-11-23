@@ -59,8 +59,8 @@ enum class ProcessorKind : std::uint8_t { Input, Operator, Output };
 }
 
 // Lists every processor Falcon was built with, grouped by kind, each with what its own source says
-// of it: its description, its options and its connections. The "(i)" beside an entry shows its
-// description. A processor is dragged from here into a core of the pipeline designer.
+// of it: its description, its options and its connections. The info icon beside an entry shows
+// its description. A processor is dragged from here into a core of the pipeline designer.
 class ProcessorsPanel {
 public:
     static void render() {
@@ -126,7 +126,7 @@ private:
             ImGui::SeparatorText("Options");
             for (const OptionDescription& option : processor.options) {
                 ImGui::TextUnformatted(option.name);
-                render_info(option.description);
+                render_info_icon(option.description);
                 const std::string value =
                     std::format("{}, {} by default", option.type, option.default_value);
                 render_faint(value.c_str());
@@ -136,7 +136,7 @@ private:
         ImGui::SeparatorText("Connections");
         for (const PortDescription& port : processor.ports) {
             ImGui::TextUnformatted(port.name);
-            render_info(port.description);
+            render_info_icon(port.description);
             render_faint(port_summary(port).c_str());
         }
         ImGui::Unindent();
@@ -169,13 +169,5 @@ private:
         ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
         render_wrapped(text);
         ImGui::PopStyleColor();
-    }
-
-    static void render_info(const char* description) {
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-        ImGui::TextUnformatted("(i)");
-        ImGui::PopStyleColor();
-        render_item_tooltip(description);
     }
 };

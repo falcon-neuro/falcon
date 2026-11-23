@@ -99,10 +99,11 @@ def test_reader_of_another_core_stands_at_the_top_of_its_own():
 def test_row_is_as_high_as_its_tallest_block():
     with Designer() as designer:
         generator = designer.add_processor("EventGenerator", core=0)
-        detector = designer.add_processor("RippleDetector", core=0)
+        # The block of a processor that starts a stream is taller by the line that shows it.
+        signal_generator = designer.add_processor("SignalGenerator", core=0)
         logger = designer.add_processor("EventLogger", core=0)
         designer.connect((generator, "output"), (logger, "inputs"))
         targets = designer.targets()
-        tall, short = targets[f"block/{detector}"], targets[f"block/{generator}"]
+        tall, short = targets[f"block/{signal_generator}"], targets[f"block/{generator}"]
         assert tall.height > short.height and tall.top == short.top
         assert targets[f"block/{logger}"].top > tall.bottom
