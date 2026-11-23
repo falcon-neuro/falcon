@@ -17,6 +17,7 @@
 #include "../common/fonts.cpp"
 #include "../common/icons.cpp"
 #include "../common/instrument.cpp"
+#include "../common/logo.cpp"
 #include "../pipeline_designer/designer_state_json.cpp"
 #include "../pipeline_designer/opened_pipeline.cpp"
 #include "../pipeline_designer/pipeline_reader.cpp"
@@ -364,6 +365,34 @@ private:
         pop_ui_font();
     }
 
+    // The welcome screen's title: Falcon's logo and, beside it, the name.
+    static void render_title_with_logo(const char* title) {
+        constexpr float logo_width = 128.0f;
+        constexpr float gap_after_logo = 14.0f;
+        // How far under the top of its line the middle of a capital letter lies, in sizes of the
+        // font: the logo is centred on the title's capitals, not on its line.
+        constexpr float capitals_middle_in_font_sizes = 0.44f;
+        const float half_logo_height = logo_height_at(logo_width) / 2.0f;
+        // Without the logo's picture the title stands alone.
+        if (half_logo_height <= 0.0f) {
+            render_title(title);
+            return;
+        }
+        push_ui_font(title_size, FontStyle::Bold);
+        const float capitals_middle = ImGui::GetFontSize() * capitals_middle_in_font_sizes;
+        // The taller of the two starts at the line's top, and the other is moved down beside it.
+        const float logo_drop = std::max(0.0f, capitals_middle - half_logo_height);
+        const float title_drop = std::max(0.0f, half_logo_height - capitals_middle);
+        const ImVec2 line_top_left = ImGui::GetCursorScreenPos();
+        draw_logo(ImGui::GetWindowDrawList(), ImVec2(line_top_left.x, line_top_left.y + logo_drop),
+                  logo_width, TEXT_COLOUR);
+        ImGui::Dummy(ImVec2(logo_width, logo_drop + (2.0f * half_logo_height)));
+        ImGui::SameLine(0.0f, gap_after_logo);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + title_drop);
+        ImGui::TextUnformatted(title);
+        pop_ui_font();
+    }
+
     static void render_bold(const char* text) {
         push_ui_font(text_size, FontStyle::Bold);
         ImGui::TextUnformatted(text);
@@ -432,7 +461,7 @@ private:
 
     // The welcome screen's first view: a new pipeline's name and the pipelines.
     void render_pipelines() {
-        render_title("Falcon");
+        render_title_with_logo("Falcon");
         ImGui::TextColored(FAINT_TEXT_COLOUR, "Open a pipeline, or make a new one.");
         ImGui::Dummy(ImVec2(0.0f, gap_between_parts));
         render_new_pipeline();

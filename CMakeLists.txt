@@ -75,6 +75,25 @@ target_link_libraries(imgui PUBLIC
     glad_gl_core_46
 )
 
+# The decoder of the PNG pictures the UI loads (see src/ui/common/pictures.cpp). stb_image.h holds
+# its code beside its declarations: the code is compiled once, here, apart from Falcon's own
+# warnings, and for PNG alone.
+FetchContent_Declare(
+    stb
+    URL https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.zip
+)
+FetchContent_MakeAvailable(stb)
+set(FALCON_STB_IMAGE_CODE "${CMAKE_BINARY_DIR}/generated/stb_image_code.c")
+file(CONFIGURE OUTPUT ${FALCON_STB_IMAGE_CODE} CONTENT
+"#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include <stb_image.h>
+" @ONLY)
+add_library(stb_image STATIC ${FALCON_STB_IMAGE_CODE})
+target_include_directories(stb_image SYSTEM PUBLIC ${stb_SOURCE_DIR})
+# Kept out of the list the lint reads, as pipeline_file_test is, for the reason given there.
+set_target_properties(stb_image PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
+
 add_executable(falcon
     src/main.cpp
 )
@@ -165,6 +184,7 @@ target_include_directories(falcon PRIVATE ${CMAKE_BINARY_DIR}/generated)
 
 target_link_libraries(falcon PRIVATE
     imgui
+    stb_image
     pthread
     rt
     uring

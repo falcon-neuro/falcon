@@ -1,5 +1,6 @@
 #pragma once
 #include <imgui.h>
+#include <cstdint>
 #include "colours.cpp"
 
 // Parts drawn as on an instrument's front: a panel, keys that stand on it, fields set into it and
@@ -14,10 +15,15 @@
 inline constexpr ImVec4 WHITE{1.0f, 1.0f, 1.0f, 1.0f};
 inline constexpr ImVec4 BLACK{0.0f, 0.0f, 0.0f, 1.0f};
 
+// The colour of a hairline drawn on a ground of this colour: a shade darker than the ground.
+[[nodiscard]] inline ImVec4 hairline_colour_on(const ImVec4& ground) {
+    constexpr float hairline_share = 0.12f;
+    return mixed_colour(ground, BLACK, hairline_share);
+}
+
 // Paints the whole of the window being drawn, under what it holds, in this colour, with a
 // hairline along its top edge where it meets what lies above it.
 inline void paint_window_as_panel(const ImVec4& colour) {
-    constexpr float hairline_share = 0.12f;
     // Half a pixel puts a line of one pixel on one row of pixels instead of across two.
     constexpr float half_pixel = 0.5f;
     const ImVec2 top_left = ImGui::GetWindowPos();
@@ -29,7 +35,37 @@ inline void paint_window_as_panel(const ImVec4& colour) {
     draw_list->AddRectFilled(top_left, bottom_right, ImGui::GetColorU32(colour));
     draw_list->AddLine(ImVec2(top_left.x, top_left.y + half_pixel),
                        ImVec2(bottom_right.x, top_left.y + half_pixel),
-                       ImGui::GetColorU32(mixed_colour(colour, BLACK, hairline_share)));
+                       ImGui::GetColorU32(hairline_colour_on(colour)));
+    draw_list->PopClipRect();
+}
+
+// A side of a window along which it meets the area beside it.
+enum class WindowSide : std::uint8_t { Left, Right };
+
+// Makes the window being drawn a side panel that reaches the bars it lies between: paints the
+// gap of the given height above and under it in the panel's colour, and a hairline along the
+// given side, where the panel meets the area beside it. The panel's own ground is the window's
+// background colour, which the caller sets before the window begins: ImGui draws a window's
+// scrollbar as the window begins, so a ground painted afterwards would cover it.
+inline void draw_edges_of_side_panel(const ImVec4& colour, WindowSide hairline_side,
+                                     float gap_to_bars) {
+    // Half a pixel puts a line of one pixel on one column of pixels instead of across two.
+    constexpr float half_pixel = 0.5f;
+    const ImVec2 window_top_left = ImGui::GetWindowPos();
+    const ImVec2 window_bottom_right(window_top_left.x + ImGui::GetWindowWidth(),
+                                     window_top_left.y + ImGui::GetWindowHeight());
+    const ImVec2 top_left(window_top_left.x, window_top_left.y - gap_to_bars);
+    const ImVec2 bottom_right(window_bottom_right.x, window_bottom_right.y + gap_to_bars);
+    const float hairline_x =
+        hairline_side == WindowSide::Left ? top_left.x + half_pixel : bottom_right.x - half_pixel;
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    draw_list->PushClipRect(top_left, bottom_right, false);
+    draw_list->AddRectFilled(top_left, ImVec2(window_bottom_right.x, window_top_left.y),
+                             ImGui::GetColorU32(colour));
+    draw_list->AddRectFilled(ImVec2(window_top_left.x, window_bottom_right.y), bottom_right,
+                             ImGui::GetColorU32(colour));
+    draw_list->AddLine(ImVec2(hairline_x, top_left.y), ImVec2(hairline_x, bottom_right.y),
+                       ImGui::GetColorU32(hairline_colour_on(colour)));
     draw_list->PopClipRect();
 }
 

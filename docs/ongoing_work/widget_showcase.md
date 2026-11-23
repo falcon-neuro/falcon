@@ -260,7 +260,7 @@ flowchart LR
 ## Pictures
 
 <figure markdown="span">
-  ![A graph in Falcon's editor: an acquisition input, a filter, a ripple detector and a digital output](assets/graph_editor_closed_loop.png){ width="620" loading=lazy }
+  ![A ripple detection pipeline in Falcon's pipeline designer: an acquisition input, a filter, a ripple detector, a digital output and a recorder on three cores](assets/falcon_pipeline_designer.png){ width="620" loading=lazy }
   <figcaption>A centred picture with a caption.</figcaption>
 </figure>
 

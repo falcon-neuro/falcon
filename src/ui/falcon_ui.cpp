@@ -144,6 +144,15 @@ private:
         return true;
     }
 
+    static constexpr float scrollbar_width = 10.0f;
+    static constexpr float scrollbar_grab_alpha = 0.18f;
+    static constexpr float hovered_scrollbar_grab_alpha = 0.30f;
+    static constexpr float pushed_scrollbar_grab_alpha = 0.42f;
+
+    [[nodiscard]] static ImVec4 scrollbar_grab_colour(float alpha) {
+        return {TEXT_COLOUR.x, TEXT_COLOUR.y, TEXT_COLOUR.z, alpha};
+    }
+
     bool init_imgui() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -171,6 +180,15 @@ private:
         style.Colors[ImGuiCol_Text] = TEXT_COLOUR;
         style.Colors[ImGuiCol_Border] = CARD_BORDER_COLOUR;
         style.Colors[ImGuiCol_InputTextCursor] = TEXT_COLOUR;
+        // A scrollbar is a thin grab without a track, in the text's colour made clear, so that it
+        // shows on any ground.
+        style.ScrollbarSize = scrollbar_width;
+        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        style.Colors[ImGuiCol_ScrollbarGrab] = scrollbar_grab_colour(scrollbar_grab_alpha);
+        style.Colors[ImGuiCol_ScrollbarGrabHovered] =
+            scrollbar_grab_colour(hovered_scrollbar_grab_alpha);
+        style.Colors[ImGuiCol_ScrollbarGrabActive] =
+            scrollbar_grab_colour(pushed_scrollbar_grab_alpha);
 
         crosshair_cursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
         if (!ImGui_ImplGlfw_InitForOpenGL(window_, true)) {

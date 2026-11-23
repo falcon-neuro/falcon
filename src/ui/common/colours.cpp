@@ -18,5 +18,6 @@ inline constexpr ImVec4 ACTIVE_INPUT_COLOUR{0.835f, 0.925f, 0.902f, 1.0f};
 inline constexpr ImVec4 SHADOW_LAYER_COLOUR{0.10f, 0.09f, 0.08f, 0.008f};
 inline constexpr ImVec4 PANEL_COLOUR{0.890f, 0.851f, 0.757f, 1.0f};
 inline constexpr ImVec4 KEY_COLOUR{0.910f, 0.875f, 0.784f, 1.0f};
+inline constexpr ImVec4 SIDE_PANEL_COLOUR{0.984f, 0.965f, 0.918f, 1.0f};
 inline constexpr float CARD_ROUNDING = 8.0f;
 inline constexpr float FRAME_ROUNDING = 6.0f;
