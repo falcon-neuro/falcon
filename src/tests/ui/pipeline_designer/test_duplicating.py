@@ -5,8 +5,8 @@ from pathlib import Path
 
 from designer_driver import Designer
 from test_trash import folders_of
-from test_welcome_screen import (current_list, file_with, state_once_searched, welcome_screen,
-                                 write_pipeline)
+from test_welcome_screen import (current_list, file_with, listed, state_once_searched,
+                                 welcome_screen, write_pipeline)
 
 
 def pipeline_file(home, folder):
@@ -34,10 +34,10 @@ def test_icon_on_a_pipeline_makes_a_copy_with_its_processors_and_without_its_run
             # The copy is a new card in the list, and nothing was opened. A pipeline without a
             # name is called by its folder, and its copy after that.
             assert state["screen"] == "explorer" and state["folder_problem"] == ""
-            assert [(pipeline["folder"], pipeline["name"], pipeline["problem"])
-                    for pipeline in state["pipelines"]] == [
-                        ("prototype_folder", "", ""),
-                        ("prototype_folder_copy", "prototype_folder copy", "")]
+            assert sorted((pipeline["folder"], pipeline["name"], pipeline["problem"])
+                          for pipeline in state["pipelines"]) == [
+                              ("prototype_folder", "", ""),
+                              ("prototype_folder_copy", "prototype_folder copy", "")]
             copy_text = pipeline_file(home, "prototype_folder_copy").read_text()
             assert "// Name: prototype_folder copy\n" in copy_text and "Trigger<" in copy_text
             assert visible_folders(home) == ["prototype_folder", "prototype_folder_copy"]
@@ -63,7 +63,7 @@ def test_copy_is_named_after_its_pipeline_and_keeps_the_description():
             designer.click("explorer/duplicate/memory")
             state = current_list(designer)
             # The copy's folder is named after the copy's name, not after the first one's folder.
-            assert state["pipelines"] == [
+            assert listed(state) == [
                 {"folder": "memory", "name": "Memory impairment, day 1",
                  "description": "Impairs memory.", "problem": ""},
                 {"folder": "memory_impairment_day_1_copy",
@@ -81,9 +81,10 @@ def test_second_copy_and_a_copy_of_a_copy_each_get_a_name_of_their_own():
             current_list(designer)
             designer.click("explorer/duplicate/memory")
             state = current_list(designer)
-            assert [(pipeline["folder"], pipeline["name"]) for pipeline in state["pipelines"]] == [
-                ("memory", "Memory"), ("memory_copy", "Memory copy"),
-                ("memory_copy_2", "Memory copy 2")]
+            assert sorted((pipeline["folder"], pipeline["name"])
+                          for pipeline in state["pipelines"]) == [
+                              ("memory", "Memory"), ("memory_copy", "Memory copy"),
+                              ("memory_copy_2", "Memory copy 2")]
             designer.click("explorer/duplicate/memory_copy")
             state = current_list(designer)
             assert ("memory_copy_copy", "Memory copy copy") in [
@@ -101,7 +102,8 @@ def test_copy_gets_the_first_number_whose_folder_is_free():
             designer.click("explorer/duplicate/memory")
             state = current_list(designer)
             assert folders_of(state) == ["memory", "memory_copy", "memory_copy_3"]
-            assert state["pipelines"][2]["name"] == "Memory copy 3"
+            assert {"folder": "memory_copy_3", "name": "Memory copy 3", "description": "",
+                    "problem": ""} in listed(state)
         assert not (Path(home) / "falcon" / "memory_copy_2" / "pipeline.cpp").exists()
 
 

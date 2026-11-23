@@ -81,6 +81,8 @@ private:
     static constexpr float gap_between_cards = 2.0f;
     static constexpr ImVec2 card_padding{14.0f, 10.0f};
     static constexpr ImVec4 no_colour{0.0f, 0.0f, 0.0f, 0.0f};
+    // Stands between the facts of one line of a card: a dot at mid height, with room around it.
+    static constexpr const char* facts_separator = "  \u00B7  ";
     static constexpr int title_size = 32;
     static constexpr int text_size = 16;
 
@@ -246,6 +248,47 @@ private:
         return copy_name;
     }
 
+    // A pipeline.cpp without the line of its header that says the pipeline's name.
+    [[nodiscard]] static std::string without_name_line(std::string_view pipeline_text) {
+        const std::string line_start = std::format("// {}: ", PIPELINE_HEADER_NAME_KEY);
+        std::size_t line_at = 0;
+        if (!pipeline_text.starts_with(line_start)) {
+            const std::size_t before_line = pipeline_text.find(std::format("\n{}", line_start));
+            if (before_line == std::string_view::npos) {
+                return std::string(pipeline_text);
+            }
+            line_at = before_line + 1;
+        }
+        std::string without(pipeline_text.substr(0, line_at));
+        const std::size_t line_end = pipeline_text.find('\n', line_at);
+        if (line_end != std::string_view::npos) {
+            without += pipeline_text.substr(line_end + 1);
+        }
+        return without;
+    }
+
+    // The text that marks a pipeline's executable as built from the pipeline under another name,
+    // or none where the executable isn't to be marked so. It is, where it was built from the
+    // pipeline as it stands and the new name changes nothing of the compiled text but the
+    // header's line: a name isn't compiled, so the executable is the renamed pipeline's too.
+    [[nodiscard]] static std::optional<std::string> compiled_text_under_name(
+        const FoundPipeline& found, const std::string& name) {
+        if (found.pipeline.compiled_text.empty()) {
+            return std::nullopt;
+        }
+        const WrittenText current = write_pipeline(found.pipeline.graph);
+        if (!current.has_value() || *current != found.pipeline.compiled_text) {
+            return std::nullopt;
+        }
+        PipelineGraph graph = found.pipeline.graph;
+        graph.name = name;
+        WrittenText renamed = write_pipeline(graph);
+        if (!renamed.has_value() || without_name_line(*renamed) != without_name_line(*current)) {
+            return std::nullopt;
+        }
+        return std::move(*renamed);
+    }
+
     // Makes a copy of a pipeline: a new pipeline that holds the same graph under a name of its
     // own, without the first one's runs or its executable. Its file is written beside this
     // thread, and the list shows it once it is there; it is opened by a click, as any other.
@@ -295,6 +338,7 @@ private:
             .folder_name = found.folder_name,
             .new_folder_name = wanted.folder_name,
             .new_pipeline_text = std::nullopt,
+            .new_compiled_text = std::nullopt,
         };
         if (wanted.name != shown_name_of(found)) {
             std::expected<std::string, std::string> text = text_under_name(found, wanted.name);
@@ -303,6 +347,7 @@ private:
                 return;
             }
             rename.new_pipeline_text = std::move(*text);
+            rename.new_compiled_text = compiled_text_under_name(found, wanted.name);
         }
         if (!rename.new_pipeline_text.has_value() && rename.new_folder_name == rename.folder_name) {
             close_rename();
@@ -552,6 +597,21 @@ private:
         return icons;
     }
 
+    // The line under a card's name: where the pipeline lies, and when it was last changed.
+    static void render_where_and_when(const FoundPipeline& found) {
+        const std::string path = std::format("{}{}", PIPELINES_DIRECTORY_TEXT, found.folder_name);
+        ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", path.c_str());
+        name_last_item_for_ui_driver({"explorer", "pipeline_path", found.folder_name}, path);
+        if (found.modified_at.empty()) {
+            return;
+        }
+        const std::string modified = std::format("Modified {}", found.modified_at);
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextColored(FAINT_TEXT_COLOUR, "%s%s", facts_separator, modified.c_str());
+        name_last_item_for_ui_driver({"explorer", "pipeline_modified", found.folder_name},
+                                     modified);
+    }
+
     // One pipeline, in a card of its own: its name, its folder and its description, and for one
     // that can't be read why. A click on a card that can be read opens its pipeline, unless the
     // card shows the fields that rename it. Returns whether the mouse is over the card.
@@ -569,9 +629,8 @@ private:
             }
         } else {
             render_bold(shown_name_of(found).c_str());
-            ImGui::SameLine();
-            ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", found.folder_name.c_str());
             icons = render_card_icons(found);
+            render_where_and_when(found);
         }
         ImGui::PushTextWrapPos(0.0f);
         if (!found.description.empty()) {
@@ -637,8 +696,6 @@ private:
     void render_trashed_pipeline(const TrashedPipeline& trashed) {
         begin_card(trashed.trash_name, false);
         render_bold(trashed.name.empty() ? trashed.folder_name.c_str() : trashed.name.c_str());
-        ImGui::SameLine();
-        ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", trashed.folder_name.c_str());
         const char* const restore_label = "Restore";
         const char* const delete_label = "Delete for good";
         move_to_right_end(button_width_of(restore_label) + ImGui::GetStyle().ItemSpacing.x +
@@ -655,11 +712,15 @@ private:
         const std::string runs_text = trashed.run_count == 1
                                           ? std::string("1 run")
                                           : std::format("{} runs", trashed.run_count);
-        const std::string facts =
-            trashed.deleted_at.empty()
-                ? runs_text
-                : std::format("Deleted {}, {}", trashed.deleted_at, runs_text);
+        // Where it lay, and where Restore puts it back; when it was deleted; and what goes with
+        // it when it is deleted for good.
+        std::string facts = std::format("{}{}", PIPELINES_DIRECTORY_TEXT, trashed.folder_name);
+        if (!trashed.deleted_at.empty()) {
+            facts += std::format("{}Deleted {}", facts_separator, trashed.deleted_at);
+        }
+        facts += std::format("{}{}", facts_separator, runs_text);
         ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", facts.c_str());
+        name_last_item_for_ui_driver({"trash", "facts", trashed.trash_name}, facts);
         if (!trashed.description.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(FAINT_TEXT_COLOUR, "%s", trashed.description.c_str());
@@ -710,10 +771,11 @@ private:
         std::vector<std::string> pipelines;
         pipelines.reserve(found_.pipelines.size());
         for (const FoundPipeline& pipeline : found_.pipelines) {
-            pipelines.push_back(
-                std::format(R"({{"folder":{},"name":{},"description":{},"problem":{}}})",
-                            json_text(pipeline.folder_name), json_text(pipeline.name),
-                            json_text(pipeline.description), json_text(pipeline.problem)));
+            pipelines.push_back(std::format(
+                R"({{"folder":{},"name":{},"description":{},"problem":{},"modified":{}}})",
+                json_text(pipeline.folder_name), json_text(pipeline.name),
+                json_text(pipeline.description), json_text(pipeline.problem),
+                json_text(pipeline.modified_at)));
         }
         std::vector<std::string> trashed_pipelines;
         trashed_pipelines.reserve(found_.trashed.size());

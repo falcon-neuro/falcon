@@ -10,7 +10,9 @@ from test_welcome_screen import (current_list, state_once_searched, welcome_scre
 
 
 def folders_of(state):
-    return [pipeline["folder"] for pipeline in state["pipelines"]]
+    """The folders of the listed pipelines, in the order of their names. The list's own order,
+    the one changed last first, is checked in test_welcome_screen.py."""
+    return sorted(pipeline["folder"] for pipeline in state["pipelines"])
 
 
 def trash_folder(home):
@@ -80,6 +82,11 @@ def test_pipeline_is_brought_back_from_the_trash_as_it_was():
             designer.click("explorer/move_to_trash/memory")
             trash_name = current_list(designer)["trash"][0]["trash_name"]
             designer.click("explorer/open_trash")
+            # A card of the trash says where its pipeline lay, when it was deleted and what it
+            # holds.
+            facts = designer.target(f"trash/facts/{trash_name}").note
+            assert facts.startswith("~/falcon/memory  \u00b7  Deleted ")
+            assert facts.endswith("  \u00b7  1 run")
             designer.click(f"trash/restore/{trash_name}")
             state = current_list(designer)
             assert state["trash"] == [] and folders_of(state) == ["memory"]

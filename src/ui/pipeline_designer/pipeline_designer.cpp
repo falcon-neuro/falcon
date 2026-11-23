@@ -25,7 +25,7 @@
 #include "../common/fonts.cpp"
 #include "../common/icons.cpp"
 #include "../common/instrument.cpp"
-#include "../common/remembered_numbers.cpp"
+#include "../common/remembered_values.cpp"
 #include "../common/shadow.cpp"
 #include "../ui_driver/ui_driver_targets.cpp"
 #include "all_processors.cpp"
@@ -61,10 +61,10 @@ public:
 
     // `remembered` holds what the app keeps between two sessions, the sizes of this designer's
     // panels among it, and must outlive the designer.
-    PipelineDesigner(OpenedPipeline pipeline, RememberedNumbers& remembered)
+    PipelineDesigner(OpenedPipeline pipeline, RememberedValues& remembered)
         : remembered_(&remembered) {
-        right_panel_width_ = remembered.value_or(right_panel_width_name, right_panel_width_);
-        log_panel_height_ = remembered.value_or(log_panel_height_name, log_panel_height_);
+        right_panel_width_ = remembered.number_or(right_panel_width_name, right_panel_width_);
+        log_panel_height_ = remembered.number_or(log_panel_height_name, log_panel_height_);
         graph_ = std::move(pipeline.graph);
         directory_ = std::move(pipeline.directory);
         compiled_text_ = std::move(pipeline.compiled_text);
@@ -284,7 +284,7 @@ private:
     PipelineGraph graph_;
     CpuCores cpu_cores_;
     // What the app keeps between two sessions; null for the example pipeline of a picture.
-    RememberedNumbers* remembered_ = nullptr;
+    RememberedValues* remembered_ = nullptr;
     // The width of the panel at the right, which the user changes by dragging its left edge.
     float right_panel_width_ = 360.0f;
     PipelineBuild build_;
@@ -427,8 +427,8 @@ private:
         if (remembered_ == nullptr || ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             return;
         }
-        remembered_->remember(right_panel_width_name, right_panel_width_);
-        remembered_->remember(log_panel_height_name, log_panel_height_);
+        remembered_->remember_number(right_panel_width_name, right_panel_width_);
+        remembered_->remember_number(log_panel_height_name, log_panel_height_);
     }
 
     // Starts the directory's executable beside this thread. Its lines take the place of the last
@@ -1348,7 +1348,6 @@ private:
         }
         render_block_handle(processor);
         render_block_stream(processor);
-        render_block_options(processor);
         if (has_port(*processor.type, PortDirection::Output)) {
             ImGui::Separator();
             render_ports(processor, PortDirection::Output);
@@ -1409,20 +1408,21 @@ private:
         }
         name_last_item_for_ui_driver({"block", processor.name, "remove"});
 
-        // The name and the type are drawn over the handle, which is as high as the two, and not
-        // beyond it, where the remove icon is.
+        // The type and the name are drawn over the handle, which is as high as the two, and not
+        // beyond it, where the remove icon is. The type comes first: it says what the block
+        // does, where the name says which one it is.
         ImGui::SetCursorPos(handle_position);
         ImGui::PushClipRect(handle_top_left, handle_bottom_right, true);
         push_bold_font();
-        ImGui::TextUnformatted(processor.name.c_str());
+        ImGui::TextUnformatted(processor.type->name);
         ImGui::PopFont();
         ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-        ImGui::TextUnformatted(processor.type->name);
+        ImGui::TextUnformatted(processor.name.c_str());
         ImGui::PopStyleColor();
         ImGui::PopClipRect();
     }
 
-    // The stream a processor starts, in short, as a line like those of its options. A click on it
+    // The stream a processor starts, in short, as a line under the block's name. A click on it
     // opens the panel that edits it.
     void render_block_stream(const GraphProcessor& processor) {
         if (!processor.stream.has_value()) {
@@ -1446,48 +1446,6 @@ private:
             "The stream this processor starts: how many channels it gives, and how many samples "
             "of each a second. Every processor that takes its samples, directly or through "
             "others, works with the same.");
-    }
-
-    // The block's options in short: a line for each, its name and its value as written, cut where
-    // the block ends. The tooltip of a line says the rest, and a click on one opens the panel
-    // that edits them.
-    void render_block_options(const GraphProcessor& processor) {
-        std::size_t option_index = 0;
-        for (const OptionDescription& option : processor.type->options) {
-            const std::string value = option_index < processor.option_values.size()
-                                          ? processor.option_values.at(option_index)
-                                          : std::string(option.default_value);
-            ++option_index;
-
-            const std::string value_text = option.choices.empty() ? value : shown_choice(value);
-            // The name has the room that the value leaves, and half the line at least.
-            constexpr float half = 0.5f;
-            const float line_width = ImGui::GetContentRegionAvail().x;
-            const float name_width =
-                std::max(line_width * half, line_width - ImGui::CalcTextSize(value_text.c_str()).x);
-            ImGui::BeginGroup();
-            ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-            constexpr const char* after_name = ": ";
-            const std::string name_shown =
-                text_cut_to_width(option.name, name_width - ImGui::CalcTextSize(after_name).x) +
-                after_name;
-            ImGui::TextUnformatted(name_shown.c_str());
-            ImGui::PopStyleColor();
-            ImGui::SameLine(0.0f, 0.0f);
-            const std::string value_shown =
-                text_cut_to_width(value_text, ImGui::GetContentRegionAvail().x);
-            ImGui::TextUnformatted(value_shown.c_str());
-            ImGui::EndGroup();
-            name_last_item_for_ui_driver({"block", processor.name, "option", option.name});
-            if (ImGui::IsItemClicked()) {
-                selected_processor_ = processor.id;
-            }
-
-            const std::string explanation =
-                std::format("{}: {}\n\n{}, {} by default\n\n{}", option.name, value, option.type,
-                            option.default_value, option.description);
-            render_item_tooltip(explanation.c_str());
-        }
     }
 
     // The text itself when it is no wider than max_width, or else its longest start that fits
@@ -1569,7 +1527,7 @@ private:
             return;
         }
         const float icon_size = ImGui::GetTextLineHeight();
-        ImGui::TextUnformatted(processor->name.c_str());
+        ImGui::TextUnformatted(processor->type->name);
         // At the right end of what the panel has room for, which is less when it has a scrollbar.
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - icon_size);
@@ -1578,7 +1536,7 @@ private:
         }
         name_last_item_for_ui_driver({"options_panel", "close"});
         ImGui::PushStyleColor(ImGuiCol_Text, faint_colour);
-        ImGui::TextUnformatted(processor->type->name);
+        ImGui::TextUnformatted(processor->name.c_str());
         ImGui::PopStyleColor();
         ImGui::Separator();
         ImGui::Spacing();

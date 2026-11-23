@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from designer_driver import Designer
+from test_compile import generator_into_logger, wait_for_the_build
 from test_trash import folders_of, pipeline_with_a_run
 from test_welcome_screen import (current_list, file_with, state_once_searched, welcome_screen,
                                  write_pipeline)
@@ -20,7 +21,9 @@ def visible_folders(home):
 
 
 def names_and_folders(state):
-    return [(pipeline["name"], pipeline["folder"]) for pipeline in state["pipelines"]]
+    """The listed pipelines, in the order of their names. The list's own order, the one changed
+    last first, is checked in test_welcome_screen.py."""
+    return sorted((pipeline["name"], pipeline["folder"]) for pipeline in state["pipelines"])
 
 
 def shown_path(designer, which):
@@ -133,11 +136,11 @@ def test_new_pipeline_lies_in_the_folder_that_was_typed_for_it():
             assert designer.state()["screen"] == "designer"
             assert "// Name: Memory Impairment, Day 2\n" in file_with(
                 pipeline_file(home, "day2"), "// Name:")
-        assert visible_folders(home) == ["day2"]
-        with welcome_screen(home) as designer:
-            state_once_searched(designer)
-            # The row is empty again for the next pipeline.
+            # On the way back the row is empty again, for the next pipeline.
+            designer.click("top_bar/pipelines")
+            current_list(designer)
             assert not designer.has_target("explorer/new_folder_label")
+        assert visible_folders(home) == ["day2"]
 
 
 def test_folder_field_takes_letters_digits_and_underscores_only():
@@ -367,3 +370,52 @@ def test_click_on_a_card_that_is_renamed_does_not_open_its_pipeline():
             state = current_list(designer)
             assert state["asked_to_rename"] == ""
             assert designer.has_target("explorer/rename/memory")
+
+
+def test_renamed_pipeline_stays_compiled():
+    with tempfile.TemporaryDirectory() as home:
+        with Designer(home=home) as designer:
+            generator, logger = generator_into_logger(designer)
+            designer.click("top_bar/compile")
+            assert wait_for_the_build(designer)["state"] == "succeeded"
+        folder = Path(home) / "falcon" / "prototype_folder"
+        executable = (folder / "pipeline").read_bytes()
+        with welcome_screen(home) as designer:
+            state_once_searched(designer)
+            designer.click("explorer/rename/prototype_folder")
+            designer.type_text("Day 2")
+            designer.key("Enter")
+            assert names_and_folders(current_list(designer)) == [("Day 2", "day_2")]
+            folder = Path(home) / "falcon" / "day_2"
+            # The executable is the one that was built, and is marked as the renamed pipeline's.
+            assert (folder / "pipeline").read_bytes() == executable
+            assert "// Name: Day 2\n" in (folder / ".last_compiled_pipeline.cpp").read_text()
+            designer.click("explorer/pipeline/day_2")
+            designer.frames(3)
+            assert set(designer.processors()) == {generator, logger}
+            assert designer.state()["bar"] == "Compiled"
+
+
+def test_renaming_does_not_make_an_executable_that_is_out_of_date_count_as_compiled():
+    with tempfile.TemporaryDirectory() as home:
+        with Designer(home=home) as designer:
+            generator_into_logger(designer)
+            designer.click("top_bar/compile")
+            assert wait_for_the_build(designer)["state"] == "succeeded"
+            # The graph changes after the compilation, so the executable is no longer its.
+            designer.add_processor("Trigger", core=0)
+            file_with(pipeline_file(home, "prototype_folder"), "Trigger<")
+            assert designer.state()["bar"] == "Not compiled yet"
+        folder = Path(home) / "falcon" / "prototype_folder"
+        compiled_text = (folder / ".last_compiled_pipeline.cpp").read_text()
+        with welcome_screen(home) as designer:
+            state_once_searched(designer)
+            designer.click("explorer/rename/prototype_folder")
+            designer.type_text("Day 2")
+            designer.key("Enter")
+            assert names_and_folders(current_list(designer)) == [("Day 2", "day_2")]
+            folder = Path(home) / "falcon" / "day_2"
+            assert (folder / ".last_compiled_pipeline.cpp").read_text() == compiled_text
+            designer.click("explorer/pipeline/day_2")
+            designer.frames(3)
+            assert designer.state()["bar"] == "Not compiled yet"

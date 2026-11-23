@@ -81,13 +81,14 @@ class Designer:
     its own, empty and removed at the end. A test that wants a second run to find what the first
     left gives both the same directory as `home`.
 
-    Falcon starts on its welcome screen. A run of this class starts on the designer instead, with
-    the pipeline of the home's folder falcon/prototype_folder, which holds nothing at first;
-    `starts_on_welcome_screen` leaves Falcon on the welcome screen, for the tests of that.
+    A run of this class starts on the designer, with the pipeline of the home's folder
+    falcon/prototype_folder, which holds nothing at first. `is_started_as_by_a_user` names no
+    pipeline to Falcon, which then starts as it does for a user: on the pipeline that was open
+    when it was last closed with this home, or on its welcome screen where none was.
     """
 
-    def __init__(self, home=None, starts_on_welcome_screen=False):
-        self._starts_on_welcome_screen = starts_on_welcome_screen
+    def __init__(self, home=None, is_started_as_by_a_user=False):
+        self._is_started_as_by_a_user = is_started_as_by_a_user
         self.home = Path(home) if home is not None else None
         self._is_home_its_own = home is None
         self._process = None
@@ -105,7 +106,7 @@ class Designer:
         environment.pop("FALCON_SCREENSHOT", None)
         environment.pop("FALCON_EXAMPLE_PIPELINE", None)
         environment.pop("FALCON_OPEN_PIPELINE", None)
-        if not self._starts_on_welcome_screen:
+        if not self._is_started_as_by_a_user:
             environment["FALCON_OPEN_PIPELINE"] = str(self.home / "falcon" / "prototype_folder")
         self._process = subprocess.Popen(
             [str(falcon)], cwd=OUTPUT_DIRECTORY, env=environment, text=True,
